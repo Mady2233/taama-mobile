@@ -1,0 +1,7 @@
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: false
+  image_path: "assets/icon/taama_app_icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#1E2D50"
+  adaptive_icon_foreground: "assets/icon/taama_app_foreground.png"
