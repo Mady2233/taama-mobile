@@ -3,7 +3,7 @@ class ApiConfig {
 
   static const String baseUrl = String.fromEnvironment(
     'API_URL',
-    defaultValue: 'http://192.168.43.103:8000/api',
+    defaultValue: 'https://taama-backend-production-d8fa.up.railway.app/api',
   );
 
   static String get wsUrl {
