@@ -42,7 +42,17 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
   final LocationService _locationService = LocationService();
   final MapController _mapController = MapController();
   LatLng? _positionConducteur;
+  LatLng? _positionDepart;
   bool _suiviPositionDemarre = false;
+  DateTime? _dernierePositionRecue;
+  Timer? _timerPeremption;
+
+  static const Duration _seuilPeremptionPosition = Duration(seconds: 45);
+
+  bool get _positionConducteurPerimee {
+    if (_dernierePositionRecue == null) return false;
+    return DateTime.now().difference(_dernierePositionRecue!) > _seuilPeremptionPosition;
+  }
 
   @override
   void initState() {
@@ -54,6 +64,7 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
   @override
   void dispose() {
     _timerPolling?.cancel();
+    _timerPeremption?.cancel();
     _locationService.arreter();
     super.dispose();
   }
@@ -72,6 +83,14 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
         if (demande['cree_le'] != null) {
           _dateCreation = DateTime.tryParse(demande['cree_le'].toString()) ?? _dateCreation;
         }
+        final departLat = demande['depart_lat'];
+        final departLng = demande['depart_lng'];
+        if (departLat != null && departLng != null) {
+          _positionDepart = LatLng(
+            (departLat as num).toDouble(),
+            (departLng as num).toDouble(),
+          );
+        }
       });
       if (_statut == 'termine' || _statut == 'annule') {
         _timerPolling?.cancel();
@@ -80,8 +99,10 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
         _demarrerSuiviPosition();
       } else if (_suiviPositionDemarre) {
         _locationService.arreter();
+        _timerPeremption?.cancel();
         _suiviPositionDemarre = false;
         _positionConducteur = null;
+        _dernierePositionRecue = null;
       }
     } catch (e) {
       debugPrint('Erreur rafraîchissement demande : $e');
@@ -96,7 +117,17 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
 
     _locationService.ecouterPosition('${widget.demandeId}', (lat, lng) {
       if (!mounted) return;
-      setState(() => _positionConducteur = LatLng(lat, lng));
+      setState(() {
+        _positionConducteur = LatLng(lat, lng);
+        _dernierePositionRecue = DateTime.now();
+      });
+    });
+
+    // Aucun timestamp n'accompagne les positions reçues par WebSocket : je
+    // détecte la péremption côté client, à l'absence même de nouveaux
+    // messages, plutôt qu'en me fiant à une horloge serveur.
+    _timerPeremption = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted) setState(() {});
     });
   }
 
@@ -309,9 +340,14 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
                     ],
                   ),
                 ),
-              if (_positionConducteur != null) ...[
+              if (_suiviPositionDemarre) ...[
                 const SizedBox(height: 16),
-                _MiniCarteConducteur(mapController: _mapController, position: _positionConducteur),
+                _MiniCarteConducteur(
+                  mapController: _mapController,
+                  position: _positionConducteur,
+                  positionClient: _positionDepart,
+                  positionPerimee: _positionConducteurPerimee,
+                ),
               ],
               const SizedBox(height: 40),
               // Bouton de chat, visible dès qu'un conducteur est assigné
@@ -411,19 +447,102 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
 }
 
 /// Mini-carte affichée pendant que le conducteur est en route : montre sa
-/// position en temps réel (reçue via [LocationService]) sous forme de
-/// marqueur, qui se déplace au fur et à mesure des mises à jour.
-class _MiniCarteConducteur extends StatelessWidget {
+/// position en temps réel (reçue via [LocationService]), animée en douceur
+/// entre deux mises à jour, ainsi que le point de départ du client — la
+/// caméra se recentre pour garder les deux marqueurs visibles.
+class _MiniCarteConducteur extends StatefulWidget {
   final MapController mapController;
   final LatLng? position;
+  final LatLng? positionClient;
+  final bool positionPerimee;
 
-  // Centre par défaut (Bamako), utilisé tant qu'aucune position n'est reçue
+  const _MiniCarteConducteur({
+    required this.mapController,
+    required this.position,
+    required this.positionClient,
+    required this.positionPerimee,
+  });
+
+  @override
+  State<_MiniCarteConducteur> createState() => _MiniCarteConducteurState();
+}
+
+class _MiniCarteConducteurState extends State<_MiniCarteConducteur>
+    with SingleTickerProviderStateMixin {
+  // Centre par défaut (Bamako), utilisé tant qu'aucune position n'est connue
   static const LatLng _centreParDefaut = LatLng(12.6392, -8.0029);
+  static const Duration _dureeAnimation = Duration(milliseconds: 800);
 
-  const _MiniCarteConducteur({required this.mapController, required this.position});
+  late final AnimationController _controleurAnimation;
+  Animation<LatLng>? _animationPosition;
+  LatLng? _positionAffichee;
+  bool _cameraDejaAjustee = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controleurAnimation = AnimationController(vsync: this, duration: _dureeAnimation);
+    _positionAffichee = widget.position;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ajusterCameraSiNecessaire());
+  }
+
+  @override
+  void didUpdateWidget(covariant _MiniCarteConducteur oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nouvellePosition = widget.position;
+    if (nouvellePosition != null && nouvellePosition != oldWidget.position) {
+      final depart = _positionAffichee ?? nouvellePosition;
+      _animationPosition = _LatLngTween(begin: depart, end: nouvellePosition).animate(
+        CurvedAnimation(parent: _controleurAnimation, curve: Curves.easeInOut),
+      )..addListener(() {
+          if (mounted) setState(() => _positionAffichee = _animationPosition!.value);
+        });
+      _controleurAnimation
+        ..reset()
+        ..forward();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ajusterCameraSiNecessaire());
+  }
+
+  /// Recentre/zoome uniquement quand c'est nécessaire (premier affichage, ou
+  /// un des deux marqueurs sort du cadre actuel) — pas à chaque heartbeat,
+  /// pour ne pas faire sauter la carte sous les yeux de l'utilisateur.
+  void _ajusterCameraSiNecessaire() {
+    if (!mounted) return;
+    final points = <LatLng>[
+      if (widget.positionClient != null) widget.positionClient!,
+      if (_positionAffichee != null) _positionAffichee!,
+    ];
+    if (points.isEmpty) return;
+
+    if (points.length == 1) {
+      if (!_cameraDejaAjustee) {
+        widget.mapController.move(points.first, 15.0);
+        _cameraDejaAjustee = true;
+      }
+      return;
+    }
+
+    final bounds = LatLngBounds.fromPoints(points);
+    if (_cameraDejaAjustee && widget.mapController.camera.visibleBounds.containsBounds(bounds)) {
+      return;
+    }
+
+    widget.mapController.fitCamera(
+      CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(40), maxZoom: 16),
+    );
+    _cameraDejaAjustee = true;
+  }
+
+  @override
+  void dispose() {
+    _controleurAnimation.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final positionChauffeur = _positionAffichee;
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: SizedBox(
@@ -431,9 +550,9 @@ class _MiniCarteConducteur extends StatelessWidget {
         child: Stack(
           children: [
             FlutterMap(
-              mapController: mapController,
+              mapController: widget.mapController,
               options: MapOptions(
-                initialCenter: position ?? _centreParDefaut,
+                initialCenter: positionChauffeur ?? widget.positionClient ?? _centreParDefaut,
                 initialZoom: 15.0,
               ),
               children: [
@@ -441,25 +560,47 @@ class _MiniCarteConducteur extends StatelessWidget {
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.taama.app',
                 ),
-                if (position != null)
-                  MarkerLayer(
-                    markers: [
+                MarkerLayer(
+                  markers: [
+                    if (widget.positionClient != null)
                       Marker(
-                        point: position!,
+                        point: widget.positionClient!,
+                        width: 36,
+                        height: 36,
+                        child: const Icon(Icons.person_pin_circle, color: CouleursTaama.indigo, size: 32),
+                      ),
+                    if (positionChauffeur != null)
+                      Marker(
+                        point: positionChauffeur,
                         width: 40,
                         height: 40,
-                        child: const Icon(Icons.directions_car, color: CouleursTaama.terreCuite, size: 32),
+                        child: Icon(
+                          Icons.directions_car,
+                          color: widget.positionPerimee ? Colors.grey : CouleursTaama.terreCuite,
+                          size: 32,
+                        ),
                       ),
-                    ],
-                  ),
+                  ],
+                ),
               ],
             ),
-            if (position == null)
+            if (positionChauffeur == null)
               Container(
                 color: Colors.black.withValues(alpha: 0.35),
                 child: const Center(
                   child: Text(
                     'En attente de la position du conducteur...',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                  ),
+                ),
+              )
+            else if (widget.positionPerimee)
+              Container(
+                color: Colors.black.withValues(alpha: 0.35),
+                child: const Center(
+                  child: Text(
+                    'Position du conducteur non actualisée...',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
                   ),
@@ -470,4 +611,16 @@ class _MiniCarteConducteur extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Interpolation linéaire entre deux [LatLng], pour animer le marqueur du
+/// conducteur au lieu de le faire sauter brutalement d'un point à l'autre.
+class _LatLngTween extends Tween<LatLng> {
+  _LatLngTween({required LatLng begin, required LatLng end}) : super(begin: begin, end: end);
+
+  @override
+  LatLng lerp(double t) => LatLng(
+        begin!.latitude + (end!.latitude - begin!.latitude) * t,
+        begin!.longitude + (end!.longitude - begin!.longitude) * t,
+      );
 }
