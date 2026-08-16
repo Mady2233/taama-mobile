@@ -47,5 +47,16 @@
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Taama Conducteur a besoin de ta position pour te proposer des courses proches et te guider vers les passagers.</string>
+	<!-- "Toujours" : nécessaire pour que le passager continue de voir ta
+	     position pendant une course même écran verrouillé/app en arrière-plan.
+	     iOS affiche cette description si l'utilisateur n'accorde d'abord que
+	     "Lors de l'utilisation" — le texte doit expliquer pourquoi le "Toujours"
+	     est utile, pas juste répéter la description "when in use". -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Pour que le passager voie ta position en approche même si l'écran de ton téléphone est verrouillé pendant la course, Taama Conducteur a besoin d'accéder à ta position en arrière-plan, uniquement pendant une course active.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 </dict>
 </plist>

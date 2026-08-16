@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -74,7 +75,6 @@ class _EcranNavigationState extends State<EcranNavigation> {
   // false = 1re jambe (vers le point de départ du client) ; true = 2e jambe
   // (client à bord, vers sa destination).
   bool _jambeVersDestination = false;
-  Timer? _timerPosition;
   StreamSubscription<Position>? _positionStream;
 
   LatLng? get _positionDestinationReelle {
@@ -97,7 +97,6 @@ class _EcranNavigationState extends State<EcranNavigation> {
 
   @override
   void dispose() {
-    _timerPosition?.cancel();
     _positionStream?.cancel();
     _locationService.arreter();
     _tts.stop();
@@ -388,7 +387,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
         const SnackBar(content: Text('Course terminée avec succès.')),
       );
       _locationService.arreter();
-      _timerPosition?.cancel();
+      _positionStream?.cancel();
       Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
@@ -430,54 +429,71 @@ class _EcranNavigationState extends State<EcranNavigation> {
     });
   }
 
+  /// Flux GPS continu (pas un Timer.periodic) protégé par un service en
+  /// foreground (Android, notification persistante) / indicateur arrière-plan
+  /// (iOS) — condition pour que la navigation continue de fonctionner écran
+  /// verrouillé/app en arrière-plan pendant une course. Un Timer.periodic ne
+  /// survivrait pas à la mise en arrière-plan de l'app.
+  LocationSettings _parametresPositionNavigation() {
+    const distanceFiltre = 10; // mètres
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFiltre,
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'Navigation en cours',
+          notificationText: 'Ta position est partagée avec le client pendant la course.',
+          enableWakeLock: true,
+        ),
+      );
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return AppleSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFiltre,
+        pauseLocationUpdatesAutomatically: false,
+        showBackgroundLocationIndicator: true,
+      );
+    }
+    return const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: distanceFiltre);
+  }
+
   void _demarrerNavigation() {
     setState(() => _navigationDemarree = true);
 
     // Connexion WebSocket seule (pas de boucle GPS interne à LocationService)
-    // : cet écran a déjà sa propre boucle ci-dessous pour sa carte/son
-    // itinéraire, elle sert aussi à l'envoi via envoyerPosition() — évite un
-    // 2e appel GPS concurrent toutes les 3s pour la même information.
+    // : cet écran fournit sa propre position ci-dessous via envoyerPosition().
     _locationService.connecterPourEnvoi(widget.demandeId.toString());
 
-    // Met à jour la position conducteur sur la carte toutes les 3s
-    _timerPosition = Timer.periodic(const Duration(seconds: 3), (_) async {
-      try {
-        final position = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-          ),
-        );
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: _parametresPositionNavigation(),
+    ).listen((position) async {
+      if (!mounted) return;
 
-        if (!mounted) return;
+      final nouvellePosition = LatLng(position.latitude, position.longitude);
+      final vitesseKmh = (position.speed * 3.6).clamp(0, 300).toDouble();
 
-        final nouvellePosition = LatLng(
-          position.latitude,
-          position.longitude,
-        );
-        final vitesseKmh = (position.speed * 3.6).clamp(0, 300).toDouble();
+      setState(() {
+        _positionConducteur = nouvellePosition;
+        _vitesseKmh = vitesseKmh;
+      });
 
-        setState(() {
-          _positionConducteur = nouvellePosition;
-          _vitesseKmh = vitesseKmh;
-        });
+      // Réutilise cette même position pour le client — pas de 2e requête
+      // GPS séparée pour ça.
+      _locationService.envoyerPosition(position.latitude, position.longitude);
 
-        // Réutilise cette même position pour le client — pas de 2e requête
-        // GPS séparée pour ça.
-        _locationService.envoyerPosition(position.latitude, position.longitude);
-
-        // Ne recalcule l'itinéraire que si on s'est écarté de la route
-        if (_estHorsItineraire()) {
-          await _calculerItineraire();
-        }
-
-        await _verifierInstructionVocale();
-        await _verifierArrivee();
-
-        // Centre la carte sur la position du conducteur
-        _mapController.move(nouvellePosition, 15.0);
-      } catch (e) {
-        debugPrint('[Navigation] Erreur mise à jour position : $e');
+      // Ne recalcule l'itinéraire que si on s'est écarté de la route
+      if (_estHorsItineraire()) {
+        await _calculerItineraire();
       }
+
+      await _verifierInstructionVocale();
+      await _verifierArrivee();
+
+      // Centre la carte sur la position du conducteur
+      _mapController.move(nouvellePosition, 15.0);
+    }, onError: (e) {
+      debugPrint('[Navigation] Erreur flux position : $e');
     });
   }
 
@@ -747,7 +763,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
                           TextButton(
                             onPressed: () {
                               _locationService.arreter();
-                              _timerPosition?.cancel();
+                              _positionStream?.cancel();
                               Navigator.pop(context);
                             },
                             child: const Text(

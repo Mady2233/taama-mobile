@@ -35,6 +35,17 @@
     </application>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Suivi GPS pendant une course même écran verrouillé/app en arrière-plan.
+         Android exige que l'app ait DÉJÀ obtenu ACCESS_FINE_LOCATION avant de
+         proposer celle-ci (demande en 2 temps côté LocationService). -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Service en foreground (notification persistante) qui garde le suivi
+         actif en arrière-plan — géolocator_android fournit déjà le service
+         lui-même (via foregroundNotificationConfig), ces 2 permissions sont
+         uniquement ce que l'app doit déclarer pour l'utiliser. Le type
+         "location" est obligatoire à partir d'Android 14 (API 34). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

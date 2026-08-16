@@ -8,7 +8,6 @@ import '../config/api_config.dart';
 
 class LocationService {
   static final String _wsBaseUrl = ApiConfig.wsUrl;
-  static const Duration _intervalleEnvoi = Duration(seconds: 3);
   static const Duration _timeoutConnexion = Duration(seconds: 10);
   // Distance minimale (mètres) avant qu'une nouvelle position ne soit
   // poussée au serveur, tant que le conducteur est en ligne sans course
@@ -33,7 +32,11 @@ class LocationService {
 
   WebSocketChannel? _channel;
   StreamSubscription? _streamSubscription;
-  Timer? _timerEnvoi;
+  // Flux GPS continu (pas un Timer) pendant une course — protégé par un
+  // service en foreground (Android) / indicateur arrière-plan (iOS) via
+  // _parametresPositionArrierePlan(), pour continuer à envoyer la position
+  // même écran verrouillé/app en arrière-plan.
+  StreamSubscription<Position>? _streamPositionEnvoi;
   Timer? _timerReconnexion;
   bool _connecte = false;
   // true tant qu'aucun suivi n'est en cours, ou après arreter() — distinct de
@@ -91,7 +94,15 @@ class LocationService {
   }
 
   /// Vérifie et demande les permissions GPS.
-  Future<bool> _verifierPermissions() async {
+  ///
+  /// `arrierePlan=true` demande en plus l'upgrade vers "Toujours" (Android
+  /// 11+/iOS), nécessaire pour continuer à envoyer la position écran
+  /// verrouillé. Dégrade proprement si refusé : le suivi continue quand même
+  /// tant que l'app reste au premier plan, plutôt que de bloquer toute la
+  /// course pour une permission optionnelle — je ne peux pas tester sur
+  /// appareil réel depuis cet environnement le comportement exact de cette
+  /// 2e demande selon les versions d'OS, à vérifier en conditions réelles.
+  Future<bool> _verifierPermissions({bool arrierePlan = false}) async {
     try {
       final servicesActifs = await Geolocator.isLocationServiceEnabled();
       if (!servicesActifs) {
@@ -110,18 +121,52 @@ class LocationService {
         return false;
       }
 
-      return true;
+      if (arrierePlan && permission != LocationPermission.always) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      return permission != LocationPermission.denied &&
+          permission != LocationPermission.deniedForever;
     } catch (e) {
       debugPrint('[LocationService] Erreur vérification permissions : $e');
       return false;
     }
   }
 
-  /// Côté CONDUCTEUR : démarre l'envoi de position GPS toutes les 3s.
+  /// Paramètres de flux GPS pendant une course active : service en
+  /// foreground (Android, notification persistante obligatoire pour que le
+  /// suivi survive écran verrouillé) ou indicateur arrière-plan (iOS).
+  LocationSettings _parametresPositionArrierePlan() {
+    const distanceFiltre = 10; // mètres — assez fin pour un véhicule, sans spammer à l'arrêt
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFiltre,
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'Course en cours',
+          notificationText: 'Ta position est partagée avec le client pendant la course.',
+          enableWakeLock: true,
+        ),
+      );
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return AppleSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFiltre,
+        pauseLocationUpdatesAutomatically: false,
+        showBackgroundLocationIndicator: true,
+      );
+    }
+    return const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: distanceFiltre);
+  }
+
+  /// Côté CONDUCTEUR : démarre l'envoi de position GPS pendant une course —
+  /// flux continu (pas un polling toutes les 3s) protégé par un service en
+  /// foreground, pour continuer même écran verrouillé/app en arrière-plan.
   Future<void> demarrerEnvoiPosition(String demandeId) async {
     if (!_arrete) return; // Déjà démarré (ou reconnexion en cours)
 
-    final permissionsOk = await _verifierPermissions();
+    final permissionsOk = await _verifierPermissions(arrierePlan: true);
     if (!permissionsOk) return;
 
     _arrete = false;
@@ -136,10 +181,12 @@ class LocationService {
     }
     _ecouterEtatConnexion();
 
-    // Envoie immédiatement la position actuelle, sans attendre le 1er tick
-    await _envoyerPositionActuelle();
-
-    _timerEnvoi = Timer.periodic(_intervalleEnvoi, (_) => _envoyerPositionActuelle());
+    _streamPositionEnvoi = Geolocator.getPositionStream(
+      locationSettings: _parametresPositionArrierePlan(),
+    ).listen(
+      (position) => envoyerPosition(position.latitude, position.longitude),
+      onError: (e) => debugPrint('[LocationService] Erreur flux envoi : $e'),
+    );
   }
 
   /// Établit uniquement la connexion WebSocket d'envoi, SANS démarrer de
@@ -271,35 +318,6 @@ class LocationService {
     }
   }
 
-  Future<void> _envoyerPositionActuelle() async {
-    // Pas de _timerEnvoi?.cancel() ici : le timer doit continuer de tourner
-    // pendant une reconnexion, pour reprendre l'envoi automatiquement dès
-    // que _connecte redevient true — sinon plus rien n'est jamais renvoyé
-    // après le premier blip réseau, même une fois reconnecté.
-    if (!_connecte || _channel == null) return;
-
-    try {
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 5),
-        ),
-      );
-
-      final message = jsonEncode({
-        'lat': position.latitude,
-        'lng': position.longitude,
-      });
-
-      _channel?.sink.add(message);
-      debugPrint('[LocationService] Position envoyée : ${position.latitude}, ${position.longitude}');
-    } on TimeoutException {
-      debugPrint('[LocationService] Timeout GPS — on réessaie au prochain tick');
-    } catch (e) {
-      debugPrint('[LocationService] Erreur envoi position : $e');
-    }
-  }
-
   /// Côté CLIENT : écoute les positions du conducteur en temps réel.
   Future<void> ecouterPosition(
     String demandeId,
@@ -410,8 +428,10 @@ class LocationService {
       _ecouterPositionsEntrantes(_callbackPositionActif!);
     } else {
       _ecouterEtatConnexion();
-      // _timerEnvoi n'a jamais été annulé : il reprend l'envoi sur ce
-      // nouveau _channel dès son prochain tick.
+      // _streamPositionEnvoi (s'il existe, mode demarrerEnvoiPosition) n'a
+      // jamais été annulé : il reprend l'envoi sur ce nouveau _channel dès
+      // son prochain évènement GPS. Rien à faire ici pour connecterPourEnvoi
+      // (l'appelant pousse lui-même via envoyerPosition()).
     }
   }
 
@@ -420,8 +440,8 @@ class LocationService {
     _arrete = true;
     _timerReconnexion?.cancel();
     _timerReconnexion = null;
-    _timerEnvoi?.cancel();
-    _timerEnvoi = null;
+    _streamPositionEnvoi?.cancel();
+    _streamPositionEnvoi = null;
     _streamSubscription?.cancel();
     _streamSubscription = null;
     _channel?.sink.close();
