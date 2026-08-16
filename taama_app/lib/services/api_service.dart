@@ -1,7 +1,21 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
+import '../models/service_course.dart';
+
+/// Levée par estimerCourse quand l'estimation n'est pas exploitable (réseau,
+/// timeout, statut HTTP non-200, réponse racine pas une liste) — distincte
+/// d'une liste vide (0 service dispo), qui n'est PAS une erreur. L'appelant
+/// (résultats_recherche_screen.dart) doit basculer sur le flux statique
+/// uniquement sur cette exception, jamais sur une liste vide.
+class EstimationIndisponibleException implements Exception {
+  final String message;
+  EstimationIndisponibleException(this.message);
+  @override
+  String toString() => message;
+}
 
 /// Service centralisé pour tous les appels au backend Django.
 /// L'URL vient de ApiConfig (voir lib/config/api_config.dart) : par défaut
@@ -173,6 +187,67 @@ class ApiService {
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
+  /// Estimation de prix par service (POST /trajets/estimer/) — jamais de
+  /// prix envoyé par le client, uniquement les 4 coordonnées. Lève
+  /// [EstimationIndisponibleException] pour toute erreur réseau/HTTP/format
+  /// racine (jamais de liste vide silencieuse dans ces cas-là : une liste
+  /// vide signifie "0 service dispo", ce qui est un résultat valide, pas une
+  /// erreur — à l'appelant de distinguer les deux).
+  static Future<List<ServiceCourse>> estimerCourse({
+    required double departLat,
+    required double departLng,
+    required double arriveeLat,
+    required double arriveeLng,
+  }) async {
+    final http.Response reponse;
+    try {
+      reponse = await http.post(
+        Uri.parse('$_baseUrl/trajets/estimer/'),
+        headers: _headers,
+        body: jsonEncode({
+          'depart_lat': departLat,
+          'depart_lng': departLng,
+          'arrivee_lat': arriveeLat,
+          'arrivee_lng': arriveeLng,
+        }),
+      );
+    } catch (e) {
+      throw EstimationIndisponibleException('Estimation indisponible (réseau) : $e');
+    }
+
+    if (reponse.statusCode != 200) {
+      String message = 'Estimation indisponible (HTTP ${reponse.statusCode})';
+      try {
+        final corps = jsonDecode(reponse.body);
+        message = corps['erreur'] ?? corps['detail'] ?? message;
+      } catch (_) {
+        // Corps non-JSON : on garde le message HTTP générique ci-dessus.
+      }
+      throw EstimationIndisponibleException(message);
+    }
+
+    final List<dynamic> brut;
+    try {
+      brut = jsonDecode(reponse.body) as List<dynamic>;
+    } catch (e) {
+      throw EstimationIndisponibleException('Réponse estimer_course invalide (pas une liste) : $e');
+    }
+
+    // Une entrée mal formée (id invalide -> FormatException de
+    // ServiceCourse.fromJson) est ignorée sans faire échouer les autres —
+    // un seul service en base avec un souci ne doit pas priver le client de
+    // toute estimation.
+    final services = <ServiceCourse>[];
+    for (final entree in brut) {
+      try {
+        services.add(ServiceCourse.fromJson(entree as Map<String, dynamic>));
+      } on FormatException catch (e) {
+        debugPrint('[ApiService] Entrée estimer_course ignorée : $e');
+      }
+    }
+    return services;
+  }
+
   // ─── Passager : réservations existantes (règlement de l'existant) ─────────
 
   static Future<List<dynamic>> mesReservations() async {
@@ -197,20 +272,35 @@ class ApiService {
   static Future<Map<String, dynamic>> creerDemandeInstantanee({
     required String destination,
     required double distanceKm,
-    required String typeTransport,
+    String? typeTransport,
+    int? typeServiceId,
     DateTime? dateHeurePlanifiee,
     double? departLat,
     double? departLng,
     double? destinationLat,
     double? destinationLng,
   }) async {
+    assert(
+      (typeServiceId != null) != (typeTransport != null),
+      'Exactement un de typeServiceId / typeTransport doit être fourni',
+    );
+    // L'assert ci-dessus disparaît des builds release — ce garde-fou reste
+    // actif en prod, pour ne jamais poster une demande sans aucun type ni
+    // avec les deux à la fois.
+    if ((typeServiceId == null) == (typeTransport == null)) {
+      throw ArgumentError(
+          'Exactement un de typeServiceId / typeTransport doit être fourni');
+    }
+
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/demandes/creer/'),
       headers: _headers,
       body: jsonEncode({
         'destination': destination,
         'distance_km': double.parse(distanceKm.toStringAsFixed(1)),
-        'type_transport': typeTransport,
+        if (typeServiceId != null) 'type_service': typeServiceId,
+        if (typeServiceId == null && typeTransport != null)
+          'type_transport': typeTransport,
         if (dateHeurePlanifiee != null)
           'date_heure_planifiee': dateHeurePlanifiee.toIso8601String(),
         if (departLat != null) 'depart_lat': departLat,

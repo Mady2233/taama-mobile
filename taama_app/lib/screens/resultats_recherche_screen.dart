@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import '../models/service_course.dart';
 import '../services/api_service.dart';
 import '../theme/couleurs_taama.dart';
 import '../widgets/widget_choix_vehicule.dart';
@@ -181,6 +182,30 @@ class _EcranDemandeInstantaneeState
   Future<void> _confirmer() async {
     if (_distanceKm == null) return;
 
+    // null par défaut = mode statique (widget_choix_vehicule.dart bascule
+    // dessus automatiquement). Tenté uniquement si on a les 4 coordonnées
+    // requises par estimer_course ; toute erreur réseau/HTTP y bascule
+    // aussi explicitement (jamais une liste vide silencieuse confondue avec
+    // "0 service dispo").
+    List<ServiceCourse>? services;
+    if (widget.typePreselectionne == null &&
+        _departLat != null && _departLng != null &&
+        _destinationLat != null && _destinationLng != null) {
+      try {
+        services = await ApiService.estimerCourse(
+          departLat: _departLat!, departLng: _departLng!,
+          arriveeLat: _destinationLat!, arriveeLng: _destinationLng!,
+        );
+      } on EstimationIndisponibleException catch (e) {
+        debugPrint('[Resultats] Estimation KO, flux statique : $e');
+        services = null;
+      }
+    }
+    // Await ci-dessus => contexte potentiellement démonté avant d'ouvrir le
+    // sheet (contrairement à widget_choix_vehicule.dart, qui n'a aucun await
+    // dans son chemin d'interaction).
+    if (!mounted) return;
+
     final choix = await afficherChoixVehicule(
       context,
       destination: widget.destination,
@@ -188,6 +213,7 @@ class _EcranDemandeInstantaneeState
       typePreselectionne: widget.typePreselectionne,
       detailPrixVoiture: _detailPrixVoiture,
       detailPrixMoto: _detailPrixMoto,
+      services: services,
     );
     if (choix == null || !mounted) return;
 
@@ -207,16 +233,30 @@ class _EcranDemandeInstantaneeState
 
     setState(() => _enChargement = true);
     try {
-      final demande = await ApiService.creerDemandeInstantanee(
-        destination: widget.destination,
-        distanceKm: _distanceKm!,
-        typeTransport: choix['type'] as String,
-        dateHeurePlanifiee: dateHeurePlanifiee,
-        departLat: _departLat,
-        departLng: _departLng,
-        destinationLat: _destinationLat,
-        destinationLng: _destinationLng,
-      );
+      final Map<String, dynamic> demande;
+      if (choix['type_service'] != null) {
+        demande = await ApiService.creerDemandeInstantanee(
+          destination: widget.destination,
+          distanceKm: _distanceKm!,
+          typeServiceId: choix['type_service'] as int,
+          dateHeurePlanifiee: dateHeurePlanifiee,
+          departLat: _departLat,
+          departLng: _departLng,
+          destinationLat: _destinationLat,
+          destinationLng: _destinationLng,
+        );
+      } else {
+        demande = await ApiService.creerDemandeInstantanee(
+          destination: widget.destination,
+          distanceKm: _distanceKm!,
+          typeTransport: choix['type'] as String, // mode statique, clé historique
+          dateHeurePlanifiee: dateHeurePlanifiee,
+          departLat: _departLat,
+          departLng: _departLng,
+          destinationLat: _destinationLat,
+          destinationLng: _destinationLng,
+        );
+      }
       if (!mounted) return;
 
       if (dateHeurePlanifiee != null) {
@@ -231,7 +271,11 @@ class _EcranDemandeInstantaneeState
             builder: (_) => EcranSuiviDemande(
               demandeId: demande['id'] as int,
               destination: widget.destination,
-              typeTransport: choix['type'] as String,
+              // demande['type_transport'] (renvoyé par le serveur, dérivé
+              // côté backend même pour le chemin type_service) — PAS
+              // choix['type'], absent en mode dynamique et qui ferait
+              // planter ce cast.
+              typeTransport: demande['type_transport'] as String,
             ),
           ),
         );
