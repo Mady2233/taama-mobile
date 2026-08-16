@@ -69,14 +69,30 @@ Future<Map<String, dynamic>?> afficherDialogueAnnulation(
               style: TextStyle(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
-            // Sélecteur de motif
-            ...{
-              'changement_plan': 'Changement de plan',
-              'attente_trop_longue': 'Attente trop longue',
-              'erreur_saisie': 'Erreur de saisie',
-              'conducteur_absent': 'Conducteur absent',
-              'autre': 'Autre raison',
-            }.entries.map((entry) => RadioListTile<String>(
+            // Sélecteur de motif — codes alignés sur
+            // Annulation.MOTIF_CHOICES_CLIENT / MOTIF_CHOICES_CONDUCTEUR
+            // (trajets/models.py backend) : le backend compare en set exact,
+            // sensible à la casse, donc ces codes doivent matcher au caractère
+            // près, et la liste doit changer selon qui annule.
+            ...(estChauffeur
+                ? const {
+                    'CLIENT_ABSENT': 'Client absent',
+                    'ADRESSE_INTROUVABLE': 'Adresse introuvable',
+                    'TROP_LOIN': 'Trop loin',
+                    'PROBLEME_VEHICULE': 'Problème de véhicule',
+                    'CLIENT_IRRESPECTUEUX': 'Client irrespectueux',
+                    'AUTRE': 'Autre raison',
+                  }
+                : const {
+                    'ATTENTE_TROP_LONGUE': 'Attente trop longue',
+                    'CONDUCTEUR_INJOIGNABLE': 'Conducteur injoignable',
+                    'ERREUR_ADRESSE': "Erreur d'adresse",
+                    'PLUS_BESOIN': 'Plus besoin du trajet',
+                    'PRIX_TROP_ELEVE': 'Prix trop élevé',
+                    'CONDUCTEUR_NE_VIENT_PAS': 'Le conducteur ne vient pas',
+                    'AUTRE': 'Autre raison',
+                  }
+            ).entries.map((entry) => RadioListTile<String>(
               title: Text(entry.value, style: const TextStyle(fontSize: 14)),
               value: entry.key,
               groupValue: motifChoisi,

@@ -1,6 +1,7 @@
 // DESIGN_V3_FINAL
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 import '../services/api_service.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/location_service.dart';
@@ -778,13 +779,25 @@ class _CarteDemande extends StatelessWidget {
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => EcranNavigation(
-                    demandeId: demande['id'] is int
-                        ? demande['id'] as int
-                        : int.tryParse(demande['id'].toString()) ?? 0,
-                    destination: demande['destination']?.toString() ?? '',
-                    telephoneClient: demande['client_telephone']?.toString(),
-                  ),
+                  builder: (context) {
+                    // depart_lat/depart_lng : vraie position de prise en
+                    // charge du client, déjà dans la réponse API. Sans ça,
+                    // EcranNavigation géocode le texte `destination` (où le
+                    // client VEUT ALLER) et affiche ce point comme position
+                    // du client — bug corrigé ici.
+                    final departLat = (demande['depart_lat'] as num?)?.toDouble();
+                    final departLng = (demande['depart_lng'] as num?)?.toDouble();
+                    return EcranNavigation(
+                      demandeId: demande['id'] is int
+                          ? demande['id'] as int
+                          : int.tryParse(demande['id'].toString()) ?? 0,
+                      destination: demande['destination']?.toString() ?? '',
+                      positionClient: (departLat != null && departLng != null)
+                          ? LatLng(departLat, departLng)
+                          : null,
+                      telephoneClient: demande['client_telephone']?.toString(),
+                    );
+                  },
                 ),
               ),
               icon: const Icon(Icons.navigation, size: 18),

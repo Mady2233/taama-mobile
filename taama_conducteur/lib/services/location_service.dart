@@ -24,11 +24,28 @@ class LocationService {
   // déclencher quasi simultanément ; au plus un envoi réseau toutes les 4s,
   // pour rester largement sous le throttle backend (30/min).
   static const Duration _intervalleMinimumEntreEnvois = Duration(seconds: 4);
+  // Reconnexion (canal WS par-course) : backoff exponentiel plafonné —
+  // récupère vite sur un simple blip réseau, sans marteler le serveur si
+  // la coupure dure. Sans rapport avec le suivi REST "en ligne" ci-dessus,
+  // qui gère déjà ses erreurs de flux indépendamment.
+  static const Duration _delaiReconnexionInitial = Duration(seconds: 2);
+  static const Duration _delaiReconnexionMax = Duration(seconds: 20);
 
   WebSocketChannel? _channel;
   StreamSubscription? _streamSubscription;
   Timer? _timerEnvoi;
+  Timer? _timerReconnexion;
   bool _connecte = false;
+  // true tant qu'aucun suivi n'est en cours, ou après arreter() — distinct de
+  // `_connecte` : entre deux tentatives de reconnexion, on n'est pas connecté
+  // mais on n'est pas non plus "arrêté", il ne faut pas abandonner.
+  bool _arrete = true;
+  Duration _delaiReconnexion = _delaiReconnexionInitial;
+
+  // Mémorisés pour pouvoir relancer exactement le même suivi après une
+  // reconnexion (le stream d'un WebSocket fermé n'est jamais réutilisable).
+  String? _demandeIdActive;
+  void Function(double lat, double lng)? _callbackPositionActif;
 
   // Suivi REST (indépendant du WebSocket ci-dessus) : actif tant que le
   // conducteur est "en ligne" (disponible=true), qu'il ait une course en
@@ -102,13 +119,22 @@ class LocationService {
 
   /// Côté CONDUCTEUR : démarre l'envoi de position GPS toutes les 3s.
   Future<void> demarrerEnvoiPosition(String demandeId) async {
-    if (_connecte) return; // Déjà démarré
+    if (!_arrete) return; // Déjà démarré (ou reconnexion en cours)
 
     final permissionsOk = await _verifierPermissions();
     if (!permissionsOk) return;
 
+    _arrete = false;
+    _demandeIdActive = demandeId;
+    _callbackPositionActif = null; // mode envoi : rien à réécouter après reconnexion
+    _delaiReconnexion = _delaiReconnexionInitial;
+
     final connexionOk = await _connecter(demandeId);
-    if (!connexionOk) return;
+    if (!connexionOk) {
+      _planifierReconnexion();
+      return;
+    }
+    _ecouterEtatConnexion();
 
     // Envoie immédiatement la position actuelle, sans attendre le 1er tick
     await _envoyerPositionActuelle();
@@ -212,10 +238,11 @@ class LocationService {
   }
 
   Future<void> _envoyerPositionActuelle() async {
-    if (!_connecte || _channel == null) {
-      _timerEnvoi?.cancel();
-      return;
-    }
+    // Pas de _timerEnvoi?.cancel() ici : le timer doit continuer de tourner
+    // pendant une reconnexion, pour reprendre l'envoi automatiquement dès
+    // que _connecte redevient true — sinon plus rien n'est jamais renvoyé
+    // après le premier blip réseau, même une fois reconnecté.
+    if (!_connecte || _channel == null) return;
 
     try {
       final position = await Geolocator.getCurrentPosition(
@@ -244,31 +271,42 @@ class LocationService {
     String demandeId,
     void Function(double lat, double lng) onPosition,
   ) async {
-    if (_connecte) return;
+    if (!_arrete) return;
+
+    _arrete = false;
+    _demandeIdActive = demandeId;
+    _callbackPositionActif = onPosition;
+    _delaiReconnexion = _delaiReconnexionInitial;
 
     final connexionOk = await _connecter(demandeId);
-    if (!connexionOk) return;
+    if (!connexionOk) {
+      _planifierReconnexion();
+      return;
+    }
+    _ecouterPositionsEntrantes(onPosition);
+  }
 
+  void _ecouterPositionsEntrantes(void Function(double lat, double lng) onPosition) {
     _streamSubscription = _channel?.stream.listen(
       (data) {
         try {
-          final message = jsonDecode(data?.toString() ?? '{}') 
+          final message = jsonDecode(data?.toString() ?? '{}')
               as Map<String, dynamic>;
-          
+
           final latRaw = message['lat'];
           final lngRaw = message['lng'];
-          
+
           if (latRaw == null || lngRaw == null) return;
-          
+
           final lat = (latRaw as num).toDouble();
           final lng = (lngRaw as num).toDouble();
-          
+
           // Validation des coordonnées (Bamako : lat ~12.6, lng ~-8.0)
           if (lat.abs() > 90 || lng.abs() > 180) {
             debugPrint('[LocationService] Coordonnées invalides reçues');
             return;
           }
-          
+
           onPosition(lat, lng);
         } catch (e) {
           debugPrint('[LocationService] Erreur parsing position : $e');
@@ -276,17 +314,78 @@ class LocationService {
       },
       onError: (e) {
         debugPrint('[LocationService] Erreur stream WebSocket : $e');
-        _connecte = false;
+        _gererDeconnexion();
       },
       onDone: () {
         debugPrint('[LocationService] WebSocket fermé');
-        _connecte = false;
+        _gererDeconnexion();
       },
     );
   }
 
+  /// Écoute le canal côté CONDUCTEUR (envoi) — aucun message n'y est
+  /// attendu, mais sans ce listener onError/onDone ne se déclenchent
+  /// jamais : sink.add() sur un canal mort échoue silencieusement et rien
+  /// ne détecte la coupure.
+  void _ecouterEtatConnexion() {
+    _streamSubscription = _channel?.stream.listen(
+      (_) {},
+      onError: (e) {
+        debugPrint('[LocationService] Erreur canal envoi : $e');
+        _gererDeconnexion();
+      },
+      onDone: () {
+        debugPrint('[LocationService] Canal envoi fermé');
+        _gererDeconnexion();
+      },
+    );
+  }
+
+  void _gererDeconnexion() {
+    _connecte = false;
+    if (_arrete) return; // arreter() appelé entre-temps : ne rien relancer.
+    _planifierReconnexion();
+  }
+
+  void _planifierReconnexion() {
+    _timerReconnexion?.cancel();
+    debugPrint('[LocationService] Reconnexion dans ${_delaiReconnexion.inSeconds}s');
+    _timerReconnexion = Timer(_delaiReconnexion, _tenterReconnexion);
+    final prochainDelai = _delaiReconnexion.inSeconds * 2;
+    _delaiReconnexion = Duration(
+      seconds: prochainDelai > _delaiReconnexionMax.inSeconds
+          ? _delaiReconnexionMax.inSeconds
+          : prochainDelai,
+    );
+  }
+
+  Future<void> _tenterReconnexion() async {
+    if (_arrete || _demandeIdActive == null) return;
+
+    _channel?.sink.close();
+    final connexionOk = await _connecter(_demandeIdActive!);
+    if (!connexionOk) {
+      _planifierReconnexion();
+      return;
+    }
+
+    _delaiReconnexion = _delaiReconnexionInitial; // succès : backoff réinitialisé
+    debugPrint('[LocationService] Reconnecté');
+
+    if (_callbackPositionActif != null) {
+      _ecouterPositionsEntrantes(_callbackPositionActif!);
+    } else {
+      _ecouterEtatConnexion();
+      // _timerEnvoi n'a jamais été annulé : il reprend l'envoi sur ce
+      // nouveau _channel dès son prochain tick.
+    }
+  }
+
   /// Arrête proprement l'envoi/écoute et ferme le WebSocket.
   void arreter() {
+    _arrete = true;
+    _timerReconnexion?.cancel();
+    _timerReconnexion = null;
     _timerEnvoi?.cancel();
     _timerEnvoi = null;
     _streamSubscription?.cancel();
@@ -294,6 +393,8 @@ class LocationService {
     _channel?.sink.close();
     _channel = null;
     _connecte = false;
+    _demandeIdActive = null;
+    _callbackPositionActif = null;
     debugPrint('[LocationService] Service arrêté proprement');
   }
 }
