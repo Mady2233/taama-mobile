@@ -40,6 +40,12 @@ class _EcranDemandeInstantaneeState
   // la demande pour attribuer le chauffeur le plus proche.
   double? _departLat;
   double? _departLng;
+  // Position GPS de la destination géocodée — déjà calculée juste en
+  // dessous pour l'estimation de distance/prix, transmise en plus à la
+  // création de la demande pour guider la 2e jambe de navigation du
+  // conducteur (client à bord -> destination).
+  double? _destinationLat;
+  double? _destinationLng;
 
   // Planification
   bool _planifier = false;
@@ -79,12 +85,19 @@ class _EcranDemandeInstantaneeState
 
       double latDest = 12.6392; // Bamako par défaut
       double lngDest = -8.0029;
+      // Distinct de "latDest/lngDest sont les vraies coordonnées" : les
+      // valeurs par défaut ci-dessus servent à l'estimation de distance
+      // même si le géocodage échoue, mais ne doivent JAMAIS être envoyées
+      // au backend comme position de destination (ça guiderait le
+      // conducteur vers le centre de Bamako au lieu de la vraie adresse).
+      bool geocodageReussi = false;
 
       if (reponse.statusCode == 200) {
         final res = jsonDecode(reponse.body) as List;
         if (res.isNotEmpty) {
           latDest = double.parse(res[0]['lat'].toString());
           lngDest = double.parse(res[0]['lon'].toString());
+          geocodageReussi = true;
         }
       }
 
@@ -112,6 +125,10 @@ class _EcranDemandeInstantaneeState
         _prixEstimeMoto = prixM;
         _departLat = position.latitude;
         _departLng = position.longitude;
+        if (geocodageReussi) {
+          _destinationLat = latDest;
+          _destinationLng = lngDest;
+        }
         _calcul = false;
       });
 
@@ -197,6 +214,8 @@ class _EcranDemandeInstantaneeState
         dateHeurePlanifiee: dateHeurePlanifiee,
         departLat: _departLat,
         departLng: _departLng,
+        destinationLat: _destinationLat,
+        destinationLng: _destinationLng,
       );
       if (!mounted) return;
 

@@ -33,7 +33,10 @@ class _MesConversationsClientScreenState extends State<MesConversationsClientScr
       setState(() {
         _reservations = reservations.where((r) => r['statut'] == 'confirmee').toList();
         _demandes = demandes
-            .where((d) => d['statut'] == 'chauffeur_trouve' || d['statut'] == 'en_route')
+            .where((d) =>
+                d['statut'] == 'chauffeur_trouve' ||
+                d['statut'] == 'en_route' ||
+                d['statut'] == 'client_a_bord')
             .toList();
       });
     } catch (e) {
@@ -49,6 +52,8 @@ class _MesConversationsClientScreenState extends State<MesConversationsClientScr
         return 'Conducteur trouvé';
       case 'en_route':
         return 'En route';
+      case 'client_a_bord':
+        return 'Vers votre destination';
       default:
         return statut;
     }

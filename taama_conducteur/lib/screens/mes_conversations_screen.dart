@@ -42,6 +42,8 @@ class _MesConversationsScreenState extends State<MesConversationsScreen> {
         return 'Conducteur trouvé';
       case 'en_route':
         return 'En route';
+      case 'client_a_bord':
+        return 'Client à bord';
       default:
         return statut;
     }

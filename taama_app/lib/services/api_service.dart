@@ -201,6 +201,8 @@ class ApiService {
     DateTime? dateHeurePlanifiee,
     double? departLat,
     double? departLng,
+    double? destinationLat,
+    double? destinationLng,
   }) async {
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/demandes/creer/'),
@@ -213,6 +215,8 @@ class ApiService {
           'date_heure_planifiee': dateHeurePlanifiee.toIso8601String(),
         if (departLat != null) 'depart_lat': departLat,
         if (departLng != null) 'depart_lng': departLng,
+        if (destinationLat != null) 'destination_lat': destinationLat,
+        if (destinationLng != null) 'destination_lng': destinationLng,
       }),
     );
     return _traiterReponse(reponse, codeAttendu: 201) as Map<String, dynamic>;

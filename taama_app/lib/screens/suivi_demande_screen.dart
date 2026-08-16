@@ -95,7 +95,10 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
       if (_statut == 'termine' || _statut == 'annule') {
         _timerPolling?.cancel();
       }
-      if (_statut == 'en_route') {
+      // client_a_bord : la course continue, le suivi GPS du conducteur ne
+      // doit surtout pas s'arrêter juste au moment où le client est en
+      // route vers sa destination — c'est là qu'il en a le plus besoin.
+      if (_statut == 'en_route' || _statut == 'client_a_bord') {
         _demarrerSuiviPosition();
       } else if (_suiviPositionDemarre) {
         _locationService.arreter();
@@ -217,6 +220,8 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
       case 'chauffeur_trouve':
         return 'Conducteur trouvé !';
       case 'en_route':
+        return 'Le conducteur vient vous chercher';
+      case 'client_a_bord':
         return 'En route vers votre destination';
       case 'termine':
         return 'Trajet terminé';
@@ -375,7 +380,7 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
                   ),
                 ),
               ],
-              if ((_statut == 'en_route' || _statut == 'termine') && !_paye) ...[
+              if ((_statut == 'en_route' || _statut == 'client_a_bord' || _statut == 'termine') && !_paye) ...[
                 const SizedBox(height: 12),
                 ElevatedButton(
                   onPressed: _enPaiement ? null : _payer,
@@ -406,7 +411,7 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
                   ),
                 ),
               // Bouton de notation, uniquement si payée et pas encore notée
-              if (_paye && !_dejaNote && (_statut == 'en_route' || _statut == 'termine')) ...[
+              if (_paye && !_dejaNote && (_statut == 'en_route' || _statut == 'client_a_bord' || _statut == 'termine')) ...[
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
                   onPressed: _proposerNotation,
@@ -420,7 +425,10 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
                   ),
                 ),
               ],
-              if (_statut != 'termine' && _statut != 'annule') ...[
+              // Une fois le client à bord, l'annulation n'a plus de sens
+              // opérationnel (déjà dans le véhicule) — cohérent avec le
+              // backend, qui ne l'autorise plus non plus à cette étape.
+              if (_statut != 'termine' && _statut != 'annule' && _statut != 'client_a_bord') ...[
                 const SizedBox(height: 12),
                 OutlinedButton(
                   onPressed: _enAnnulation ? null : _annuler,

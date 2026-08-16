@@ -160,7 +160,7 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
       final couleur = switch (statut) {
         'termine' => Colors.green,
         'annule' => Colors.grey,
-        'en_route' => Colors.blue,
+        'en_route' || 'client_a_bord' => Colors.blue,
         _ => Colors.orange,
       };
       return (

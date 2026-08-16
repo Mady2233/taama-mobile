@@ -134,6 +134,7 @@ class _EcranActiviteState extends State<EcranActivite>
       'annulee' => 'Annulée',
       'refusee' => 'Refusée',
       'en_route' => 'En route 🚗',
+      'client_a_bord' => 'Vers destination 🚗',
       'termine' => 'Terminée ✓',
       'chauffeur_trouve' => 'Conducteur trouvé',
       'en_recherche' => 'En recherche...',
@@ -146,7 +147,7 @@ class _EcranActiviteState extends State<EcranActivite>
     return switch (statut) {
       'confirmee' || 'termine' => Colors.green,
       'refusee' || 'annulee' => Colors.red,
-      'en_route' || 'chauffeur_trouve' => Colors.blue,
+      'en_route' || 'chauffeur_trouve' || 'client_a_bord' => Colors.blue,
       'en_recherche' || 'en_attente' => Colors.orange,
       'planifiee' => Colors.purple,
       _ => Colors.grey,

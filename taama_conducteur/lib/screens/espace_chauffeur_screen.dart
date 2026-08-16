@@ -70,7 +70,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   void _synchroniserSuiviPosition() {
     try {
       final idsEnRoute = _demandesAssignees
-          .where((d) => d['statut'] == 'en_route')
+          .where((d) => d['statut'] == 'en_route' || d['statut'] == 'client_a_bord')
           .map((d) => d['id'] as int)
           .toSet();
 
@@ -771,9 +771,10 @@ class _CarteDemande extends StatelessWidget {
                 ),
               ],
             ),
-          // Uniquement 'en_route' : avant acceptation, ni la navigation ni
-          // le téléphone du client n'ont à être exposés au conducteur.
-          if (demande['statut'] == 'en_route') ...[
+          // 'en_route' (vers le client) ou 'client_a_bord' (vers sa
+          // destination) : avant acceptation, ni la navigation ni le
+          // téléphone du client n'ont à être exposés au conducteur.
+          if (demande['statut'] == 'en_route' || demande['statut'] == 'client_a_bord') ...[
             const SizedBox(height: 8),
             ElevatedButton.icon(
               onPressed: () => Navigator.push(
@@ -787,14 +788,29 @@ class _CarteDemande extends StatelessWidget {
                     // du client — bug corrigé ici.
                     final departLat = (demande['depart_lat'] as num?)?.toDouble();
                     final departLng = (demande['depart_lng'] as num?)?.toDouble();
+                    final destinationLat = (demande['destination_lat'] as num?)?.toDouble();
+                    final destinationLng = (demande['destination_lng'] as num?)?.toDouble();
+                    // Si le client est déjà à bord (écran de navigation
+                    // rouvert après l'avoir quitté), on route directement
+                    // vers la destination — pas de 2e jambe à redéclencher,
+                    // le passage en 'client_a_bord' a déjà eu lieu côté
+                    // backend.
+                    final clientDejaABord = demande['statut'] == 'client_a_bord';
+                    final positionClient = clientDejaABord
+                        ? (destinationLat != null && destinationLng != null
+                            ? LatLng(destinationLat, destinationLng)
+                            : null)
+                        : (departLat != null && departLng != null
+                            ? LatLng(departLat, departLng)
+                            : null);
                     return EcranNavigation(
                       demandeId: demande['id'] is int
                           ? demande['id'] as int
                           : int.tryParse(demande['id'].toString()) ?? 0,
                       destination: demande['destination']?.toString() ?? '',
-                      positionClient: (departLat != null && departLng != null)
-                          ? LatLng(departLat, departLng)
-                          : null,
+                      positionClient: positionClient,
+                      destinationLat: clientDejaABord ? null : destinationLat,
+                      destinationLng: clientDejaABord ? null : destinationLng,
                       telephoneClient: demande['client_telephone']?.toString(),
                     );
                   },

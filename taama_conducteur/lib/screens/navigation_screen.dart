@@ -28,6 +28,13 @@ class EcranNavigation extends StatefulWidget {
   final String destination;
   final LatLng? positionClient; // Si connue, sinon on utilise le géocodage
   final String? telephoneClient;
+  // Position réelle de la destination du client (géocodée à la création de
+  // la demande) — permet une 2e jambe de navigation une fois le client
+  // récupéré. Absente sur une demande créée avant ce champ, ou si le
+  // géocodage avait échoué côté app cliente : dans ce cas, comportement
+  // historique inchangé (une seule jambe, jusqu'au point de départ).
+  final double? destinationLat;
+  final double? destinationLng;
 
   const EcranNavigation({
     super.key,
@@ -35,6 +42,8 @@ class EcranNavigation extends StatefulWidget {
     required this.destination,
     this.positionClient,
     this.telephoneClient,
+    this.destinationLat,
+    this.destinationLng,
   });
 
   @override
@@ -62,8 +71,16 @@ class _EcranNavigationState extends State<EcranNavigation> {
   bool _chargement = true;
   bool _navigationDemarree = false;
   bool _arriveeDetectee = false;
+  // false = 1re jambe (vers le point de départ du client) ; true = 2e jambe
+  // (client à bord, vers sa destination).
+  bool _jambeVersDestination = false;
   Timer? _timerPosition;
   StreamSubscription<Position>? _positionStream;
+
+  LatLng? get _positionDestinationReelle {
+    if (widget.destinationLat == null || widget.destinationLng == null) return null;
+    return LatLng(widget.destinationLat!, widget.destinationLng!);
+  }
 
   @override
   void initState() {
@@ -286,8 +303,9 @@ class _EcranNavigationState extends State<EcranNavigation> {
     }
   }
 
-  /// Détecte automatiquement l'arrivée à destination (< 100m) et propose
-  /// de terminer la course.
+  /// Détecte automatiquement l'arrivée au point suivi (< 100m). Sur la 1re
+  /// jambe (vers le client), bascule vers la 2e jambe si une destination
+  /// réelle est connue ; sinon (ou sur la 2e jambe), propose de terminer.
   Future<void> _verifierArrivee() async {
     if (_arriveeDetectee || _positionConducteur == null || _positionClient == null) return;
 
@@ -296,10 +314,44 @@ class _EcranNavigationState extends State<EcranNavigation> {
 
     if (d <= 100) {
       _arriveeDetectee = true;
+
+      if (!_jambeVersDestination && _positionDestinationReelle != null) {
+        await _demarrerJambeVersDestination();
+        return;
+      }
+
       await _tts.speak('Vous êtes arrivé à destination');
       if (!mounted) return;
       _proposerFinDeCourse();
     }
+  }
+
+  /// Le conducteur vient d'atteindre le point de départ du client : signale
+  /// "client à bord" au backend (best-effort, non bloquant — même en cas
+  /// d'échec réseau, le guidage vers la destination continue, mieux vaut un
+  /// statut pas à jour qu'un conducteur laissé sans itinéraire), puis
+  /// bascule le point suivi vers la vraie destination et recalcule la route.
+  Future<void> _demarrerJambeVersDestination() async {
+    try {
+      await ApiService.marquerClientABord(widget.demandeId);
+    } catch (e) {
+      debugPrint('[Navigation] Erreur marquer client à bord : $e');
+    }
+
+    await _tts.speak('Client à bord. Direction : ${widget.destination}');
+    if (!mounted) return;
+
+    setState(() {
+      _jambeVersDestination = true;
+      _positionClient = _positionDestinationReelle;
+      _arriveeDetectee = false;
+      _etapes = [];
+      _etapeIndex = 0;
+      _etapeAnnoncee = false;
+    });
+
+    await _calculerItineraire();
+    _centrerCarte();
   }
 
   void _proposerFinDeCourse() {
@@ -547,7 +599,9 @@ class _EcranNavigationState extends State<EcranNavigation> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            widget.destination,
+                            _jambeVersDestination
+                                ? widget.destination
+                                : 'Récupération du client',
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,

@@ -200,6 +200,8 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
             positionClient: (_departLat != null && _departLng != null)
                 ? LatLng(_departLat!, _departLng!)
                 : null,
+            destinationLat: (demandeAcceptee['destination_lat'] as num?)?.toDouble(),
+            destinationLng: (demandeAcceptee['destination_lng'] as num?)?.toDouble(),
             telephoneClient: demandeAcceptee['client_telephone']?.toString(),
           ),
         ),
