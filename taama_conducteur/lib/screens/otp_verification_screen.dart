@@ -20,7 +20,7 @@ class EcranVerificationOTP extends StatefulWidget {
 }
 
 class _EcranVerificationOTPState extends State<EcranVerificationOTP> {
-  // Mon contrôleur pour le code de vérification à 4 chiffres
+  // Mon contrôleur pour le code de vérification à 6 chiffres
   final TextEditingController _otpController = TextEditingController();
 
   // Pour afficher un loader pendant l'appel réseau
@@ -36,9 +36,9 @@ class _EcranVerificationOTPState extends State<EcranVerificationOTP> {
   Future<void> _verifierEtContinuer() async {
     final code = _otpController.text;
 
-    if (code.length != 4) {
+    if (code.length != 6) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Entre le code à 4 chiffres complet')),
+        const SnackBar(content: Text('Entre le code à 6 chiffres complet')),
       );
       return;
     }
@@ -108,7 +108,7 @@ class _EcranVerificationOTPState extends State<EcranVerificationOTP> {
               const SizedBox(height: 8),
               // J'affiche le numéro pour confirmer à l'utilisateur
               Text(
-                'Un code à 4 chiffres a été envoyé au ${widget.numeroTelephone}',
+                'Un code à 6 chiffres a été envoyé au ${widget.numeroTelephone}',
                 style: const TextStyle(fontSize: 16, color: Colors.grey),
               ),
               const SizedBox(height: 32),
@@ -117,9 +117,9 @@ class _EcranVerificationOTPState extends State<EcranVerificationOTP> {
                 controller: _otpController,
                 keyboardType: TextInputType.number,
                 textAlign: TextAlign.center,
-                maxLength: 4, // Je limite à 4 chiffres max
+                maxLength: 6, // Je limite à 6 chiffres max
                 style: const TextStyle(
-                    fontSize: 32, letterSpacing: 24, fontWeight: FontWeight.bold),
+                    fontSize: 28, letterSpacing: 16, fontWeight: FontWeight.bold),
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly
                 ], // Uniquement des chiffres autorisés
