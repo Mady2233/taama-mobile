@@ -43,6 +43,7 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
   final MapController _mapController = MapController();
   LatLng? _positionConducteur;
   LatLng? _positionDepart;
+  LatLng? _positionDestination;
   bool _suiviPositionDemarre = false;
   DateTime? _dernierePositionRecue;
   Timer? _timerPeremption;
@@ -52,6 +53,29 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
   bool get _positionConducteurPerimee {
     if (_dernierePositionRecue == null) return false;
     return DateTime.now().difference(_dernierePositionRecue!) > _seuilPeremptionPosition;
+  }
+
+  /// Point vers lequel le conducteur se dirige actuellement : le point de
+  /// départ tant qu'il n'a pas récupéré le client, sa destination une fois
+  /// à bord (client_a_bord) — jamais l'un à la place de l'autre, sinon la
+  /// distance/ETA affichée serait fausse pendant la 2e jambe.
+  LatLng? get _pointCible =>
+      _statut == 'client_a_bord' ? _positionDestination : _positionDepart;
+
+  /// Distance/ETA entre le conducteur et le point cible — estimation locale
+  /// (vitesse moyenne ville, comme le reste de l'app), pas un appel OSRM :
+  /// suffisant pour une indication approximative côté client, qui n'a pas
+  /// besoin d'un itinéraire précis (contrairement à l'app conducteur).
+  (double, int)? get _distanceEtEtaKm {
+    final conducteur = _positionConducteur;
+    final cible = _pointCible;
+    if (conducteur == null || cible == null) return null;
+    const distanceCalc = Distance();
+    final metres = distanceCalc(conducteur, cible);
+    final km = metres / 1000;
+    const vitesseMoyenneKmh = 20;
+    final minutes = (km / vitesseMoyenneKmh * 60).ceil().clamp(1, 999);
+    return (km, minutes);
   }
 
   @override
@@ -89,6 +113,14 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
           _positionDepart = LatLng(
             (departLat as num).toDouble(),
             (departLng as num).toDouble(),
+          );
+        }
+        final destLat = demande['destination_lat'];
+        final destLng = demande['destination_lng'];
+        if (destLat != null && destLng != null) {
+          _positionDestination = LatLng(
+            (destLat as num).toDouble(),
+            (destLng as num).toDouble(),
           );
         }
       });
@@ -347,10 +379,24 @@ class _EcranSuiviDemandeState extends State<EcranSuiviDemande> {
                 ),
               if (_suiviPositionDemarre) ...[
                 const SizedBox(height: 16),
+                if (_distanceEtEtaKm != null && !_positionConducteurPerimee)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.directions_car, size: 16, color: Colors.grey),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${_distanceEtEtaKm!.$1.toStringAsFixed(1)} km · ~${_distanceEtEtaKm!.$2} min',
+                          style: const TextStyle(color: Colors.grey, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
                 _MiniCarteConducteur(
                   mapController: _mapController,
                   position: _positionConducteur,
-                  positionClient: _positionDepart,
+                  positionClient: _pointCible,
                   positionPerimee: _positionConducteurPerimee,
                 ),
               ],

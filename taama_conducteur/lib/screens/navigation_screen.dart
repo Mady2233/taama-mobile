@@ -433,8 +433,11 @@ class _EcranNavigationState extends State<EcranNavigation> {
   void _demarrerNavigation() {
     setState(() => _navigationDemarree = true);
 
-    // Démarre le suivi GPS en temps réel et envoie la position au client
-    _locationService.demarrerEnvoiPosition(widget.demandeId.toString());
+    // Connexion WebSocket seule (pas de boucle GPS interne à LocationService)
+    // : cet écran a déjà sa propre boucle ci-dessous pour sa carte/son
+    // itinéraire, elle sert aussi à l'envoi via envoyerPosition() — évite un
+    // 2e appel GPS concurrent toutes les 3s pour la même information.
+    _locationService.connecterPourEnvoi(widget.demandeId.toString());
 
     // Met à jour la position conducteur sur la carte toutes les 3s
     _timerPosition = Timer.periodic(const Duration(seconds: 3), (_) async {
@@ -457,6 +460,10 @@ class _EcranNavigationState extends State<EcranNavigation> {
           _positionConducteur = nouvellePosition;
           _vitesseKmh = vitesseKmh;
         });
+
+        // Réutilise cette même position pour le client — pas de 2e requête
+        // GPS séparée pour ça.
+        _locationService.envoyerPosition(position.latitude, position.longitude);
 
         // Ne recalcule l'itinéraire que si on s'est écarté de la route
         if (_estHorsItineraire()) {

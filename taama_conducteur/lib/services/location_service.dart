@@ -142,6 +142,40 @@ class LocationService {
     _timerEnvoi = Timer.periodic(_intervalleEnvoi, (_) => _envoyerPositionActuelle());
   }
 
+  /// Établit uniquement la connexion WebSocket d'envoi, SANS démarrer de
+  /// boucle GPS interne (pas de _timerEnvoi) — pour un appelant qui gère
+  /// déjà sa propre boucle de position (ex. EcranNavigation, qui interroge
+  /// le GPS pour sa carte/son itinéraire) et veut réutiliser cette même
+  /// position via envoyerPosition() au lieu de refaire un 2e appel GPS.
+  Future<bool> connecterPourEnvoi(String demandeId) async {
+    if (!_arrete) return _connecte; // Déjà démarré (ou reconnexion en cours)
+
+    final permissionsOk = await _verifierPermissions();
+    if (!permissionsOk) return false;
+
+    _arrete = false;
+    _demandeIdActive = demandeId;
+    _callbackPositionActif = null;
+    _delaiReconnexion = _delaiReconnexionInitial;
+
+    final connexionOk = await _connecter(demandeId);
+    if (!connexionOk) {
+      _planifierReconnexion();
+      return false;
+    }
+    _ecouterEtatConnexion();
+    return true;
+  }
+
+  /// Envoie une position déjà obtenue par l'appelant — aucun appel GPS ici,
+  /// contrairement à _envoyerPositionActuelle(). À utiliser après
+  /// connecterPourEnvoi(), jamais après demarrerEnvoiPosition() (qui gère
+  /// déjà son propre envoi périodique).
+  void envoyerPosition(double lat, double lng) {
+    if (!_connecte || _channel == null) return;
+    _channel?.sink.add(jsonEncode({'lat': lat, 'lng': lng}));
+  }
+
   /// Côté CONDUCTEUR : démarre le suivi GPS "en ligne" (indépendant d'une
   /// course précise) — position immédiate puis flux continu (distanceFilter
   /// ~25m) poussé via POST /chauffeur/position/. Actif tant que le
