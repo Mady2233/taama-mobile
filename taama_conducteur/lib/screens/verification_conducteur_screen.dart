@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -71,12 +70,9 @@ class _EcranVerificationConducteurState extends State<EcranVerificationConducteu
 
     setState(() => _envoi = true);
     try {
-      final permisBase64 = base64Encode(await _photoPermis!.readAsBytes());
-      final assuranceBase64 = base64Encode(await _photoAssurance!.readAsBytes());
-
       await ApiService.soumettreVerification(
-        permisPhoto: permisBase64,
-        assurancePhoto: assuranceBase64,
+        permis: _photoPermis!,
+        assurance: _photoAssurance!,
       );
 
       if (!mounted) return;

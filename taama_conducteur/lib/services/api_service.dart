@@ -218,17 +218,19 @@ class ApiService {
   // ─── Vérification conducteur (KYC) ────────────────────────────────────────
 
   static Future<Map<String, dynamic>> soumettreVerification({
-    required String permisPhoto,
-    required String assurancePhoto,
+    required File permis,
+    required File assurance,
   }) async {
-    final reponse = await http.post(
+    final requete = http.MultipartRequest(
+      'POST',
       Uri.parse('$_baseUrl/trajets/chauffeur/soumettre-verification/'),
-      headers: _headers,
-      body: jsonEncode({
-        'permis_photo': permisPhoto,
-        'assurance_photo': assurancePhoto,
-      }),
     );
+    requete.headers.addAll(_headers..remove('Content-Type'));
+    requete.files.add(await http.MultipartFile.fromPath('permis', permis.path));
+    requete.files.add(await http.MultipartFile.fromPath('assurance', assurance.path));
+
+    final reponseStream = await requete.send();
+    final reponse = await http.Response.fromStream(reponseStream);
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
