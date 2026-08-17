@@ -134,15 +134,55 @@ class ApiService {
   static Future<Map<String, dynamic>> creerMonProfilChauffeur({
     required String nom,
     required String typeTransport,
-    required String vehicule,
+    required String typeVehicule,
+    required String marque,
+    required String modele,
+    required String couleur,
     required String plaque,
   }) async {
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/chauffeur/creer-mon-profil/'),
       headers: _headers,
-      body: jsonEncode({'nom': nom, 'type_transport': typeTransport, 'vehicule': vehicule, 'plaque': plaque}),
+      body: jsonEncode({
+        'nom': nom,
+        'type_transport': typeTransport,
+        'type_vehicule': typeVehicule,
+        'marque': marque,
+        'modele': modele,
+        'couleur': couleur,
+        'plaque': plaque,
+      }),
     );
     return _traiterReponse(reponse, codeAttendu: 201) as Map<String, dynamic>;
+  }
+
+  /// Complète/corrige les infos du véhicule après la création du profil —
+  /// mise à jour partielle : seuls les champs fournis (non null) sont
+  /// envoyés/modifiés. Sans cet appel, un profil créé avec un champ vide
+  /// (ex. type_vehicule, avant l'ajout du sélecteur à l'inscription) ne
+  /// pouvait être corrigé que par l'admin Django.
+  static Future<Map<String, dynamic>> modifierMonVehicule({
+    String? typeVehicule,
+    String? marque,
+    String? modele,
+    String? couleur,
+    String? plaque,
+    bool? climatisation,
+  }) async {
+    final corps = <String, dynamic>{};
+    if (typeVehicule != null) corps['type_vehicule'] = typeVehicule;
+    if (marque != null) corps['marque'] = marque;
+    if (modele != null) corps['modele'] = modele;
+    if (couleur != null) corps['couleur'] = couleur;
+    if (plaque != null) corps['plaque'] = plaque;
+    if (climatisation != null) corps['climatisation'] = climatisation;
+
+    final reponse = await http.patch(
+      Uri.parse('$_baseUrl/trajets/chauffeur/modifier-vehicule/'),
+      headers: _headers,
+      body: jsonEncode(corps),
+    );
+    return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
   static Future<bool> changerDisponibilite() async {

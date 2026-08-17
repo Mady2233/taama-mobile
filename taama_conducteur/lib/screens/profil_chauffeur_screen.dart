@@ -5,8 +5,9 @@ import '../services/api_service.dart';
 import '../widgets/widget_avatar_conducteur.dart';
 
 /// Écran de profil côté conducteur : téléphone, nom modifiable, infos du
-/// véhicule (gérées par l'admin pour l'instant), et historique complet de
-/// toutes ses courses (réservations reçues + demandes instantanées).
+/// véhicule modifiables par le conducteur lui-même (type, marque, modèle,
+/// couleur, plaque, climatisation), et historique complet de toutes ses
+/// courses (réservations reçues + demandes instantanées).
 class EcranProfilChauffeur extends StatefulWidget {
   const EcranProfilChauffeur({super.key});
 
@@ -27,6 +28,39 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
   bool _uploadPhotoEnCours = false;
   final ImagePicker _picker = ImagePicker();
 
+  // ─── Édition des infos véhicule ────────────────────────────────────────
+  final TextEditingController _marqueVehiculeController = TextEditingController();
+  final TextEditingController _modeleVehiculeController = TextEditingController();
+  final TextEditingController _plaqueVehiculeController = TextEditingController();
+  String? _typeVehiculeSelectionne;
+  String? _couleurSelectionnee;
+  bool _climatisationSelectionnee = false;
+  bool _modeEditionVehicule = false;
+  bool _enregistrementVehicule = false;
+
+  // Correspond à Chauffeur.TYPE_VEHICULE_CHOICES (backend).
+  static const Map<String, String> _typesVehicule = {
+    'MOTO': 'Moto',
+    'BERLINE': 'Berline',
+    '4X4': '4x4 / SUV',
+    'TRICYCLE': 'Tricycle',
+  };
+
+  // Correspond à Chauffeur.COULEUR_CHOICES (backend).
+  static const Map<String, String> _couleurs = {
+    'BLANC': 'Blanc',
+    'NOIR': 'Noir',
+    'GRIS': 'Gris',
+    'ARGENT': 'Argent',
+    'ROUGE': 'Rouge',
+    'BLEU': 'Bleu',
+    'VERT': 'Vert',
+    'JAUNE': 'Jaune',
+    'MARRON': 'Marron',
+    'BEIGE': 'Beige',
+    'AUTRE': 'Autre',
+  };
+
   @override
   void initState() {
     super.initState();
@@ -37,6 +71,9 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
   void dispose() {
     _prenomController.dispose();
     _nomController.dispose();
+    _marqueVehiculeController.dispose();
+    _modeleVehiculeController.dispose();
+    _plaqueVehiculeController.dispose();
     super.dispose();
   }
 
@@ -136,6 +173,59 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
       );
     } finally {
       if (mounted) setState(() => _enregistrement = false);
+    }
+  }
+
+  void _debuterEditionVehicule() {
+    _marqueVehiculeController.text = _chauffeur?['marque']?.toString() ?? '';
+    _modeleVehiculeController.text = _chauffeur?['modele']?.toString() ?? '';
+    _plaqueVehiculeController.text = _chauffeur?['plaque']?.toString() ?? '';
+    final typeVehiculeActuel = _chauffeur?['type_vehicule']?.toString();
+    final couleurActuelle = _chauffeur?['couleur']?.toString();
+    setState(() {
+      _typeVehiculeSelectionne = (typeVehiculeActuel?.isNotEmpty ?? false) ? typeVehiculeActuel : null;
+      _couleurSelectionnee = (couleurActuelle?.isNotEmpty ?? false) ? couleurActuelle : null;
+      _climatisationSelectionnee = _chauffeur?['climatisation'] as bool? ?? false;
+      _modeEditionVehicule = true;
+    });
+  }
+
+  Future<void> _enregistrerVehicule() async {
+    if (_typeVehiculeSelectionne == null || _couleurSelectionnee == null ||
+        _marqueVehiculeController.text.trim().isEmpty ||
+        _modeleVehiculeController.text.trim().isEmpty ||
+        _plaqueVehiculeController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Remplis tous les champs du véhicule')),
+      );
+      return;
+    }
+
+    setState(() => _enregistrementVehicule = true);
+    try {
+      final chauffeur = await ApiService.modifierMonVehicule(
+        typeVehicule: _typeVehiculeSelectionne,
+        marque: _marqueVehiculeController.text.trim(),
+        modele: _modeleVehiculeController.text.trim(),
+        couleur: _couleurSelectionnee,
+        plaque: _plaqueVehiculeController.text.trim(),
+        climatisation: _climatisationSelectionnee,
+      );
+      if (!mounted) return;
+      setState(() {
+        _chauffeur = {...?_chauffeur, ...chauffeur};
+        _modeEditionVehicule = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Véhicule mis à jour')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _enregistrementVehicule = false);
     }
   }
 
@@ -286,9 +376,26 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
                             children: [
                               Icon(Icons.directions_car, size: 18, color: Colors.grey.shade600),
                               const SizedBox(width: 8),
-                              Text(
-                                '${_chauffeur!['type_transport']} • ${_chauffeur!['vehicule']} • ${_chauffeur!['plaque']}',
-                                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                              Expanded(
+                                child: Text(
+                                  '${_chauffeur!['type_transport']} • '
+                                  '${_chauffeur!['marque'] ?? ''} ${_chauffeur!['modele'] ?? ''} • '
+                                  '${_chauffeur!['plaque']}',
+                                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                                ),
+                              ),
+                              IconButton(
+                                icon: Icon(
+                                  _modeEditionVehicule ? Icons.close : Icons.edit,
+                                  size: 20, color: Colors.grey.shade700,
+                                ),
+                                onPressed: () {
+                                  if (_modeEditionVehicule) {
+                                    setState(() => _modeEditionVehicule = false);
+                                  } else {
+                                    _debuterEditionVehicule();
+                                  }
+                                },
                               ),
                             ],
                           ),
@@ -303,11 +410,67 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Les infos du véhicule sont gérées par l\'administrateur.',
-                            style: TextStyle(fontSize: 11, color: Colors.grey.shade400, fontStyle: FontStyle.italic),
-                          ),
+                          if (!_modeEditionVehicule) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Couleur : ${_couleurs[_chauffeur!['couleur']] ?? 'non renseignée'}'
+                              '${(_chauffeur!['climatisation'] as bool? ?? false) ? ' • Climatisée' : ''}',
+                              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                            ),
+                          ],
+                          if (_modeEditionVehicule) ...[
+                            const SizedBox(height: 16),
+                            DropdownButtonFormField<String>(
+                              initialValue: _typeVehiculeSelectionne,
+                              decoration: const InputDecoration(labelText: 'Type de véhicule', border: OutlineInputBorder()),
+                              items: _typesVehicule.entries
+                                  .map((entree) => DropdownMenuItem(value: entree.key, child: Text(entree.value)))
+                                  .toList(),
+                              onChanged: (valeur) => setState(() => _typeVehiculeSelectionne = valeur),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _marqueVehiculeController,
+                              decoration: const InputDecoration(labelText: 'Marque (ex: Toyota)', border: OutlineInputBorder()),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _modeleVehiculeController,
+                              decoration: const InputDecoration(labelText: 'Modèle (ex: Corolla)', border: OutlineInputBorder()),
+                            ),
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<String>(
+                              initialValue: _couleurSelectionnee,
+                              decoration: const InputDecoration(labelText: 'Couleur', border: OutlineInputBorder()),
+                              items: _couleurs.entries
+                                  .map((entree) => DropdownMenuItem(value: entree.key, child: Text(entree.value)))
+                                  .toList(),
+                              onChanged: (valeur) => setState(() => _couleurSelectionnee = valeur),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _plaqueVehiculeController,
+                              decoration: const InputDecoration(labelText: 'Plaque d\'immatriculation', border: OutlineInputBorder()),
+                            ),
+                            const SizedBox(height: 4),
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('Véhicule climatisé'),
+                              value: _climatisationSelectionnee,
+                              onChanged: (valeur) => setState(() => _climatisationSelectionnee = valeur),
+                            ),
+                            const SizedBox(height: 8),
+                            ElevatedButton(
+                              onPressed: _enregistrementVehicule ? null : _enregistrerVehicule,
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
+                              child: _enregistrementVehicule
+                                  ? const SizedBox(
+                                      width: 18, height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                                    )
+                                  : const Text('Enregistrer le véhicule'),
+                            ),
+                          ],
                         ],
                       ],
                     ),
