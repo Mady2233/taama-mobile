@@ -118,6 +118,13 @@ class ApiService {
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
+  /// Identique à monProfilChauffeur() (même endpoint, même comportement) —
+  /// nom dédié pour l'écran de vérification KYC, sur demande explicite.
+  static Future<Map<String, dynamic>> monProfilConducteur() async {
+    final reponse = await http.get(Uri.parse('$_baseUrl/trajets/chauffeur/mon-profil/'), headers: _headers);
+    return _traiterReponse(reponse) as Map<String, dynamic>;
+  }
+
   static Future<Map<String, dynamic>> uploaderPhotoProfil(File photo) async {
     final requete = http.MultipartRequest(
       'POST',
@@ -218,16 +225,30 @@ class ApiService {
   // ─── Vérification conducteur (KYC) ────────────────────────────────────────
 
   static Future<Map<String, dynamic>> soumettreVerification({
-    required File permis,
-    required File assurance,
+    required File piece,
+    File? permis,
+    File? assurance,
+    File? photo,
+    String? numeroCaisse,
   }) async {
     final requete = http.MultipartRequest(
       'POST',
       Uri.parse('$_baseUrl/trajets/chauffeur/soumettre-verification/'),
     );
     requete.headers.addAll(_headers..remove('Content-Type'));
-    requete.files.add(await http.MultipartFile.fromPath('permis', permis.path));
-    requete.files.add(await http.MultipartFile.fromPath('assurance', assurance.path));
+    requete.files.add(await http.MultipartFile.fromPath('piece', piece.path));
+    if (permis != null) {
+      requete.files.add(await http.MultipartFile.fromPath('permis', permis.path));
+    }
+    if (assurance != null) {
+      requete.files.add(await http.MultipartFile.fromPath('assurance', assurance.path));
+    }
+    if (photo != null) {
+      requete.files.add(await http.MultipartFile.fromPath('photo', photo.path));
+    }
+    if (numeroCaisse != null && numeroCaisse.isNotEmpty) {
+      requete.fields['numero_caisse'] = numeroCaisse;
+    }
 
     final reponseStream = await requete.send();
     final reponse = await http.Response.fromStream(reponseStream);
