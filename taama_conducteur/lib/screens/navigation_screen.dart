@@ -12,6 +12,18 @@ import '../theme/couleurs_taama.dart';
 import '../services/location_service.dart';
 import '../services/api_service.dart';
 
+/// Convertit le champ JSON brut `arrets` d'une demande (venant de l'API,
+/// voir ArretDemandeSerializer côté backend) en liste triée par ordre, prête
+/// pour [EcranNavigation.arrets]. Défensif : l'API renvoie déjà les arrêts
+/// triés (Meta.ordering du modèle), mais un tri explicite ici ne coûte rien
+/// et protège contre un futur changement de comportement du backend.
+List<Map<String, dynamic>> extraireArrets(dynamic arretsJson) {
+  if (arretsJson is! List) return const [];
+  final arrets = arretsJson.cast<Map<String, dynamic>>().toList()
+    ..sort((a, b) => (a['ordre'] as num).compareTo(b['ordre'] as num));
+  return arrets;
+}
+
 /// Une instruction de navigation ("tournez à droite", ...) associée au point
 /// GPS où elle doit être annoncée, extraite des "steps" retournés par OSRM.
 class _EtapeNavigation {
@@ -36,6 +48,12 @@ class EcranNavigation extends StatefulWidget {
   // historique inchangé (une seule jambe, jusqu'au point de départ).
   final double? destinationLat;
   final double? destinationLng;
+  // Arrêts intermédiaires du passager, DANS L'ORDRE, entre son point de
+  // départ et sa destination finale (voir extraireArrets ci-dessus pour les
+  // obtenir depuis la réponse API brute) — pris en compte uniquement sur la
+  // 2e jambe (client à bord), jamais sur la 1re (aller chercher le client,
+  // qui n'a rien à voir avec ses arrêts).
+  final List<Map<String, dynamic>> arrets;
 
   const EcranNavigation({
     super.key,
@@ -45,6 +63,7 @@ class EcranNavigation extends StatefulWidget {
     this.telephoneClient,
     this.destinationLat,
     this.destinationLng,
+    this.arrets = const [],
   });
 
   @override
@@ -221,12 +240,23 @@ class _EcranNavigationState extends State<EcranNavigation> {
     if (_positionConducteur == null || _positionClient == null) return;
 
     try {
-      // OSRM : API de routage open source, gratuite et sans clé API
-      // steps=true pour récupérer les instructions de navigation (virages, etc.)
+      // Arrêts intermédiaires uniquement sur la 2e jambe (client à bord) —
+      // avant ça, ils n'ont pas encore de sens pour l'itinéraire du
+      // conducteur (qui va simplement chercher le client).
+      final pointsVia = _jambeVersDestination ? widget.arrets : const [];
+
+      // OSRM : API de routage open source, gratuite et sans clé API.
+      // steps=true pour récupérer les instructions de navigation (virages,
+      // etc.) — fonctionne nativement avec plus de 2 points (legs multiples,
+      // déjà gérés par le expand() plus bas, qui aplati tous les legs).
+      final coords = [
+        '${_positionConducteur!.longitude},${_positionConducteur!.latitude}',
+        for (final a in pointsVia) '${a['longitude']},${a['latitude']}',
+        '${_positionClient!.longitude},${_positionClient!.latitude}',
+      ].join(';');
       final url = Uri.parse(
         'https://router.project-osrm.org/route/v1/driving/'
-        '${_positionConducteur!.longitude},${_positionConducteur!.latitude};'
-        '${_positionClient!.longitude},${_positionClient!.latitude}'
+        '$coords'
         '?overview=full&geometries=geojson&steps=true'
       );
 
@@ -337,7 +367,11 @@ class _EcranNavigationState extends State<EcranNavigation> {
       debugPrint('[Navigation] Erreur marquer client à bord : $e');
     }
 
-    await _tts.speak('Client à bord. Direction : ${widget.destination}');
+    final texteArrets = widget.arrets.isNotEmpty
+        ? ' avec ${widget.arrets.length} arrêt${widget.arrets.length > 1 ? 's' : ''} en chemin'
+        : '';
+    await _tts.speak(
+        'Client à bord. Direction : ${widget.destination}$texteArrets');
     if (!mounted) return;
 
     setState(() {
@@ -584,6 +618,42 @@ class _EcranNavigationState extends State<EcranNavigation> {
                         ),
                       ),
                     ),
+
+                  // Arrêts intermédiaires (2e jambe uniquement, voir
+                  // _calculerItineraire) : petits marqueurs numérotés.
+                  if (_jambeVersDestination)
+                    for (var i = 0; i < widget.arrets.length; i++)
+                      Marker(
+                        point: LatLng(
+                          widget.arrets[i]['latitude'] as double,
+                          widget.arrets[i]['longitude'] as double,
+                        ),
+                        width: 32,
+                        height: 32,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: CouleursTaama.or,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.3),
+                                blurRadius: 6,
+                              ),
+                            ],
+                          ),
+                          child: Center(
+                            child: Text(
+                              '${i + 1}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                 ],
               ),
             ],
@@ -667,6 +737,20 @@ class _EcranNavigationState extends State<EcranNavigation> {
                               fontSize: 13,
                             ),
                           ),
+                          if (_jambeVersDestination && widget.arrets.isNotEmpty) ...[
+                            const SizedBox(width: 16),
+                            const Icon(Icons.flag,
+                                size: 16, color: CouleursTaama.or),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${widget.arrets.length} arrêt${widget.arrets.length > 1 ? 's' : ''}',
+                              style: const TextStyle(
+                                color: CouleursTaama.or,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ],

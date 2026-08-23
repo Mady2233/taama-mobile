@@ -812,6 +812,7 @@ class _CarteDemande extends StatelessWidget {
                       destinationLat: clientDejaABord ? null : destinationLat,
                       destinationLng: clientDejaABord ? null : destinationLng,
                       telephoneClient: demande['client_telephone']?.toString(),
+                      arrets: extraireArrets(demande['arrets']),
                     );
                   },
                 ),
