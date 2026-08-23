@@ -1,10 +1,26 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Obligatoire à partir d'Android 13 (API 33) pour pouvoir afficher la
+         moindre notification — sans cette déclaration, le prompt de
+         permission demandé par NotificationService.initialiser() n'a aucun
+         effet réel sur ces versions. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="Taama"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
+        <!-- Canal utilisé par défaut pour toute notification FCM reçue
+             SANS bloc `android.notification.channel_id` explicite dans le
+             payload — filet de sécurité en plus du channel_id déjà envoyé
+             par envoyer_notification (backend) : garantit qu'une
+             notification arrivant app fermée/tuée utilise le canal haute
+             importance (son + heads-up) et jamais un canal par défaut
+             silencieux. Doit rester aligné avec l'id créé dans
+             NotificationService (lib/services/notification_service.dart). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="taama_notifications" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
