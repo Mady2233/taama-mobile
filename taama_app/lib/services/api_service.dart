@@ -114,6 +114,47 @@ class ApiService {
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
+  // ─── Adresses favorites ───────────────────────────────────────────────────
+
+  static Future<List<dynamic>> mesAdressesFavorites() async {
+    final reponse = await http.get(Uri.parse('$_baseUrl/comptes/mes-adresses/'), headers: _headers);
+    return _traiterReponse(reponse) as List<dynamic>;
+  }
+
+  /// Crée ou met à jour (upsert par libellé côté backend) une adresse
+  /// favorite — réenregistrer "Domicile" écrase l'adresse précédente au
+  /// lieu d'en créer un doublon.
+  static Future<Map<String, dynamic>> enregistrerAdresseFavorite({
+    required String libelle,
+    required String adresse,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final reponse = await http.post(
+      Uri.parse('$_baseUrl/comptes/mes-adresses/enregistrer/'),
+      headers: _headers,
+      body: jsonEncode({
+        'libelle': libelle,
+        'adresse': adresse,
+        if (latitude != null) 'latitude': latitude,
+        if (longitude != null) 'longitude': longitude,
+      }),
+    );
+    return _traiterReponse(reponse, codeAttendu: 201) as Map<String, dynamic>;
+  }
+
+  /// Réponse 204 sans corps : ne passe pas par _traiterReponse (qui tente
+  /// toujours un jsonDecode du corps, invalide ici puisque vide).
+  static Future<void> supprimerAdresseFavorite(int adresseId) async {
+    final reponse = await http.delete(
+      Uri.parse('$_baseUrl/comptes/mes-adresses/$adresseId/'),
+      headers: _headers,
+    );
+    if (reponse.statusCode != 204) {
+      throw Exception('Suppression impossible (${reponse.statusCode})');
+    }
+  }
+
   // ─── Profil conducteur ────────────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> monProfilChauffeur() async {
@@ -279,6 +320,12 @@ class ApiService {
     double? departLng,
     double? destinationLat,
     double? destinationLng,
+    String? codePromo,
+    // Arrêts intermédiaires, DANS L'ORDRE de passage — chaque élément doit
+    // contenir 'adresse' (String), 'latitude' et 'longitude' (double),
+    // sinon le serveur rejette toute la demande (voir ArretSerializer,
+    // backend).
+    List<Map<String, dynamic>>? arrets,
   }) async {
     assert(
       (typeServiceId != null) != (typeTransport != null),
@@ -307,9 +354,35 @@ class ApiService {
         if (departLng != null) 'depart_lng': departLng,
         if (destinationLat != null) 'destination_lat': destinationLat,
         if (destinationLng != null) 'destination_lng': destinationLng,
+        if (codePromo != null && codePromo.isNotEmpty) 'code_promo': codePromo,
+        if (arrets != null && arrets.isNotEmpty)
+          'arrets': arrets
+              .map((a) => {
+                    'adresse': a['adresse'],
+                    'latitude': a['latitude'],
+                    'longitude': a['longitude'],
+                  })
+              .toList(),
       }),
     );
     return _traiterReponse(reponse, codeAttendu: 201) as Map<String, dynamic>;
+  }
+
+  /// Prévisualisation d'une réduction avant confirmation — ne consomme
+  /// aucun quota (seule la création réelle de la demande, ci-dessus,
+  /// enregistre l'utilisation). Lève une Exception (message déjà lisible,
+  /// via _traiterReponse) si le code est introuvable/inactif/expiré/déjà
+  /// utilisé — à l'appelant de l'afficher tel quel.
+  static Future<Map<String, dynamic>> validerCodePromo({
+    required String code,
+    required int prix,
+  }) async {
+    final reponse = await http.post(
+      Uri.parse('$_baseUrl/trajets/code-promo/valider/'),
+      headers: _headers,
+      body: jsonEncode({'code': code, 'prix': prix}),
+    );
+    return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
   static Future<Map<String, dynamic>> detailDemande(int demandeId) async {

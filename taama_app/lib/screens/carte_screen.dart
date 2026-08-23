@@ -38,12 +38,18 @@ class _EcranCarteState extends State<EcranCarte> {
   bool _chargementConducteurs = false;
   Timer? _timerRefreshConducteurs;
 
+  // Raccourcis favoris (Domicile/Travail) affichés sur l'accueil pour un
+  // accès direct sans passer par l'écran de recherche — mêmes données que
+  // recherche_screen.dart, chargées indépendamment ici.
+  List<Map<String, dynamic>> _favoris = [];
+
   @override
   void initState() {
     super.initState();
     _calculerSalutation();
     _chargerProfil();
     _chargerSolde();
+    _chargerFavoris();
     // Dès que l'écran se charge, je lance la recherche de ma position
     _obtenirPositionActuelle();
     _chargerConducteursProches();
@@ -93,6 +99,31 @@ class _EcranCarteState extends State<EcranCarte> {
       final solde = await ApiService.monSolde();
       if (mounted) setState(() => _solde = solde);
     } catch (_) {}
+  }
+
+  /// Échec silencieux volontaire, même logique que recherche_screen.dart :
+  /// un raccourci en moins n'est pas une erreur bloquante.
+  Future<void> _chargerFavoris() async {
+    try {
+      final favoris = await ApiService.mesAdressesFavorites();
+      if (mounted) {
+        setState(() => _favoris = favoris.cast<Map<String, dynamic>>());
+      }
+    } catch (_) {}
+  }
+
+  /// Va directement à la demande instantanée pour une destination déjà
+  /// connue (favori) — saute l'écran de recherche, contrairement au flux
+  /// normal via la barre "Où allez-vous ?".
+  void _allerVersDestination(String destination) {
+    setState(() => _destinationChoisie = destination);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            EcranDemandeInstantanee(destination: destination),
+      ),
+    );
   }
 
   Future<void> _chargerConducteursProches() async {
@@ -508,9 +539,14 @@ class _EcranCarteState extends State<EcranCarte> {
                           ),
                         ),
                         child: Center(
-                          child: Text(
-                            estVoiture ? '🚗' : '🏍️',
-                            style: const TextStyle(fontSize: 16),
+                          child: Icon(
+                            estVoiture
+                                ? Icons.directions_car
+                                : Icons.two_wheeler,
+                            size: 18,
+                            color: estVoiture
+                                ? const Color(0xFF1C2B4A)
+                                : CouleursTaama.terreCuite,
                           ),
                         ),
                       ),
@@ -815,6 +851,55 @@ class _EcranCarteState extends State<EcranCarte> {
               ),
             ),
           ),
+          // Raccourcis favoris — uniquement ceux déjà enregistrés (pas
+          // d'invitation à en ajouter ici, contrairement à l'écran de
+          // recherche : ce panneau reste compact).
+          if (_favoris.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: SizedBox(
+                height: 34,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _favoris.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final favori = _favoris[index];
+                    final libelle = favori['libelle']?.toString() ?? '';
+                    final adresse = favori['adresse']?.toString() ?? '';
+                    final icone = libelle == 'Domicile'
+                        ? Icons.home_rounded
+                        : libelle == 'Travail'
+                            ? Icons.work_rounded
+                            : Icons.star_rounded;
+                    return GestureDetector(
+                      onTap: () => _allerVersDestination(adresse),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: CouleursTaama.indigo.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(17),
+                          border: Border.all(
+                              color: CouleursTaama.indigo.withValues(alpha: 0.15)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(icone, size: 14, color: CouleursTaama.indigo),
+                            const SizedBox(width: 6),
+                            Text(libelle,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: CouleursTaama.indigo)),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
           // Boutons rapides
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),

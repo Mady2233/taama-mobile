@@ -1,12 +1,17 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:latlong2/latlong.dart';
 import '../models/service_course.dart';
 import '../services/api_service.dart';
+import '../services/routing_service.dart';
 import '../theme/couleurs_taama.dart';
 import '../widgets/widget_choix_vehicule.dart';
+import 'recherche_screen.dart';
 import 'suivi_demande_screen.dart';
 
 /// Écran de demande instantanée : la distance est calculée automatiquement
@@ -53,10 +58,62 @@ class _EcranDemandeInstantaneeState
   DateTime? _datePlanifiee;
   TimeOfDay? _heurePlanifiee;
 
+  // Code promo — validé côté serveur avant confirmation (aperçu, ne
+  // consomme aucun quota) ; la réduction réellement appliquée dépend du
+  // véhicule choisi ensuite dans le bottom sheet et n'est recalculée
+  // qu'à la création finale (voir _confirmer), toujours côté serveur.
+  final TextEditingController _codePromoCtrl = TextEditingController();
+  bool _verificationCodePromoEnCours = false;
+  bool? _codePromoValide;
+  int? _reductionCodePromo;
+  String? _erreurCodePromo;
+
+  // Arrêts intermédiaires — MVP volontairement simple : quand des arrêts
+  // sont présents, on force le flux statique (Voiture/Moto, jamais le
+  // catalogue TypeService dynamique) et on n'utilise plus le détail de prix
+  // backend (calculé uniquement pour un trajet à 2 points), pour ne jamais
+  // afficher un prix qui sous-estimerait celui réellement facturé à la
+  // création (voir _recalculerEstimation et _confirmer).
+  static const int _maxArrets = 3;
+  final List<Map<String, dynamic>> _arrets = [];
+  bool _recalculEnCours = false;
+
   @override
   void initState() {
     super.initState();
     _calculerDistanceAuto();
+  }
+
+  Future<void> _verifierCodePromo() async {
+    final code = _codePromoCtrl.text.trim();
+    if (code.isEmpty) return;
+    final prixReference = _prixEstimeVoiture ?? _prixEstimeMoto;
+    if (prixReference == null) return;
+
+    setState(() {
+      _verificationCodePromoEnCours = true;
+      _codePromoValide = null;
+      _erreurCodePromo = null;
+    });
+    try {
+      final resultat = await ApiService.validerCodePromo(
+        code: code,
+        prix: prixReference,
+      );
+      if (!mounted) return;
+      setState(() {
+        _codePromoValide = true;
+        _reductionCodePromo = resultat['reduction'] as int?;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _codePromoValide = false;
+        _erreurCodePromo = e.toString().replaceAll('Exception: ', '');
+      });
+    } finally {
+      if (mounted) setState(() => _verificationCodePromoEnCours = false);
+    }
   }
 
   Future<void> _calculerDistanceAuto() async {
@@ -75,79 +132,112 @@ class _EcranDemandeInstantaneeState
       );
 
       // 2. Géocode la destination (Nominatim OSM - gratuit)
-      final dest = Uri.encodeComponent(
-          '${widget.destination}, Bamako, Mali');
-      final url = Uri.parse(
-          'https://nominatim.openstreetmap.org/search'
-          '?q=$dest&format=json&limit=1');
-      final reponse = await http.get(url, headers: {
-        'User-Agent': 'TaamaApp/1.0',
-      }).timeout(const Duration(seconds: 10));
-
-      double latDest = 12.6392; // Bamako par défaut
-      double lngDest = -8.0029;
-      // Distinct de "latDest/lngDest sont les vraies coordonnées" : les
-      // valeurs par défaut ci-dessus servent à l'estimation de distance
-      // même si le géocodage échoue, mais ne doivent JAMAIS être envoyées
-      // au backend comme position de destination (ça guiderait le
-      // conducteur vers le centre de Bamako au lieu de la vraie adresse).
-      bool geocodageReussi = false;
-
-      if (reponse.statusCode == 200) {
-        final res = jsonDecode(reponse.body) as List;
-        if (res.isNotEmpty) {
-          latDest = double.parse(res[0]['lat'].toString());
-          lngDest = double.parse(res[0]['lon'].toString());
-          geocodageReussi = true;
-        }
-      }
-
-      // 3. Distance Haversine
-      const R = 6371.0;
-      final dLat = _rad(latDest - position.latitude);
-      final dLng = _rad(lngDest - position.longitude);
-      final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
-          math.cos(_rad(position.latitude)) *
-              math.cos(_rad(latDest)) *
-              math.sin(dLng / 2) *
-              math.sin(dLng / 2);
-      final distance = R * 2 * math.asin(math.sqrt(a.clamp(0, 1)));
-
-      // 4. Prix calculés (estimation locale rapide, affichée immédiatement)
-      final voiture = math.max(200, (distance * 150).round());
-      final moto = math.max(150, (distance * 100).round());
-      // Arrondi à 50 FCFA
-      final prixV = ((voiture / 50).round() * 50);
-      final prixM = ((moto / 50).round() * 50);
+      final destGeocodee = await _geocoder(widget.destination);
 
       setState(() {
-        _distanceKm = double.parse(distance.toStringAsFixed(1));
-        _prixEstimeVoiture = prixV;
-        _prixEstimeMoto = prixM;
         _departLat = position.latitude;
         _departLng = position.longitude;
-        if (geocodageReussi) {
-          _destinationLat = latDest;
-          _destinationLng = lngDest;
+        // Ne renseigne _destinationLat/Lng QUE si le géocodage a réussi —
+        // ne doivent JAMAIS pointer vers le centre de Bamako par défaut, ça
+        // guiderait le conducteur au mauvais endroit (voir _recalculerEstimation,
+        // qui utilise ce défaut uniquement pour l'ESTIMATION locale, jamais
+        // transmis tel quel au backend).
+        if (destGeocodee != null) {
+          _destinationLat = destGeocodee.latitude;
+          _destinationLng = destGeocodee.longitude;
         }
         _calcul = false;
       });
 
-      // 5. Récupère le détail de prix officiel (tarification dynamique)
-      // depuis le backend pour les deux types de véhicule.
+      await _recalculerEstimation();
+    } catch (e) {
+      setState(() {
+        _distanceKm = 5.0; // Fallback
+        _prixEstimeVoiture = 750;
+        _prixEstimeMoto = 500;
+        _calcul = false;
+        _erreur = 'Distance estimée (GPS indisponible)';
+      });
+    }
+  }
+
+  /// Géocode un texte d'adresse via Nominatim (OSM, gratuit) — `null` si
+  /// introuvable ou en cas d'erreur réseau, jamais d'exception.
+  Future<LatLng?> _geocoder(String texte) async {
+    try {
+      final q = Uri.encodeComponent('$texte, Bamako, Mali');
+      final url = Uri.parse(
+          'https://nominatim.openstreetmap.org/search?q=$q&format=json&limit=1');
+      final reponse = await http.get(url, headers: {
+        'User-Agent': 'TaamaApp/1.0',
+      }).timeout(const Duration(seconds: 10));
+      if (reponse.statusCode == 200) {
+        final res = jsonDecode(reponse.body) as List;
+        if (res.isNotEmpty) {
+          return LatLng(
+            double.parse(res[0]['lat'].toString()),
+            double.parse(res[0]['lon'].toString()),
+          );
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Recalcule distance/prix pour le trajet complet (départ -> arrêts ->
+  /// destination) — appelée après le calcul initial et à chaque ajout/retrait
+  /// d'arrêt. La distance locale (Haversine, somme des segments) est
+  /// toujours recalculée immédiatement ; le détail de prix backend
+  /// (tarification dynamique) n'est refait que SANS arrêt, ce moteur ne
+  /// sachant traiter qu'un trajet à 2 points — avec arrêts, seule
+  /// l'estimation locale (qui, elle, tient compte de tous les segments)
+  /// reste affichée, jamais un prix backend qui ignorerait les arrêts.
+  Future<void> _recalculerEstimation() async {
+    if (_departLat == null || _departLng == null) return;
+
+    final latDest = _destinationLat ?? 12.6392; // Bamako par défaut
+    final lngDest = _destinationLng ?? -8.0029;
+
+    final points = <List<double>>[
+      [_departLat!, _departLng!],
+      for (final a in _arrets)
+        [a['latitude'] as double, a['longitude'] as double],
+      [latDest, lngDest],
+    ];
+
+    double distanceTotale = 0;
+    for (var i = 0; i < points.length - 1; i++) {
+      distanceTotale += _haversineKm(
+        points[i][0], points[i][1], points[i + 1][0], points[i + 1][1],
+      );
+    }
+
+    final voiture = math.max(200, (distanceTotale * 150).round());
+    final moto = math.max(150, (distanceTotale * 100).round());
+    final prixV = ((voiture / 50).round() * 50);
+    final prixM = ((moto / 50).round() * 50);
+
+    if (!mounted) return;
+    setState(() {
+      _distanceKm = double.parse(distanceTotale.toStringAsFixed(1));
+      _prixEstimeVoiture = prixV;
+      _prixEstimeMoto = prixM;
+      if (_arrets.isNotEmpty) {
+        _detailPrixVoiture = null;
+        _detailPrixMoto = null;
+      }
+    });
+
+    if (_arrets.isEmpty && _destinationLat != null && _destinationLng != null) {
       try {
         final resVoiture = await ApiService.calculerDistanceGPS(
-          latDepart: position.latitude,
-          lonDepart: position.longitude,
-          latArrivee: latDest,
-          lonArrivee: lngDest,
+          latDepart: _departLat!, lonDepart: _departLng!,
+          latArrivee: _destinationLat!, lonArrivee: _destinationLng!,
           typeTransport: 'Voiture',
         );
         final resMoto = await ApiService.calculerDistanceGPS(
-          latDepart: position.latitude,
-          lonDepart: position.longitude,
-          latArrivee: latDest,
-          lonArrivee: lngDest,
+          latDepart: _departLat!, lonDepart: _departLng!,
+          latArrivee: _destinationLat!, lonArrivee: _destinationLng!,
           typeTransport: 'Moto',
         );
         if (mounted) {
@@ -164,20 +254,57 @@ class _EcranDemandeInstantaneeState
         }
       } catch (_) {
         // Le détail de prix backend est optionnel : l'estimation locale
-        // affichée à l'étape 4 reste valable si l'appel échoue.
+        // ci-dessus reste valable si l'appel échoue.
       }
-    } catch (e) {
-      setState(() {
-        _distanceKm = 5.0; // Fallback
-        _prixEstimeVoiture = 750;
-        _prixEstimeMoto = 500;
-        _calcul = false;
-        _erreur = 'Distance estimée (GPS indisponible)';
-      });
     }
   }
 
+  double _haversineKm(double lat1, double lng1, double lat2, double lng2) {
+    const r = 6371.0;
+    final dLat = _rad(lat2 - lat1);
+    final dLng = _rad(lng2 - lng1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_rad(lat1)) * math.cos(_rad(lat2)) *
+            math.sin(dLng / 2) * math.sin(dLng / 2);
+    return r * 2 * math.asin(math.sqrt(a.clamp(0, 1)));
+  }
+
   double _rad(double deg) => deg * math.pi / 180;
+
+  Future<void> _ajouterArret() async {
+    if (_arrets.length >= _maxArrets) return;
+    final resultat = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (context) => const EcranRecherche()),
+    );
+    if (resultat == null || resultat.trim().isEmpty || !mounted) return;
+
+    setState(() => _recalculEnCours = true);
+    final point = await _geocoder(resultat);
+    if (!mounted) return;
+    if (point == null) {
+      setState(() => _recalculEnCours = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Adresse introuvable : $resultat')),
+      );
+      return;
+    }
+
+    setState(() {
+      _arrets.add({
+        'adresse': resultat,
+        'latitude': point.latitude,
+        'longitude': point.longitude,
+      });
+    });
+    await _recalculerEstimation();
+    if (mounted) setState(() => _recalculEnCours = false);
+  }
+
+  Future<void> _supprimerArret(int index) async {
+    setState(() => _arrets.removeAt(index));
+    await _recalculerEstimation();
+  }
 
   Future<void> _confirmer() async {
     if (_distanceKm == null) return;
@@ -186,9 +313,12 @@ class _EcranDemandeInstantaneeState
     // dessus automatiquement). Tenté uniquement si on a les 4 coordonnées
     // requises par estimer_course ; toute erreur réseau/HTTP y bascule
     // aussi explicitement (jamais une liste vide silencieuse confondue avec
-    // "0 service dispo").
+    // "0 service dispo"). Avec des arrêts : mode statique forcé — estimer_course
+    // ne sait traiter qu'un trajet à 2 points, afficherait un prix qui
+    // ignorerait les arrêts (voir _recalculerEstimation).
     List<ServiceCourse>? services;
     if (widget.typePreselectionne == null &&
+        _arrets.isEmpty &&
         _departLat != null && _departLng != null &&
         _destinationLat != null && _destinationLng != null) {
       try {
@@ -231,6 +361,13 @@ class _EcranDemandeInstantaneeState
       }
     }
 
+    // Envoyé tel quel si non-vide, même si _verifierCodePromo n'a jamais été
+    // appuyé — le serveur re-valide intégralement et rejette toute la
+    // demande si le code est invalide (jamais une réduction silencieusement
+    // ignorée, voir creer_demande_instantanee côté backend).
+    final codePromoSaisi = _codePromoCtrl.text.trim();
+    final codePromo = codePromoSaisi.isEmpty ? null : codePromoSaisi;
+
     setState(() => _enChargement = true);
     try {
       final Map<String, dynamic> demande;
@@ -244,6 +381,8 @@ class _EcranDemandeInstantaneeState
           departLng: _departLng,
           destinationLat: _destinationLat,
           destinationLng: _destinationLng,
+          codePromo: codePromo,
+          arrets: _arrets,
         );
       } else {
         demande = await ApiService.creerDemandeInstantanee(
@@ -255,6 +394,8 @@ class _EcranDemandeInstantaneeState
           departLng: _departLng,
           destinationLat: _destinationLat,
           destinationLng: _destinationLng,
+          codePromo: codePromo,
+          arrets: _arrets,
         );
       }
       if (!mounted) return;
@@ -291,6 +432,12 @@ class _EcranDemandeInstantaneeState
   }
 
   @override
+  void dispose() {
+    _codePromoCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: CouleursTaama.sable,
@@ -301,12 +448,33 @@ class _EcranDemandeInstantaneeState
         foregroundColor: Colors.white,
         elevation: 0,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Destination
+      body: Column(
+        children: [
+          // Carte fixe en haut : itinéraire départ → destination, tracé
+          // réel via OSRM (RoutingService) une fois les deux points connus.
+          SizedBox(
+            height: MediaQuery.of(context).size.height * 0.32,
+            child: _CarteApercuItineraire(
+              depart: (_departLat != null && _departLng != null)
+                  ? LatLng(_departLat!, _departLng!)
+                  : null,
+              destination: (_destinationLat != null && _destinationLng != null)
+                  ? LatLng(_destinationLat!, _destinationLng!)
+                  : null,
+              arrets: _arrets
+                  .map((a) =>
+                      LatLng(a['latitude'] as double, a['longitude'] as double))
+                  .toList(),
+              enCalcul: _calcul,
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Destination
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -346,6 +514,99 @@ class _EcranDemandeInstantaneeState
                       ],
                     ),
                   ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Arrêts intermédiaires
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: const [
+                  BoxShadow(color: Colors.black12, blurRadius: 8),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < _arrets.length; i++) ...[
+                    Row(
+                      children: [
+                        Container(
+                          width: 32, height: 32,
+                          decoration: BoxDecoration(
+                            color: CouleursTaama.indigo.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text('${i + 1}',
+                                style: const TextStyle(
+                                    color: CouleursTaama.indigo,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12)),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _arrets[i]['adresse']?.toString() ?? '',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w600, fontSize: 13),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: _recalculEnCours
+                              ? null
+                              : () => _supprimerArret(i),
+                          child: Icon(Icons.close,
+                              size: 18, color: Colors.grey.shade400),
+                        ),
+                      ],
+                    ),
+                    if (i < _arrets.length - 1)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 6),
+                        child: SizedBox(width: 32, child: Divider()),
+                      ),
+                  ],
+                  if (_arrets.isNotEmpty) const SizedBox(height: 12),
+                  if (_arrets.length < _maxArrets)
+                    GestureDetector(
+                      onTap: _recalculEnCours ? null : _ajouterArret,
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 32, height: 32,
+                            decoration: BoxDecoration(
+                              color: CouleursTaama.terreCuite.withValues(alpha: 0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: _recalculEnCours
+                                ? const Padding(
+                                    padding: EdgeInsets.all(8),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: CouleursTaama.terreCuite),
+                                  )
+                                : const Icon(Icons.add,
+                                    color: CouleursTaama.terreCuite, size: 18),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Ajouter un arrêt',
+                            style: TextStyle(
+                                color: CouleursTaama.terreCuite,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -505,6 +766,120 @@ class _EcranDemandeInstantaneeState
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+
+            // Code promo
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.local_offer_outlined,
+                          color: CouleursTaama.indigo, size: 20),
+                      SizedBox(width: 10),
+                      Text('Code promo',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _codePromoCtrl,
+                          textCapitalization: TextCapitalization.characters,
+                          onChanged: (_) {
+                            // Un changement invalide l'aperçu précédent :
+                            // évite d'afficher une réduction qui ne
+                            // correspond plus au texte actuellement saisi.
+                            if (_codePromoValide != null) {
+                              setState(() {
+                                _codePromoValide = null;
+                                _erreurCodePromo = null;
+                              });
+                            }
+                          },
+                          decoration: InputDecoration(
+                            hintText: 'Ex : BIENVENUE',
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 12),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: BorderSide(color: Colors.grey.shade300),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      SizedBox(
+                        height: 44,
+                        child: OutlinedButton(
+                          onPressed: _verificationCodePromoEnCours
+                              ? null
+                              : _verifierCodePromo,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: CouleursTaama.indigo,
+                            side: const BorderSide(color: CouleursTaama.indigo),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: _verificationCodePromoEnCours
+                              ? const SizedBox(
+                                  width: 16, height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: CouleursTaama.indigo),
+                                )
+                              : const Text('Vérifier'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_codePromoValide == true) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.check_circle,
+                            color: Colors.green, size: 16),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Code valide — réduction estimée de $_reductionCodePromo FCFA',
+                          style: const TextStyle(
+                              color: Colors.green,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ] else if (_codePromoValide == false) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.error_outline,
+                            color: Colors.red, size: 16),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _erreurCodePromo ?? 'Code invalide',
+                            style: const TextStyle(
+                                color: Colors.red,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
             const SizedBox(height: 24),
 
             // Bouton confirmer
@@ -541,8 +916,210 @@ class _EcranDemandeInstantaneeState
                       ],
                     ),
             ),
-          ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Aperçu carte de l'itinéraire départ → destination : affiche les deux
+/// marqueurs et le tracé réel (OSRM via [RoutingService]) une fois les deux
+/// points connus, avec repli sur une ligne droite si OSRM est indisponible
+/// (jamais de carte sans tracé — même logique fail-soft que le backend).
+class _CarteApercuItineraire extends StatefulWidget {
+  final LatLng? depart;
+  final LatLng? destination;
+  final List<LatLng> arrets;
+  final bool enCalcul;
+
+  const _CarteApercuItineraire({
+    required this.depart,
+    required this.destination,
+    required this.arrets,
+    required this.enCalcul,
+  });
+
+  @override
+  State<_CarteApercuItineraire> createState() =>
+      _CarteApercuItineraireState();
+}
+
+class _CarteApercuItineraireState extends State<_CarteApercuItineraire> {
+  static const LatLng _centreParDefaut = LatLng(12.6392, -8.0029);
+
+  final MapController _mapController = MapController();
+  List<LatLng>? _trace;
+  bool _chargementTrace = false;
+  List<LatLng>? _pointsRequete;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _chargerSiNecessaire());
+  }
+
+  @override
+  void didUpdateWidget(covariant _CarteApercuItineraire oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _chargerSiNecessaire();
+  }
+
+  void _chargerSiNecessaire() {
+    final depart = widget.depart;
+    final destination = widget.destination;
+    if (depart == null || destination == null) return;
+    final points = [depart, ...widget.arrets, destination];
+    if (listEquals(points, _pointsRequete)) return;
+
+    _pointsRequete = points;
+    _ajusterCamera(points);
+    _chargerTrace(points);
+  }
+
+  void _ajusterCamera(List<LatLng> points) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final bounds = LatLngBounds.fromPoints(points);
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: bounds,
+          padding: const EdgeInsets.fromLTRB(40, 40, 40, 20),
+          maxZoom: 16,
         ),
+      );
+    });
+  }
+
+  Future<void> _chargerTrace(List<LatLng> points) async {
+    setState(() => _chargementTrace = true);
+    final trace = await RoutingService.recupererItineraireMulti(points);
+    if (!mounted) return;
+    setState(() {
+      // Repli ligne droite (segment par segment) si OSRM indisponible —
+      // jamais de carte sans tracé.
+      _trace = trace ?? points;
+      _chargementTrace = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final depart = widget.depart;
+    final destination = widget.destination;
+    final pointsPrets = depart != null && destination != null;
+
+    return ClipRRect(
+      child: Stack(
+        children: [
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: depart ?? _centreParDefaut,
+              initialZoom: 13.0,
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.taama.app',
+                errorTileCallback: (tile, error, stack) {},
+              ),
+              if (_trace != null)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _trace!,
+                      strokeWidth: 4,
+                      color: CouleursTaama.terreCuite,
+                    ),
+                  ],
+                ),
+              MarkerLayer(
+                markers: [
+                  if (depart != null)
+                    Marker(
+                      point: depart,
+                      width: 34,
+                      height: 34,
+                      alignment: Alignment.center,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: CouleursTaama.indigo,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: [
+                            BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.25),
+                                blurRadius: 6),
+                          ],
+                        ),
+                        child: const Icon(Icons.trip_origin,
+                            color: Colors.white, size: 14),
+                      ),
+                    ),
+                  if (destination != null)
+                    Marker(
+                      point: destination,
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.topCenter,
+                      child: const Icon(Icons.location_on,
+                          color: CouleursTaama.terreCuite, size: 40),
+                    ),
+                  for (var i = 0; i < widget.arrets.length; i++)
+                    Marker(
+                      point: widget.arrets[i],
+                      width: 26,
+                      height: 26,
+                      alignment: Alignment.center,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: CouleursTaama.or,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                          boxShadow: [
+                            BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.25),
+                                blurRadius: 4),
+                          ],
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${i + 1}',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          // Overlay de chargement uniquement pendant un calcul en cours (GPS
+          // ou tracé OSRM) — si le calcul est terminé mais que les
+          // coordonnées restent indisponibles (GPS refusé/échoué, voir le
+          // repli dans _calculerDistanceAuto), on affiche juste la carte
+          // centrée sur Bamako plutôt qu'un spinner bloqué indéfiniment.
+          if (widget.enCalcul || (pointsPrets && _chargementTrace))
+            Container(
+              color: Colors.black.withValues(alpha: 0.15),
+              child: const Center(
+                child: SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 3),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

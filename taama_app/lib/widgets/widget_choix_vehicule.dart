@@ -204,7 +204,7 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
             // MODE STATIQUE (comportement historique, inchangé) : 2 cartes
             // en dur, prix locaux/backend-detail déjà calculés plus haut.
             _CarteVehicule(
-              emoji: '🚗',
+              icone: Icons.directions_car,
               label: 'Taama Flex',
               description: 'Confortable • 1-4 passagers',
               prix: prixVoiture,
@@ -218,7 +218,7 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
             const SizedBox(height: 10),
 
             _CarteVehicule(
-              emoji: '🏍️',
+              icone: Icons.two_wheeler,
               label: 'Taama Moto',
               description: 'Rapide • Évite les embouteillages',
               prix: prixMoto,
@@ -339,13 +339,14 @@ class _LignePrix extends StatelessWidget {
 }
 
 class _CarteVehicule extends StatelessWidget {
-  final String emoji, label, description, tempsAttente;
+  final IconData icone;
+  final String label, description, tempsAttente;
   final int prix;
   final Color couleur;
   final VoidCallback onTap;
 
   const _CarteVehicule({
-    required this.emoji, required this.label,
+    required this.icone, required this.label,
     required this.description, required this.prix,
     required this.tempsAttente, required this.onTap,
     this.couleur = CouleursTaama.indigo,
@@ -364,7 +365,7 @@ class _CarteVehicule extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Text(emoji, style: const TextStyle(fontSize: 32)),
+            Icon(icone, size: 32, color: couleur),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
