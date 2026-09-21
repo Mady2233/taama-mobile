@@ -849,24 +849,27 @@ class _BlocNotationState extends State<BlocNotation> {
                   ),
                 ),
                 const SizedBox(height: TaamaSpacing.sm),
-                FilledButton(
-                  onPressed: widget.enCours
-                      ? null
-                      : () {
-                          final texte = _commentaire.text.trim();
-                          widget.onNoter(
-                              _etoiles, texte.isEmpty ? null : texte);
-                        },
-                  child: widget.enCours
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            color: TaamaColors.textOnDark,
-                          ),
-                        )
-                      : const Text('Envoyer'),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: widget.enCours
+                        ? null
+                        : () {
+                            final texte = _commentaire.text.trim();
+                            widget.onNoter(
+                                _etoiles, texte.isEmpty ? null : texte);
+                          },
+                    child: widget.enCours
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: TaamaColors.textOnDark,
+                            ),
+                          )
+                        : const Text('Envoyer'),
+                  ),
                 ),
               ],
             ],

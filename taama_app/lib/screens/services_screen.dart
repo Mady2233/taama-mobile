@@ -82,9 +82,12 @@ class EcranServices extends StatelessWidget {
               style: TextStyle(color: Colors.grey.shade600, height: 1.4),
             ),
             const SizedBox(height: TaamaSpacing.xl),
-            FilledButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Compris'),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Compris'),
+              ),
             ),
           ],
         ),

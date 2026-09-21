@@ -869,16 +869,6 @@ class _EcranDemandeInstantaneeState
                         ),
                       ),
                       const SizedBox(width: 10),
-                      // Pas de SizedBox(height: 44) autour du bouton : un
-                      // SizedBox qui ne fixe QUE la hauteur peut transmettre
-                      // une largeur infinie à son enfant pendant le calcul de
-                      // taille intrinsèque d'une Column en
-                      // CrossAxisAlignment.stretch contenant des Row
-                      // imbriqués (exactement la structure de cet écran) —
-                      // "BoxConstraints forces an infinite width" en plein
-                      // écran, plus rien ne s'affiche en dessous. La hauteur
-                      // passe par minimumSize à la place : le bouton se
-                      // dimensionne naturellement à son contenu.
                       OutlinedButton(
                         onPressed: _verificationCodePromoEnCours
                             ? null
@@ -886,7 +876,6 @@ class _EcranDemandeInstantaneeState
                         style: OutlinedButton.styleFrom(
                           foregroundColor: CouleursTaama.indigo,
                           side: const BorderSide(color: CouleursTaama.indigo),
-                          minimumSize: const Size(0, 44),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10)),
                         ),

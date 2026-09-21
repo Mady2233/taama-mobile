@@ -112,11 +112,16 @@ class TaamaTheme {
         scrolledUnderElevation: 0,
         centerTitle: false,
       ),
+      // Largeur minimale finie : Size.fromHeight(x) = Size(infini, x) rend
+      // tout bouton placé dans un Row (ou toute largeur non bornée) illisible
+      // ("BoxConstraints forces an infinite width") et vide l'écran. Un
+      // bouton pleine largeur s'enveloppe explicitement dans
+      // SizedBox(width: double.infinity).
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: TaamaColors.primary,
           foregroundColor: TaamaColors.textOnDark,
-          minimumSize: const Size.fromHeight(52),
+          minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(TaamaRadius.lg),
           ),
@@ -127,7 +132,7 @@ class TaamaTheme {
         style: OutlinedButton.styleFrom(
           foregroundColor: TaamaColors.textPrimary,
           side: const BorderSide(color: TaamaColors.border),
-          minimumSize: const Size.fromHeight(52),
+          minimumSize: const Size(64, 52),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(TaamaRadius.lg),
           ),
