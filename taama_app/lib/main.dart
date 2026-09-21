@@ -2,10 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'config/api_config.dart';
+import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'services/notification_service.dart';
-import 'theme/couleurs_taama.dart';
+import 'theme/taama_theme.dart';
 
 void main() {
   runZonedGuarded(() async {
@@ -22,7 +23,9 @@ void main() {
 
     // J'initialise Firebase avant de lancer l'app
     try {
-      await Firebase.initializeApp();
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
     } catch (e) {
       debugPrint('Firebase init error: $e');
     }
@@ -57,15 +60,7 @@ class TaamaApp extends StatelessWidget {
     return MaterialApp(
       title: 'Taama',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: CouleursTaama.terreCuite,
-          primary: CouleursTaama.terreCuite,
-          secondary: CouleursTaama.indigo,
-        ),
-        scaffoldBackgroundColor: CouleursTaama.sable,
-        useMaterial3: true,
-      ),
+      theme: TaamaTheme.light(),
       home: const EcranSplash(),
     );
   }

@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../theme/couleurs_taama.dart';
+import '../widgets/taama_map.dart' show TaamaMapTiles, attributionCarteTaama;
 import 'chat_screen.dart';
 
 class EcranCourier extends StatefulWidget {
@@ -484,11 +485,12 @@ class _EcranCourierState extends State<EcranCourier> {
                 ),
                 children: [
                   TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.taama.taama_app',
+                    urlTemplate: TaamaMapTiles.clair,
+                    subdomains: TaamaMapTiles.subdomains,
+                    userAgentPackageName: TaamaMapTiles.userAgent,
                     errorTileCallback: (t, e, s) {},
                   ),
+                  attributionCarteTaama(),
                   MarkerLayer(
                     markers: [
                       // Point de collecte
@@ -779,11 +781,12 @@ class _MiniCarte extends StatelessWidget {
           ),
           children: [
             TileLayer(
-              urlTemplate:
-                  'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.taama.taama_app',
+              urlTemplate: TaamaMapTiles.clair,
+              subdomains: TaamaMapTiles.subdomains,
+              userAgentPackageName: TaamaMapTiles.userAgent,
               errorTileCallback: (t, e, s) {},
             ),
+            attributionCarteTaama(),
             MarkerLayer(
               markers: [
                 Marker(
@@ -972,11 +975,12 @@ class _EcranSelectionAdresseState
             ),
             children: [
               TileLayer(
-                urlTemplate:
-                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.taama.taama_app',
+                urlTemplate: TaamaMapTiles.clair,
+                subdomains: TaamaMapTiles.subdomains,
+                userAgentPackageName: TaamaMapTiles.userAgent,
                 errorTileCallback: (t, e, s) {},
               ),
+              attributionCarteTaama(),
               if (_point != null)
                 MarkerLayer(
                   markers: [

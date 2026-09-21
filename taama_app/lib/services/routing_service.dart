@@ -48,6 +48,42 @@ class RoutingService {
     }
   }
 
+  /// Durée estimée (minutes, arrondie) entre deux points via OSRM — même
+  /// service que recupererItineraire, mais `overview=false` (on n'a pas
+  /// besoin du tracé ici, juste routes[0]['duration'] en secondes que les
+  /// autres méthodes de ce fichier récupèrent déjà mais n'exploitent pas).
+  /// Ne lève jamais : `null` sur toute erreur, l'appelant doit alors ne
+  /// pas afficher de durée plutôt que d'en inventer une.
+  static Future<int?> dureeMinutesVers({
+    required LatLng depart,
+    required LatLng arrivee,
+  }) async {
+    try {
+      final url = Uri.parse(
+        '$_baseUrl/route/v1/driving/'
+        '${depart.longitude},${depart.latitude};'
+        '${arrivee.longitude},${arrivee.latitude}'
+        '?overview=false',
+      );
+      final reponse = await http
+          .get(url, headers: {'User-Agent': 'TaamaApp/1.0'})
+          .timeout(const Duration(seconds: 8));
+      if (reponse.statusCode != 200) return null;
+
+      final donnees = jsonDecode(reponse.body) as Map<String, dynamic>;
+      if (donnees['code'] != 'Ok') return null;
+
+      final routes = donnees['routes'] as List?;
+      if (routes == null || routes.isEmpty) return null;
+
+      final dureeSecondes = routes[0]['duration'];
+      if (dureeSecondes is! num) return null;
+      return (dureeSecondes / 60).round();
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Variante multi-points (arrêts intermédiaires) : UN SEUL appel OSRM
   /// couvrant tout le trajet, dans l'ordre exact de `points` (au moins 2).
   /// Même contrat que recupererItineraire : ne lève jamais, `null` en cas

@@ -10,9 +10,10 @@ import '../models/service_course.dart';
 import '../services/api_service.dart';
 import '../services/routing_service.dart';
 import '../theme/couleurs_taama.dart';
+import '../widgets/taama_map.dart' show TaamaMapTiles, attributionCarteTaama;
 import '../widgets/widget_choix_vehicule.dart';
+import 'course/suivi_course_page.dart';
 import 'recherche_screen.dart';
-import 'suivi_demande_screen.dart';
 
 /// Écran de demande instantanée : la distance est calculée automatiquement
 /// (GPS + géocodage Nominatim + Haversine), puis le passager choisit son
@@ -133,6 +134,7 @@ class _EcranDemandeInstantaneeState
 
       // 2. Géocode la destination (Nominatim OSM - gratuit)
       final destGeocodee = await _geocoder(widget.destination);
+      if (!mounted) return;
 
       setState(() {
         _departLat = position.latitude;
@@ -146,18 +148,22 @@ class _EcranDemandeInstantaneeState
           _destinationLat = destGeocodee.latitude;
           _destinationLng = destGeocodee.longitude;
         }
-        _calcul = false;
       });
 
       await _recalculerEstimation();
     } catch (e) {
+      // Jamais de distance/prix fabriqués : mieux vaut un état d'erreur
+      // explicite qu'une estimation qui ne repose sur rien (le client
+      // pourrait confirmer une course sur un prix totalement faux).
+      if (!mounted) return;
       setState(() {
-        _distanceKm = 5.0; // Fallback
-        _prixEstimeVoiture = 750;
-        _prixEstimeMoto = 500;
-        _calcul = false;
-        _erreur = 'Distance estimée (GPS indisponible)';
+        _distanceKm = null;
+        _erreur = 'Impossible de vous localiser — réessayez';
       });
+    } finally {
+      // Toujours exécuté : le spinner "Calcul de la distance..." ne doit
+      // jamais rester affiché indéfiniment, quel que soit le chemin pris.
+      if (mounted) setState(() => _calcul = false);
     }
   }
 
@@ -280,25 +286,27 @@ class _EcranDemandeInstantaneeState
     if (resultat == null || resultat.trim().isEmpty || !mounted) return;
 
     setState(() => _recalculEnCours = true);
-    final point = await _geocoder(resultat);
-    if (!mounted) return;
-    if (point == null) {
-      setState(() => _recalculEnCours = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Adresse introuvable : $resultat')),
-      );
-      return;
-    }
+    try {
+      final point = await _geocoder(resultat);
+      if (!mounted) return;
+      if (point == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Adresse introuvable : $resultat')),
+        );
+        return;
+      }
 
-    setState(() {
-      _arrets.add({
-        'adresse': resultat,
-        'latitude': point.latitude,
-        'longitude': point.longitude,
+      setState(() {
+        _arrets.add({
+          'adresse': resultat,
+          'latitude': point.latitude,
+          'longitude': point.longitude,
+        });
       });
-    });
-    await _recalculerEstimation();
-    if (mounted) setState(() => _recalculEnCours = false);
+      await _recalculerEstimation();
+    } finally {
+      if (mounted) setState(() => _recalculEnCours = false);
+    }
   }
 
   Future<void> _supprimerArret(int index) async {
@@ -307,20 +315,34 @@ class _EcranDemandeInstantaneeState
   }
 
   Future<void> _confirmer() async {
-    if (_distanceKm == null) return;
+    if (_distanceKm == null) {
+      // Ne devrait pas arriver (bouton désactivé tant que _distanceKm est
+      // null), mais jamais un no-op silencieux si ça se produit quand même.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('Distance non disponible, réessayez dans un instant.')),
+      );
+      return;
+    }
 
     // null par défaut = mode statique (widget_choix_vehicule.dart bascule
-    // dessus automatiquement). Tenté uniquement si on a les 4 coordonnées
-    // requises par estimer_course ; toute erreur réseau/HTTP y bascule
-    // aussi explicitement (jamais une liste vide silencieuse confondue avec
-    // "0 service dispo"). Avec des arrêts : mode statique forcé — estimer_course
-    // ne sait traiter qu'un trajet à 2 points, afficherait un prix qui
-    // ignorerait les arrêts (voir _recalculerEstimation).
+    // dessus automatiquement, alimenté par les prix RÉELS de calculer-distance
+    // via _detailPrixVoiture/_detailPrixMoto). Tenté uniquement si on a les 4
+    // coordonnées requises par estimer_course ; toute erreur réseau/HTTP/
+    // timeout y bascule aussi explicitement (jamais une liste vide silencieuse
+    // confondue avec "0 service dispo"). Avec des arrêts : mode statique
+    // forcé — estimer_course ne sait traiter qu'un trajet à 2 points,
+    // afficherait un prix qui ignorerait les arrêts (voir _recalculerEstimation).
+    // _enChargement affiche un spinner borné (12s max, voir
+    // ApiService.estimerCourse) pendant cette tentative plutôt que de laisser
+    // le bouton muet le temps de l'appel.
     List<ServiceCourse>? services;
     if (widget.typePreselectionne == null &&
         _arrets.isEmpty &&
         _departLat != null && _departLng != null &&
         _destinationLat != null && _destinationLng != null) {
+      setState(() => _enChargement = true);
       try {
         services = await ApiService.estimerCourse(
           departLat: _departLat!, departLng: _departLng!,
@@ -329,6 +351,8 @@ class _EcranDemandeInstantaneeState
       } on EstimationIndisponibleException catch (e) {
         debugPrint('[Resultats] Estimation KO, flux statique : $e');
         services = null;
+      } finally {
+        if (mounted) setState(() => _enChargement = false);
       }
     }
     // Await ci-dessus => contexte potentiellement démonté avant d'ouvrir le
@@ -409,7 +433,7 @@ class _EcranDemandeInstantaneeState
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (_) => EcranSuiviDemande(
+            builder: (_) => SuiviCoursePage(
               demandeId: demande['id'] as int,
               destination: widget.destination,
               // demande['type_transport'] (renvoyé par le serveur, dérivé
@@ -637,45 +661,72 @@ class _EcranDemandeInstantaneeState
                                 color: Colors.white70, fontSize: 13)),
                       ],
                     )
-                  : Column(
-                      children: [
-                        if (_erreur != null)
-                          Text(_erreur!,
-                              style: const TextStyle(
-                                  color: Colors.orange, fontSize: 11)),
-                        Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.spaceAround,
+                  : _distanceKm == null
+                      // Jamais de distance/prix fabriqués (voir catch de
+                      // _calculerDistanceAuto) : un état d'erreur explicite
+                      // avec un vrai bouton pour relancer, plutôt qu'une
+                      // estimation qui ne reposerait sur rien.
+                      ? Column(
                           children: [
-                            _StatPrix(
-                              label: '📏 Distance',
-                              valeur:
-                                  '${_distanceKm!.toStringAsFixed(1)} km',
+                            const Icon(Icons.location_off_rounded,
+                                color: Colors.white70, size: 22),
+                            const SizedBox(height: 6),
+                            Text(
+                              _erreur ??
+                                  'Impossible de vous localiser — réessayez',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 13),
                             ),
-                            _StatPrix(
-                              label: '🚗 Voiture',
-                              valeur: '$_prixEstimeVoiture FCFA',
-                              accent: true,
+                            const SizedBox(height: 10),
+                            OutlinedButton.icon(
+                              onPressed: _calculerDistanceAuto,
+                              icon: const Icon(Icons.refresh,
+                                  size: 16, color: Colors.white),
+                              label: const Text('Réessayer',
+                                  style: TextStyle(color: Colors.white)),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.white70),
+                              ),
                             ),
-                            _StatPrix(
-                              label: '🏍️ Moto',
-                              valeur: '$_prixEstimeMoto FCFA',
-                              accent: true,
+                          ],
+                        )
+                      : Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceAround,
+                              children: [
+                                _StatPrix(
+                                  label: '📏 Distance',
+                                  valeur:
+                                      '${_distanceKm!.toStringAsFixed(1)} km',
+                                ),
+                                _StatPrix(
+                                  label: '🚗 Voiture',
+                                  valeur: '$_prixEstimeVoiture FCFA',
+                                  accent: true,
+                                ),
+                                _StatPrix(
+                                  label: '🏍️ Moto',
+                                  valeur: '$_prixEstimeMoto FCFA',
+                                  accent: true,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            GestureDetector(
+                              onTap: _calculerDistanceAuto,
+                              child: Text(
+                                '🔄 Recalculer',
+                                style: TextStyle(
+                                    color:
+                                        Colors.white.withValues(alpha: 0.6),
+                                    fontSize: 11),
+                              ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
-                        GestureDetector(
-                          onTap: _calculerDistanceAuto,
-                          child: Text(
-                            '🔄 Recalculer',
-                            style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.6),
-                                fontSize: 11),
-                          ),
-                        ),
-                      ],
-                    ),
             ),
             const SizedBox(height: 16),
 
@@ -818,27 +869,35 @@ class _EcranDemandeInstantaneeState
                         ),
                       ),
                       const SizedBox(width: 10),
-                      SizedBox(
-                        height: 44,
-                        child: OutlinedButton(
-                          onPressed: _verificationCodePromoEnCours
-                              ? null
-                              : _verifierCodePromo,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: CouleursTaama.indigo,
-                            side: const BorderSide(color: CouleursTaama.indigo),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                          child: _verificationCodePromoEnCours
-                              ? const SizedBox(
-                                  width: 16, height: 16,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: CouleursTaama.indigo),
-                                )
-                              : const Text('Vérifier'),
+                      // Pas de SizedBox(height: 44) autour du bouton : un
+                      // SizedBox qui ne fixe QUE la hauteur peut transmettre
+                      // une largeur infinie à son enfant pendant le calcul de
+                      // taille intrinsèque d'une Column en
+                      // CrossAxisAlignment.stretch contenant des Row
+                      // imbriqués (exactement la structure de cet écran) —
+                      // "BoxConstraints forces an infinite width" en plein
+                      // écran, plus rien ne s'affiche en dessous. La hauteur
+                      // passe par minimumSize à la place : le bouton se
+                      // dimensionne naturellement à son contenu.
+                      OutlinedButton(
+                        onPressed: _verificationCodePromoEnCours
+                            ? null
+                            : _verifierCodePromo,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: CouleursTaama.indigo,
+                          side: const BorderSide(color: CouleursTaama.indigo),
+                          minimumSize: const Size(0, 44),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
                         ),
+                        child: _verificationCodePromoEnCours
+                            ? const SizedBox(
+                                width: 16, height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: CouleursTaama.indigo),
+                              )
+                            : const Text('Vérifier'),
                       ),
                     ],
                   ),
@@ -884,7 +943,9 @@ class _EcranDemandeInstantaneeState
 
             // Bouton confirmer
             ElevatedButton(
-              onPressed: (_calcul || _enChargement) ? null : _confirmer,
+              onPressed: (_calcul || _enChargement || _distanceKm == null)
+                  ? null
+                  : _confirmer,
               style: ElevatedButton.styleFrom(
                 backgroundColor: CouleursTaama.terreCuite,
                 foregroundColor: Colors.white,
@@ -1024,10 +1085,12 @@ class _CarteApercuItineraireState extends State<_CarteApercuItineraire> {
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.taama.app',
+                urlTemplate: TaamaMapTiles.clair,
+                subdomains: TaamaMapTiles.subdomains,
+                userAgentPackageName: TaamaMapTiles.userAgent,
                 errorTileCallback: (tile, error, stack) {},
               ),
+              attributionCarteTaama(),
               if (_trace != null)
                 PolylineLayer(
                   polylines: [

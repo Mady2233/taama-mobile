@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/couleurs_taama.dart';
-import 'carte_screen.dart';
+import 'home/home_page.dart';
 import 'services_screen.dart';
 import 'activite_screen.dart';
 import 'compte_screen.dart';
@@ -16,7 +16,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
   int _indexOnglet = 0;
 
   final List<Widget> _onglets = const [
-    EcranCarte(),
+    HomePage(),
     EcranServices(),
     EcranActivite(),
     EcranCompte(),
