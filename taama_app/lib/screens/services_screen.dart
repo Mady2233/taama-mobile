@@ -6,7 +6,8 @@
 // blanches bordées, icônes Material plutôt qu'emoji, aucune valeur hex en
 // dur. Course/Moto/Réserver passent maintenant par le même flux moderne
 // (recherche de destination -> EcranDemandeInstantanee) qu'utilise déjà
-// l'accueil v3, au lieu de l'ancien EcranCarte (home_screen_legacy.dart).
+// l'accueil v3, au lieu de l'ancien EcranCarte (supprimé, voir l'historique
+// git).
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

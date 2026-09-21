@@ -3,9 +3,8 @@
 // Pont entre les vraies données (polling REST + WebSocket de localisation
 // LocationConsumer, via LocationService — voir services/location_service.dart)
 // et SuiviCourseScreen, widget purement présentationnel (voir
-// suivi_course_screen.dart). Remplace EcranSuiviDemande dans la navigation ;
-// l'ancien écran reste disponible sous suivi_demande_screen_legacy.dart
-// (non supprimé).
+// suivi_course_screen.dart). Remplace l'ancien EcranSuiviDemande dans la
+// navigation (supprimé, voir l'historique git).
 
 import 'dart:async';
 

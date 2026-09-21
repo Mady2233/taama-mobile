@@ -2,9 +2,9 @@
 //
 // Pont entre les services/API existants et le widget purement
 // présentationnel HomeScreen v3 (voir home_screen.dart) — remplace
-// EcranCarte comme contenu de l'onglet Accueil (accueil_screen.dart).
-// EcranCarte reste disponible sous home_screen_legacy.dart (non
-// supprimée), toujours utilisée directement par services_screen.dart.
+// l'ancien EcranCarte comme contenu de l'onglet Accueil
+// (accueil_screen.dart). L'ancien écran (home_screen_legacy.dart) a été
+// supprimé : il reste consultable dans l'historique git.
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
