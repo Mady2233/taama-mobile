@@ -46,3 +46,6 @@ key.properties
 
 # Journaux Firebase CLI : contiennent le compte Google connecté (e-mail)
 firebase-debug.log
+
+# Dépôt séparé (son propre .git) — ne jamais suivre ici
+taama_backend/
