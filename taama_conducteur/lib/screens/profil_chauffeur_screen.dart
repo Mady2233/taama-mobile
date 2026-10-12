@@ -2,7 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
+import '../widgets/dialogue_suppression_compte.dart';
 import '../widgets/widget_avatar_conducteur.dart';
+import 'connexion_screen.dart';
 
 /// Écran de profil côté conducteur : téléphone, nom modifiable, infos du
 /// véhicule modifiables par le conducteur lui-même (type, marque, modèle,
@@ -37,6 +39,7 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
   bool _climatisationSelectionnee = false;
   bool _modeEditionVehicule = false;
   bool _enregistrementVehicule = false;
+  bool _suppressionEnCours = false;
 
   // Correspond à Chauffeur.TYPE_VEHICULE_CHOICES (backend).
   static const Map<String, String> _typesVehicule = {
@@ -260,6 +263,46 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
         couleur,
       );
     }
+  }
+
+  Future<void> _supprimerCompte() async {
+    if (!await demanderConfirmationSuppression(context)) return;
+    if (!mounted) return;
+    setState(() => _suppressionEnCours = true);
+    String messageFinal;
+    try {
+      await ApiService.supprimerMonCompte();
+      messageFinal = 'Ton compte a été supprimé.';
+    } on ApiException catch (e) {
+      if (e.statusCode != 401) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.message), // 409 : message serveur tel quel
+          duration: const Duration(seconds: 8),
+        ));
+        return;
+      }
+      messageFinal = "Ta session n'est plus valide. Si tu venais de demander "
+          'la suppression, elle a bien été prise en compte.';
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Impossible de joindre Taama. Vérifie ta connexion et réessaie.'),
+      ));
+      return;
+    } finally {
+      if (mounted) setState(() => _suppressionEnCours = false);
+    }
+    await ApiService.definirToken('');
+    if (!mounted) return;
+    final messager = ScaffoldMessenger.of(context);
+    // Retire aussi EcranEspaceChauffeur : son dispose() arrête le suivi GPS
+    // et le heartbeat (le serveur a déjà passé est_en_ligne à False).
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const EcranConnexion()),
+      (route) => false,
+    );
+    messager.showSnackBar(SnackBar(content: Text(messageFinal)));
   }
 
   @override
@@ -516,6 +559,24 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
                         ),
                       );
                     }),
+
+                  const SizedBox(height: 32),
+                  // Volontairement discret, en fin de page : action
+                  // irréversible, protégée par une saisie de confirmation.
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: _suppressionEnCours ? null : _supprimerCompte,
+                      style: TextButton.styleFrom(foregroundColor: Colors.red.shade700),
+                      icon: _suppressionEnCours
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.delete_forever_outlined),
+                      label: const Text('Supprimer mon compte'),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                 ],
               ),
             ),

@@ -17,6 +17,20 @@ class EstimationIndisponibleException implements Exception {
   String toString() => message;
 }
 
+/// Levée par supprimerMonCompte sur un refus métier (409 : course en
+/// cours, solde > 0…) : `message` vient du serveur, à afficher tel quel.
+class SuppressionCompteRefuseeException implements Exception {
+  final String message;
+  SuppressionCompteRefuseeException(this.message);
+  @override
+  String toString() => message;
+}
+
+/// Levée quand le serveur ne reconnaît plus le token (401). Sur
+/// supprimerMonCompte, c'est typiquement qu'une première tentative a abouti
+/// mais que la réponse s'est perdue (réseau) : le token a été effacé.
+class SessionInvalideException implements Exception {}
+
 /// Service centralisé pour tous les appels au backend Django.
 /// L'URL vient de ApiConfig (voir lib/config/api_config.dart) : par défaut
 /// l'IP LAN de dev, ou l'URL de prod passée via --dart-define=API_URL=...
@@ -112,6 +126,24 @@ class ApiService {
       body: jsonEncode(corps),
     );
     return _traiterReponse(reponse) as Map<String, dynamic>;
+  }
+
+  /// Anonymise le compte connecté (irréversible). 409 : refus métier
+  /// (course en cours, solde > 0…) -> SuppressionCompteRefuseeException.
+  /// 401 -> SessionInvalideException (voir sa doc).
+  static Future<void> supprimerMonCompte() async {
+    final reponse = await http
+        .post(Uri.parse('$_baseUrl/comptes/supprimer-mon-compte/'), headers: _headers)
+        .timeout(const Duration(seconds: 12));
+    if (reponse.statusCode == 401) throw SessionInvalideException();
+    if (reponse.statusCode == 409) {
+      String message = 'Suppression impossible pour le moment.';
+      try {
+        message = (jsonDecode(reponse.body)['erreur'] as String?) ?? message;
+      } catch (_) {}
+      throw SuppressionCompteRefuseeException(message);
+    }
+    _traiterReponse(reponse);
   }
 
   // ─── Adresses favorites ───────────────────────────────────────────────────

@@ -7,6 +7,8 @@ import 'mes_reservations_screen.dart';
 import 'mes_conversations_client_screen.dart';
 import 'avis_app_screen.dart';
 import 'connexion_screen.dart';
+import '../theme/taama_theme.dart';
+import '../widgets/dialogue_suppression_compte.dart';
 
 class EcranCompte extends StatefulWidget {
   const EcranCompte({super.key});
@@ -17,6 +19,7 @@ class EcranCompte extends StatefulWidget {
 
 class _EcranCompteState extends State<EcranCompte> {
   Map<String, dynamic>? _profil;
+  bool _suppressionEnCours = false;
 
   @override
   void initState() {
@@ -44,6 +47,40 @@ class _EcranCompteState extends State<EcranCompte> {
       MaterialPageRoute(builder: (_) => const EcranConnexion()),
       (route) => false,
     );
+  }
+
+  Future<void> _supprimerCompte() async {
+    if (!await demanderConfirmationSuppression(context)) return;
+    if (!mounted) return;
+    setState(() => _suppressionEnCours = true);
+    String messageFinal;
+    try {
+      await ApiService.supprimerMonCompte();
+      messageFinal = 'Ton compte a été supprimé.';
+    } on SuppressionCompteRefuseeException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(e.message),
+        duration: const Duration(seconds: 8),
+      ));
+      return;
+    } on SessionInvalideException {
+      messageFinal = "Ta session n'est plus valide. Si tu venais de demander "
+          'la suppression, elle a bien été prise en compte.';
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'Impossible de joindre Taama. Vérifie ta connexion et réessaie.'),
+      ));
+      return;
+    } finally {
+      if (mounted) setState(() => _suppressionEnCours = false);
+    }
+    if (!mounted) return;
+    final messager = ScaffoldMessenger.of(context);
+    await _deconnecter();
+    messager.showSnackBar(SnackBar(content: Text(messageFinal)));
   }
 
   @override
@@ -155,6 +192,21 @@ class _EcranCompteState extends State<EcranCompte> {
                           color: Colors.red, fontWeight: FontWeight.bold)),
                   onTap: _deconnecter,
                 ),
+              ),
+              const SizedBox(height: 24),
+              // Volontairement discret et séparé de « Se déconnecter » :
+              // action irréversible, protégée par une saisie de confirmation.
+              TextButton.icon(
+                onPressed: _suppressionEnCours ? null : _supprimerCompte,
+                style: TextButton.styleFrom(
+                    foregroundColor: TaamaColors.danger),
+                icon: _suppressionEnCours
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.delete_forever_outlined),
+                label: const Text('Supprimer mon compte'),
               ),
             ],
           ),

@@ -111,6 +111,18 @@ class ApiService {
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
+  /// Anonymise le compte connecté (irréversible). Lève ApiException :
+  /// 409 = refus métier (course en cours, gains en portefeuille…), message
+  /// serveur à afficher tel quel ; 401 = token déjà effacé, typiquement
+  /// parce qu'une première tentative a abouti mais que la réponse s'est
+  /// perdue (réseau).
+  static Future<void> supprimerMonCompte() async {
+    final reponse = await http
+        .post(Uri.parse('$_baseUrl/comptes/supprimer-mon-compte/'), headers: _headers)
+        .timeout(const Duration(seconds: 12));
+    _traiterReponse(reponse);
+  }
+
   // ─── Profil conducteur ────────────────────────────────────────────────────
 
   static Future<Map<String, dynamic>> monProfilChauffeur() async {
