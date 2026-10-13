@@ -24,8 +24,14 @@ class _EcranCourierState extends State<EcranCourier> {
   final _telephoneDestinataireController = TextEditingController();
   LatLng? _pointCollecte;
   LatLng? _pointLivraison;
-  double _distanceKm = 5.0;
   String _categorie = 'colis';
+
+  // Prix calculé par le SERVEUR (jamais par l'app) dès que les deux points
+  // sont choisis. Null tant qu'il n'est pas connu : pas de prix inventé.
+  int? _prix;
+  double? _distanceKm;
+  bool _estimationEnCours = false;
+  String? _erreurEstimation;
 
   static const _categories = [
     ('colis', '📦', 'Colis'),
@@ -80,19 +86,62 @@ class _EcranCourierState extends State<EcranCourier> {
             '${point.latitude.toStringAsFixed(4)}, '
             '${point.longitude.toStringAsFixed(4)}';
       }
-      // Recalcule la distance si les deux points sont sélectionnés
-      if (_pointCollecte != null && _pointLivraison != null) {
-        const calc = Distance();
-        _distanceKm = calc.as(
-          LengthUnit.Kilometer,
-          _pointCollecte!,
-          _pointLivraison!,
-        );
-      }
+      // Un point a changé : l'ancien prix ne vaut plus rien.
+      _prix = null;
+      _distanceKm = null;
+      _erreurEstimation = null;
     });
+    _estimer();
   }
 
-  int get _prix => (_distanceKm * 100 + 200).round().clamp(500, 999999);
+  Future<void> _estimer() async {
+    if (_pointCollecte == null || _pointLivraison == null) return;
+    setState(() {
+      _estimationEnCours = true;
+      _erreurEstimation = null;
+    });
+    try {
+      final resultat = await ApiService.estimerCourier(
+        latCollecte: _pointCollecte!.latitude,
+        lngCollecte: _pointCollecte!.longitude,
+        latLivraison: _pointLivraison!.latitude,
+        lngLivraison: _pointLivraison!.longitude,
+      );
+      if (!mounted) return;
+      setState(() {
+        _prix = (resultat['prix'] as num).toInt();
+        _distanceKm = (resultat['distance_km'] as num).toDouble();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _erreurEstimation =
+          'Impossible de calculer le prix. Vérifie ta connexion.');
+    } finally {
+      if (mounted) setState(() => _estimationEnCours = false);
+    }
+  }
+
+  Future<bool> _confirmerNouveauPrix(int nouveauPrix) async {
+    final confirme = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Le prix a changé'),
+        content: Text('Le prix de cette livraison est maintenant de '
+            '$nouveauPrix FCFA. Commander à ce prix ?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Commander à $nouveauPrix FCFA'),
+          ),
+        ],
+      ),
+    );
+    return confirme ?? false;
+  }
 
   // ─── Commande ───
 
@@ -104,6 +153,8 @@ class _EcranCourierState extends State<EcranCourier> {
         const SnackBar(content: Text('Remplis tous les champs')));
       return;
     }
+    final prix = _prix;
+    if (_pointCollecte == null || _pointLivraison == null || prix == null) return;
 
     setState(() => _enChargement = true);
     try {
@@ -113,16 +164,29 @@ class _EcranCourierState extends State<EcranCourier> {
         descriptionColis: _descriptionController.text.trim(),
         categorie: _categorie,
         telephoneDestinataire: _telephoneDestinataireController.text.trim(),
-        distanceKm: _distanceKm,
-        latCollecte: _pointCollecte?.latitude,
-        lngCollecte: _pointCollecte?.longitude,
-        latLivraison: _pointLivraison?.latitude,
-        lngLivraison: _pointLivraison?.longitude,
+        prixAnnonce: prix,
+        latCollecte: _pointCollecte!.latitude,
+        lngCollecte: _pointCollecte!.longitude,
+        latLivraison: _pointLivraison!.latitude,
+        lngLivraison: _pointLivraison!.longitude,
       );
 
       if (!mounted) return;
       setState(() => _commande = resultat);
       _demarrerSuivi();
+    } on PrixCourierChangeException catch (e) {
+      // Rien n'a été commandé : on affiche le nouveau prix et on ne
+      // recommande qu'avec l'accord explicite du client.
+      if (!mounted) return;
+      setState(() {
+        _prix = e.nouveauPrix;
+        if (e.distanceKm != null) _distanceKm = e.distanceKm;
+        _enChargement = false;
+      });
+      if (await _confirmerNouveauPrix(e.nouveauPrix) && mounted) {
+        await _commander();
+      }
+      return;
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -185,6 +249,70 @@ class _EcranCourierState extends State<EcranCourier> {
           }
         } catch (_) {}
       },
+    );
+  }
+
+  /// Carte de prix : un rendu explicite par état (points manquants,
+  /// calcul, erreur avec Réessayer, prix du serveur). Jamais de prix inventé.
+  Widget _contenuPrix() {
+    if (_pointCollecte == null || _pointLivraison == null) {
+      return const Row(
+        children: [
+          Icon(Icons.place_outlined, color: Colors.orange),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text('Choisis les deux points sur la carte pour voir le prix.'),
+          ),
+        ],
+      );
+    }
+    if (_estimationEnCours) {
+      return const Row(
+        children: [
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orange),
+          ),
+          SizedBox(width: 12),
+          Text('Calcul du prix…'),
+        ],
+      );
+    }
+    if (_erreurEstimation != null || _prix == null) {
+      return Row(
+        children: [
+          const Icon(Icons.error_outline, color: Colors.red),
+          const SizedBox(width: 10),
+          Expanded(child: Text(_erreurEstimation ?? 'Prix indisponible.')),
+          TextButton(onPressed: _estimer, child: const Text('Réessayer')),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        const Icon(Icons.payments_outlined, color: Colors.orange),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Prix',
+                  style: TextStyle(color: Colors.orange, fontSize: 12)),
+              Text('$_prix FCFA',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 20,
+                      color: Colors.orange)),
+            ],
+          ),
+        ),
+        if (_distanceKm != null)
+          Text(
+            '${_distanceKm!.toStringAsFixed(1)} km',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+          ),
+      ],
     );
   }
 
@@ -403,34 +531,7 @@ class _EcranCourierState extends State<EcranCourier> {
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Colors.orange.shade200),
                   ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.payments_outlined,
-                          color: Colors.orange),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Prix estimé',
-                                style: TextStyle(
-                                    color: Colors.orange, fontSize: 12)),
-                            Text('$_prix FCFA',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 20,
-                                    color: Colors.orange)),
-                          ],
-                        ),
-                      ),
-                      Text(
-                        '${_distanceKm.toStringAsFixed(1)} km',
-                        style: TextStyle(
-                            color: Colors.grey.shade600,
-                            fontSize: 12),
-                      ),
-                    ],
-                  ),
+                  child: _contenuPrix(),
                 ),
               ],
             ),
@@ -438,15 +539,16 @@ class _EcranCourierState extends State<EcranCourier> {
           const SizedBox(height: 20),
 
           // Bouton commander
+          // Désactivé tant que le serveur n'a pas donné de prix.
           ElevatedButton.icon(
-            onPressed: _enChargement ? null : _commander,
+            onPressed: (_enChargement || _prix == null) ? null : _commander,
             icon: const Icon(Icons.local_shipping),
             label: _enChargement
                 ? const SizedBox(
                     width: 22, height: 22,
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: Colors.white))
-                : Text('Commander — $_prix FCFA',
+                : Text(_prix == null ? 'Commander' : 'Commander — $_prix FCFA',
                     style: const TextStyle(
                         fontWeight: FontWeight.bold, fontSize: 16)),
             style: ElevatedButton.styleFrom(

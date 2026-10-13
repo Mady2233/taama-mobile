@@ -26,6 +26,17 @@ class SuppressionCompteRefuseeException implements Exception {
   String toString() => message;
 }
 
+/// Levée par creerCourier quand le prix recalculé par le serveur diffère du
+/// prix affiché (409 PRIX_CHANGE) : rien n'a été commandé. L'appelant montre
+/// le nouveau prix et ne recommande qu'après confirmation explicite.
+class PrixCourierChangeException implements Exception {
+  final int nouveauPrix;
+  final double? distanceKm;
+  PrixCourierChangeException(this.nouveauPrix, this.distanceKm);
+  @override
+  String toString() => 'Le prix de cette livraison est passé à $nouveauPrix FCFA.';
+}
+
 /// Levée quand le serveur ne reconnaît plus le token (401). Sur
 /// supprimerMonCompte, c'est typiquement qu'une première tentative a abouti
 /// mais que la réponse s'est perdue (réseau) : le token a été effacé.
@@ -625,17 +636,41 @@ class ApiService {
 
   // ─── Service Courier ───────────────────────────────────────────────────────
 
+  /// Prix et distance d'une livraison, calculés par le serveur (jamais par
+  /// l'app) : {'distance_km': double, 'prix': int}.
+  static Future<Map<String, dynamic>> estimerCourier({
+    required double latCollecte,
+    required double lngCollecte,
+    required double latLivraison,
+    required double lngLivraison,
+  }) async {
+    final reponse = await http.post(
+      Uri.parse('$_baseUrl/trajets/courier/estimer/'),
+      headers: _headers,
+      body: jsonEncode({
+        'lat_collecte': latCollecte,
+        'lng_collecte': lngCollecte,
+        'lat_livraison': latLivraison,
+        'lng_livraison': lngLivraison,
+      }),
+    ).timeout(const Duration(seconds: 12));
+    return _traiterReponse(reponse) as Map<String, dynamic>;
+  }
+
+  /// Le serveur recalcule distance et prix ; `prixAnnonce` (le prix affiché)
+  /// ne sert que de contrôle. Prix différent -> PrixCourierChangeException,
+  /// rien n'est commandé.
   static Future<Map<String, dynamic>> creerCourier({
     required String adresseCollecte,
     required String adresseLivraison,
     required String descriptionColis,
+    required int prixAnnonce,
+    required double latCollecte,
+    required double lngCollecte,
+    required double latLivraison,
+    required double lngLivraison,
     String categorie = 'colis',
     String? telephoneDestinataire,
-    double distanceKm = 5.0,
-    double? latCollecte,
-    double? lngCollecte,
-    double? latLivraison,
-    double? lngLivraison,
   }) async {
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/courier/creer/'),
@@ -647,13 +682,26 @@ class ApiService {
         'categorie': categorie,
         if (telephoneDestinataire != null && telephoneDestinataire.isNotEmpty)
           'telephone_destinataire': telephoneDestinataire,
-        'distance_km': double.parse(distanceKm.toStringAsFixed(1)),
-        if (latCollecte != null) 'lat_collecte': latCollecte,
-        if (lngCollecte != null) 'lng_collecte': lngCollecte,
-        if (latLivraison != null) 'lat_livraison': latLivraison,
-        if (lngLivraison != null) 'lng_livraison': lngLivraison,
+        'prix_annonce': prixAnnonce,
+        'lat_collecte': latCollecte,
+        'lng_collecte': lngCollecte,
+        'lat_livraison': latLivraison,
+        'lng_livraison': lngLivraison,
       }),
-    );
+    ).timeout(const Duration(seconds: 12));
+    if (reponse.statusCode == 409) {
+      try {
+        final corps = jsonDecode(reponse.body) as Map<String, dynamic>;
+        if (corps['code'] == 'PRIX_CHANGE' && corps['nouveau_prix'] is int) {
+          throw PrixCourierChangeException(
+            corps['nouveau_prix'] as int,
+            (corps['distance_km'] as num?)?.toDouble(),
+          );
+        }
+      } on FormatException {
+        // Corps illisible : traité comme une erreur ordinaire ci-dessous.
+      }
+    }
     return _traiterReponse(reponse, codeAttendu: 201) as Map<String, dynamic>;
   }
 
