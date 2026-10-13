@@ -21,7 +21,7 @@ Future<void> afficherDialogueSOS(
         ],
       ),
       content: const Text(
-        'Tu es en danger ?\n\nTon alerte et ta position GPS vont être envoyées immédiatement aux équipes Taama.',
+        'Tu es en danger ?\n\nTon alerte et ta position GPS vont être transmises à Taama.',
         style: TextStyle(fontSize: 15),
       ),
       actions: [
@@ -57,7 +57,7 @@ Future<void> afficherDialogueSOS(
   } catch (_) {}
 
   try {
-    await ApiService.declencherSOS(
+    final reponse = await ApiService.declencherSOS(
       demandeId: demandeId,
       reservationId: reservationId,
       latitude: lat,
@@ -65,18 +65,21 @@ Future<void> afficherDialogueSOS(
     );
 
     if (!context.mounted) return;
+    // Le texte vient du serveur : lui seul sait si l'équipe a vraiment été
+    // prévenue. Jamais de « notifiées » écrit en dur.
+    final texte = reponse['message']?.toString() ?? 'Alerte enregistrée.';
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('🚨 Alerte SOS envoyée ! Les équipes Taama ont été notifiées.'),
+      SnackBar(
+        content: Text('🚨 $texte'),
         backgroundColor: Colors.red,
-        duration: Duration(seconds: 5),
+        duration: const Duration(seconds: 8),
       ),
     );
   } catch (e) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Erreur lors de l\'envoi de l\'alerte. Appelle le 112.'),
+        content: Text("L'alerte n'a pas pu être envoyée. Appelle les secours."),
         backgroundColor: Colors.red,
       ),
     );

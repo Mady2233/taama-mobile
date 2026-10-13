@@ -534,7 +534,7 @@ class ApiService {
         if (longitude != null) 'longitude': longitude,
         'message': message,
       }),
-    );
+    ).timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse, codeAttendu: 201) as Map<String, dynamic>;
   }
 
