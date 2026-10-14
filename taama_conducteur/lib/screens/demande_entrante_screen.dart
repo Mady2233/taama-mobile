@@ -170,6 +170,17 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
   /// Ne s'exécute que si l'app est au premier plan (ce timer ne tourne que
   /// tant que ce widget est monté) — pas de garantie hors premier plan, le
   /// timeout autoritatif est côté serveur (Lot 3).
+  /// Fermeture décidée par le code (refus réussi, expiration, demande déjà
+  /// prise) : pop() et non maybePop(). maybePop() respecte le PopScope, qui
+  /// interdit le retour pendant _enTraitement ; il refusait donc en silence
+  /// et l'écran restait bloqué, boutons grisés. Le PopScope continue de
+  /// bloquer le bouton retour du téléphone pendant un traitement.
+  void _fermer() {
+    if (!mounted) return;
+    final navigateur = Navigator.of(context);
+    if (navigateur.canPop()) navigateur.pop();
+  }
+
   Future<void> _expirer() async {
     if (_enTraitement || !mounted) return;
     setState(() => _enTraitement = true);
@@ -179,7 +190,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
     } catch (e) {
       debugPrint('[DemandeEntrante] Erreur refus après expiration : $e');
     }
-    if (mounted) Navigator.of(context).maybePop();
+    _fermer();
   }
 
   Future<void> _accepter() async {
@@ -215,9 +226,9 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Demande déjà prise.')),
         );
-        Navigator.of(context).maybePop();
+        _fermer();
       } else if (e.statusCode == 404) {
-        Navigator.of(context).maybePop();
+        _fermer();
       } else {
         setState(() => _enTraitement = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -267,7 +278,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
       return;
     }
     DemandeEntranteNavigator.marquerRefusee(widget.demandeId);
-    if (mounted) Navigator.of(context).maybePop();
+    _fermer();
   }
 
   /// Le refus n'est PAS enregistré côté serveur : la demande t'est toujours
