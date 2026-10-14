@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/api_service.dart';
+import '../services/demande_entrante_navigator.dart';
 import '../theme/couleurs_taama.dart';
 import 'navigation_screen.dart';
 
@@ -174,6 +175,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
     setState(() => _enTraitement = true);
     try {
       await ApiService.refuserDemande(widget.demandeId);
+      DemandeEntranteNavigator.marquerRefusee(widget.demandeId);
     } catch (e) {
       debugPrint('[DemandeEntrante] Erreur refus après expiration : $e');
     }
@@ -231,6 +233,21 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
     }
   }
 
+  /// Message affiché au conducteur pour une erreur réseau/connexion —
+  /// jamais le texte technique brut (ClientException/SocketException/
+  /// errno=...), illisible pour un utilisateur qui n'a fait qu'accepter
+  /// une course avec une connexion instable.
+  String _messageErreurLisible(Object e) {
+    final texte = e.toString();
+    if (texte.contains('SocketException') ||
+        texte.contains('HandshakeException') ||
+        texte.contains('TimeoutException') ||
+        texte.contains('Failed host lookup')) {
+      return 'Pas de connexion internet — vérifiez votre réseau et réessayez.';
+    }
+    return texte.replaceAll('Exception: ', '');
+  }
+
   Future<void> _ignorer() async {
     if (_enTraitement) return;
     setState(() => _enTraitement = true);
@@ -238,12 +255,32 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
 
     try {
       await ApiService.refuserDemande(widget.demandeId);
+    } on ApiException catch (e) {
+      // 404 (plus attribuée à toi) ou 400 (déjà acceptée, annulée, expirée) :
+      // il n'y a plus rien à refuser, on ferme.
+      if (e.statusCode != 404 && e.statusCode != 400) {
+        _echecRefus(e.message);
+        return;
+      }
     } catch (e) {
-      // 404 = déjà résolue/expirée entre-temps : on ferme quand même, il n'y
-      // a plus rien à refuser.
-      debugPrint('[DemandeEntrante] Erreur refus : $e');
+      _echecRefus(_messageErreurLisible(e));
+      return;
     }
+    DemandeEntranteNavigator.marquerRefusee(widget.demandeId);
     if (mounted) Navigator.of(context).maybePop();
+  }
+
+  /// Le refus n'est PAS enregistré côté serveur : la demande t'est toujours
+  /// attribuée. On reste sur l'écran, boutons réactivés, pour réessayer
+  /// (compte à rebours arrêté : l'écran ne se ferme pas tout seul).
+  void _echecRefus(String message) {
+    if (!mounted) return;
+    setState(() => _enTraitement = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text("Le refus n'a pas pu être envoyé : $message"),
+      duration: const Duration(seconds: 8),
+      action: SnackBarAction(label: 'Réessayer', onPressed: _ignorer),
+    ));
   }
 
   @override

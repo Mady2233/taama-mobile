@@ -13,6 +13,13 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 class DemandeEntranteNavigator {
   static int? _idAffiche;
 
+  // Demandes refusées pendant cette session : jamais réaffichées, même si le
+  // polling les revoit (la vraie garde est côté serveur : un chauffeur qui a
+  // refusé ne se voit jamais réattribuer la demande).
+  static final Set<int> _idsRefuses = {};
+
+  static void marquerRefusee(int demandeId) => _idsRefuses.add(demandeId);
+
   /// Réessaie pendant quelques secondes si le Navigator n'est pas encore
   /// monté (cas du tap sur une notification qui relance l'app depuis zéro :
   /// ce code peut s'exécuter avant que runApp() n'ait fini de construire
@@ -21,7 +28,7 @@ class DemandeEntranteNavigator {
     int demandeId, {
     Map<String, dynamic>? demandeInitiale,
   }) async {
-    if (_idAffiche == demandeId) return;
+    if (_idAffiche == demandeId || _idsRefuses.contains(demandeId)) return;
 
     NavigatorState? navState = navigatorKey.currentState;
     var tentatives = 0;

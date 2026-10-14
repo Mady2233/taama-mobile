@@ -15,6 +15,7 @@ import 'verification_conducteur_screen.dart';
 import 'navigation_screen.dart';
 import 'avis_app_screen.dart';
 import 'courier_livreur_screen.dart';
+import 'inscription_chauffeur_screen.dart';
 import '../widgets/widget_annulation.dart';
 
 class EcranEspaceChauffeur extends StatefulWidget {
@@ -32,6 +33,11 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   Timer? _timerPolling;
   bool _chargementInitial = true;
   int? _enTraitement;
+
+  // États explicites de l'accueil (jamais un écran vide sans message).
+  String? _erreurProfil; // chargement du profil en échec -> « Réessayer »
+  bool _sansProfil = false; // 403 : compte sans profil chauffeur
+  String? _erreurDemandes; // dernier rafraîchissement des demandes en échec
 
   // Une position GPS est envoyée en continu pour chaque demande "en route"
   final Map<int, LocationService> _servicesLocalisation = {};
@@ -95,24 +101,39 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     try {
       final profil = await ApiService.monProfilChauffeur();
       if (!mounted) return;
-      setState(() => _profil = profil);
+      setState(() {
+        _profil = profil;
+        _erreurProfil = null;
+        _sansProfil = false;
+      });
       // Si le conducteur était déjà en ligne (ex: relance de l'app), on
       // reprend le suivi GPS.
       if (profil['disponible'] == true) {
         _serviceLocalisationGenerale.demarrerSuiviPositionEnLigne();
       }
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _sansProfil = e.statusCode == 403;
+        _erreurProfil = _sansProfil ? null : e.message;
+      });
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Ce compte n\'est pas encore lié à un profil conducteur.'),
-            duration: Duration(seconds: 5),
-          ),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _erreurProfil = 'Pas de connexion. Vérifie ton réseau.');
     } finally {
       if (mounted) setState(() => _chargementInitial = false);
     }
+  }
+
+  Future<void> _reessayerChargement() async {
+    setState(() {
+      _chargementInitial = true;
+      _erreurProfil = null;
+    });
+    await _chargerProfil();
+    if (!mounted || _profil == null) return;
+    await _chargerSolde();
+    await _rafraichirTout();
   }
 
   Future<void> _chargerSolde() async {
@@ -155,9 +176,15 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
       final demandes = await ApiService.mesDemandesAssignees();
       if (!mounted) return;
       _detecterNouvelleDemande(demandes);
-      setState(() => _demandesAssignees = demandes);
+      setState(() {
+        _demandesAssignees = demandes;
+        _erreurDemandes = null;
+      });
     } catch (e) {
       debugPrint('[DemandesAssignees] Erreur rafraîchissement : $e');
+      if (mounted) {
+        setState(() => _erreurDemandes = 'Impossible de mettre à jour tes demandes.');
+      }
     }
   }
 
@@ -234,6 +261,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     try {
       await ApiService.accepterDemande(id);
       await _rafraichirTout();
+    } catch (e) {
+      _afficherErreur(e);
     } finally {
       if (mounted) setState(() => _enTraitement = null);
     }
@@ -243,10 +272,20 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     setState(() => _enTraitement = id);
     try {
       await ApiService.refuserDemande(id);
+      DemandeEntranteNavigator.marquerRefusee(id);
       await _rafraichirTout();
+    } catch (e) {
+      _afficherErreur(e);
     } finally {
       if (mounted) setState(() => _enTraitement = null);
     }
+  }
+
+  /// Message exact du serveur, ou « Pas de connexion » pour une erreur réseau.
+  void _afficherErreur(Object e) {
+    if (!mounted) return;
+    final message = e is ApiException ? e.message : 'Pas de connexion. Vérifie ton réseau et réessaie.';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _annulerCourse(int demandeId, DateTime dateCreation) async {
@@ -392,6 +431,28 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
                 children: [
+                  // 0. États sans profil chargé : jamais un écran vide.
+                  if (_sansProfil)
+                    _CarteEtat(
+                      icone: Icons.person_add_alt_1,
+                      titre: "Ton compte n'a pas encore de profil chauffeur",
+                      texte: 'Crée-le pour commencer à recevoir des courses.',
+                      libelleAction: 'Créer mon profil',
+                      onAction: () => Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(builder: (_) => const EcranInscriptionChauffeur()),
+                        (route) => false,
+                      ),
+                    )
+                  else if (_profil == null)
+                    _CarteEtat(
+                      icone: Icons.wifi_off,
+                      titre: 'Impossible de charger ton profil',
+                      texte: _erreurProfil ?? 'Une erreur est survenue.',
+                      libelleAction: 'Réessayer',
+                      onAction: _reessayerChargement,
+                    ),
+
                   // 1. Carte de profil
                   if (_profil != null)
                     _CarteProfil(
@@ -433,6 +494,34 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                     ],
                   ),
                   const SizedBox(height: 28),
+
+                  // 2.5 Rafraîchissement en échec : les cartes ci-dessous
+                  // peuvent ne plus être à jour.
+                  if (_profil != null && _erreurDemandes != null) ...[
+                    _CarteEtat(
+                      icone: Icons.sync_problem,
+                      titre: _erreurDemandes!,
+                      texte: _demandesAssignees.isEmpty
+                          ? 'Vérifie ton réseau.'
+                          : 'Les demandes affichées ne sont peut-être plus à jour.',
+                      libelleAction: 'Réessayer',
+                      onAction: _rafraichirTout,
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // 2.6 Aucune demande ni livraison : état explicite.
+                  if (_profil != null &&
+                      _erreurDemandes == null &&
+                      _demandesAssignees.isEmpty &&
+                      _livraisonsCourier.isEmpty)
+                    _CarteEtat(
+                      icone: Icons.hourglass_empty,
+                      titre: 'Aucune demande pour le moment',
+                      texte: disponible
+                          ? 'Tu es en ligne : les demandes proches apparaîtront ici.'
+                          : 'Tu es hors ligne : passe en ligne pour recevoir des demandes.',
+                    ),
 
                   // 3. Demandes en cours
                   if (_demandesAssignees.isNotEmpty) ...[
@@ -629,6 +718,66 @@ class _CarteProfil extends StatelessWidget {
 }
 
 /// Une des 3 cartes de statistiques rapides (courses du jour, solde, note).
+/// Carte d'état de l'accueil (erreur, compte sans profil, aucune demande) :
+/// présentationnelle, l'action éventuelle arrive par callback. Sans action,
+/// aucun bouton n'est affiché.
+class _CarteEtat extends StatelessWidget {
+  final IconData icone;
+  final String titre;
+  final String texte;
+  final String? libelleAction;
+  final VoidCallback? onAction;
+
+  const _CarteEtat({
+    required this.icone,
+    required this.titre,
+    required this.texte,
+    this.libelleAction,
+    this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: CouleursTaama.blanc,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Icon(icone, size: 36, color: CouleursTaama.grisTexte),
+          const SizedBox(height: 10),
+          Text(
+            titre,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 15,
+              color: CouleursTaama.indigo,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            texte,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: CouleursTaama.grisTexte),
+          ),
+          if (libelleAction != null && onAction != null) ...[
+            const SizedBox(height: 14),
+            FilledButton(
+              onPressed: onAction,
+              style: FilledButton.styleFrom(backgroundColor: CouleursTaama.terreCuite),
+              child: Text(libelleAction!),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _CarteStat extends StatelessWidget {
   final IconData icone;
   final Color couleur;

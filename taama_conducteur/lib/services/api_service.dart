@@ -403,7 +403,9 @@ class ApiService {
   }
 
   static Future<void> refuserDemande(int demandeId) async {
-    final reponse = await http.post(Uri.parse('$_baseUrl/trajets/demandes/$demandeId/refuser/'), headers: _headers);
+    final reponse = await http
+        .post(Uri.parse('$_baseUrl/trajets/demandes/$demandeId/refuser/'), headers: _headers)
+        .timeout(const Duration(seconds: 12));
     _traiterReponse(reponse);
   }
 
