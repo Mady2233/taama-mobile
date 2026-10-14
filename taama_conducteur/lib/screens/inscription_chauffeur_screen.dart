@@ -14,6 +14,7 @@ class EcranInscriptionChauffeur extends StatefulWidget {
 }
 
 class _EcranInscriptionChauffeurState extends State<EcranInscriptionChauffeur> {
+  final _prenomController = TextEditingController();
   final _nomController = TextEditingController();
   final _marqueController = TextEditingController();
   final _modeleController = TextEditingController();
@@ -56,6 +57,7 @@ class _EcranInscriptionChauffeurState extends State<EcranInscriptionChauffeur> {
 
   @override
   void dispose() {
+    _prenomController.dispose();
     _nomController.dispose();
     _marqueController.dispose();
     _modeleController.dispose();
@@ -63,7 +65,21 @@ class _EcranInscriptionChauffeurState extends State<EcranInscriptionChauffeur> {
     super.dispose();
   }
 
+  // Libellés des champs du serveur (CreerChauffeurSerializer), pour afficher
+  // ses erreurs de validation telles quelles mais lisibles.
+  static const Map<String, String> _libellesChamps = {
+    'prenom': 'Prénom',
+    'nom': 'Nom',
+    'type_transport': 'Type de transport',
+    'type_vehicule': 'Type de véhicule',
+    'marque': 'Marque',
+    'modele': 'Modèle',
+    'couleur': 'Couleur',
+    'plaque': 'Plaque',
+  };
+
   Future<void> _creerProfil() async {
+    final prenom = _prenomController.text.trim();
     final nom = _nomController.text.trim();
     final marque = _marqueController.text.trim();
     final modele = _modeleController.text.trim();
@@ -71,7 +87,7 @@ class _EcranInscriptionChauffeurState extends State<EcranInscriptionChauffeur> {
 
     final typeVehiculeManquant = _typeSelectionne != null && !_estMoto && _sousTypeVoiture == null;
 
-    if (nom.isEmpty || marque.isEmpty || modele.isEmpty || plaque.isEmpty ||
+    if (prenom.isEmpty || nom.isEmpty || marque.isEmpty || modele.isEmpty || plaque.isEmpty ||
         _typeSelectionne == null || _couleur == null || typeVehiculeManquant) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Remplis tous les champs')),
@@ -86,6 +102,7 @@ class _EcranInscriptionChauffeurState extends State<EcranInscriptionChauffeur> {
     setState(() => _enChargement = true);
     try {
       await ApiService.creerMonProfilChauffeur(
+        prenom: prenom,
         nom: nom,
         typeTransport: _types[_typeSelectionne!].nom,
         typeVehicule: typeVehicule,
@@ -101,10 +118,24 @@ class _EcranInscriptionChauffeurState extends State<EcranInscriptionChauffeur> {
         MaterialPageRoute(builder: (context) => const EcranEspaceChauffeur()),
         (route) => false,
       );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // Message exact du serveur ; pour une erreur de champ, précédé de son
+      // libellé (« Prénom : Ce champ est obligatoire. »).
+      final texte = e.erreursChamps.isEmpty
+          ? e.message
+          : e.erreursChamps.entries
+              .map((c) => '${_libellesChamps[c.key] ?? c.key} : ${c.value}')
+              .join('\n');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(texte), duration: const Duration(seconds: 8)),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Erreur lors de la création du profil')),
+        const SnackBar(
+          content: Text('Pas de connexion. Vérifie ton réseau et réessaie.'),
+        ),
       );
     } finally {
       if (mounted) setState(() => _enChargement = false);
@@ -131,11 +162,24 @@ class _EcranInscriptionChauffeurState extends State<EcranInscriptionChauffeur> {
                 style: TextStyle(color: Colors.grey),
               ),
               const SizedBox(height: 24),
+              // Prénom et nom séparés : le passager voit « Prénom N. » avant
+              // acceptation (nom_court), jamais un découpage deviné.
+              TextField(
+                controller: _prenomController,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Prénom',
+                  prefixIcon: Icon(Icons.person),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
               TextField(
                 controller: _nomController,
+                textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(
-                  labelText: 'Ton nom complet',
-                  prefixIcon: Icon(Icons.person),
+                  labelText: 'Nom',
+                  prefixIcon: Icon(Icons.badge_outlined),
                   border: OutlineInputBorder(),
                 ),
               ),

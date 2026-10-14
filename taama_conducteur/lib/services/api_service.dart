@@ -13,7 +13,11 @@ class ApiException implements Exception {
   final int statusCode;
   final String message;
 
-  ApiException(this.statusCode, this.message);
+  /// Erreurs de validation DRF par champ ({"prenom": ["Ce champ est
+  /// obligatoire."]} -> {"prenom": "Ce champ est obligatoire."}), vide sinon.
+  final Map<String, String> erreursChamps;
+
+  ApiException(this.statusCode, this.message, {this.erreursChamps = const {}});
 
   @override
   String toString() => 'Exception: $message';
@@ -61,13 +65,27 @@ class ApiService {
   static dynamic _traiterReponse(http.Response reponse, {int codeAttendu = 200}) {
     if (reponse.statusCode != codeAttendu) {
       String message;
+      final erreursChamps = <String, String>{};
       try {
         final corps = jsonDecode(reponse.body);
-        message = corps['erreur'] ?? corps['detail'] ?? reponse.body;
+        if (corps is Map) {
+          if (corps['erreur'] == null && corps['detail'] == null) {
+            // Validation DRF : premier message de chaque champ.
+            corps.forEach((champ, valeur) {
+              final texte = valeur is List && valeur.isNotEmpty ? valeur.first : valeur;
+              erreursChamps['$champ'] = '$texte';
+            });
+          }
+          message = (corps['erreur'] ?? corps['detail'])?.toString() ??
+              (erreursChamps.isNotEmpty ? erreursChamps.values.first : 'Erreur ${reponse.statusCode}');
+        } else {
+          message = 'Erreur ${reponse.statusCode}';
+        }
       } catch (_) {
-        message = reponse.body;
+        // Jamais le corps brut (page HTML d'erreur, trace…) à l'écran.
+        message = 'Erreur ${reponse.statusCode}';
       }
-      throw ApiException(reponse.statusCode, message);
+      throw ApiException(reponse.statusCode, message, erreursChamps: erreursChamps);
     }
     return jsonDecode(reponse.body);
   }
@@ -150,7 +168,10 @@ class ApiService {
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
+  /// Champs exigés par le serveur (CreerChauffeurSerializer) : prenom, nom,
+  /// type_transport, plaque. Les autres sont facultatifs.
   static Future<Map<String, dynamic>> creerMonProfilChauffeur({
+    required String prenom,
     required String nom,
     required String typeTransport,
     required String typeVehicule,
@@ -163,6 +184,7 @@ class ApiService {
       Uri.parse('$_baseUrl/trajets/chauffeur/creer-mon-profil/'),
       headers: _headers,
       body: jsonEncode({
+        'prenom': prenom,
         'nom': nom,
         'type_transport': typeTransport,
         'type_vehicule': typeVehicule,
@@ -171,7 +193,7 @@ class ApiService {
         'couleur': couleur,
         'plaque': plaque,
       }),
-    );
+    ).timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse, codeAttendu: 201) as Map<String, dynamic>;
   }
 

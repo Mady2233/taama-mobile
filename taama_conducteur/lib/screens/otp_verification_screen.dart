@@ -59,13 +59,20 @@ class _EcranVerificationOTPState extends State<EcranVerificationOTP> {
 
       // Toujours le flux conducteur ici : je vérifie d'abord si un profil
       // existe déjà — sinon, j'envoie vers le formulaire de création automatique.
+      // Seul un 403 (« aucun profil chauffeur ») mène à l'inscription. Une
+      // autre erreur (réseau, serveur) ne doit pas envoyer un chauffeur déjà
+      // inscrit vers le formulaire : l'accueil affiche l'erreur et
+      // « Réessayer » (le code a déjà été consommé, inutile de le redemander).
       Widget ecranSuivant;
       try {
         await ApiService.monProfilChauffeur();
         ecranSuivant = const EcranEspaceChauffeur();
+      } on ApiException catch (e) {
+        ecranSuivant = e.statusCode == 403
+            ? const EcranInscriptionChauffeur()
+            : const EcranEspaceChauffeur();
       } catch (e) {
-        // Pas encore de profil chauffeur pour ce compte -> on le crée
-        ecranSuivant = const EcranInscriptionChauffeur();
+        ecranSuivant = const EcranEspaceChauffeur();
       }
 
       if (!mounted) return;
