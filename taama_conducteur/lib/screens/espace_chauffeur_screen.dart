@@ -549,21 +549,10 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                     const SizedBox(height: 16),
                   ],
 
-                  // 2.6 Aucune demande ni livraison : état explicite.
-                  if (_profil != null &&
-                      _erreurDemandes == null &&
-                      _demandesAssignees.isEmpty &&
-                      _livraisonsCourier.isEmpty)
-                    _CarteEtat(
-                      icone: Icons.hourglass_empty,
-                      titre: 'Aucune demande pour le moment',
-                      texte: disponible
-                          ? 'Tu es en ligne : les demandes proches apparaîtront ici.'
-                          : 'Tu es hors ligne : passe en ligne pour recevoir des demandes.',
-                    ),
-
-                  // 3. Demandes en cours
-                  if (_demandesAssignees.isNotEmpty) ...[
+                  // 3. Demandes en cours : section toujours présente une fois
+                  // le profil chargé, avec un état explicite quand elle est
+                  // vide (jamais un titre suivi de rien).
+                  if (_profil != null) ...[
                     const Text(
                       'Demandes en cours',
                       style: TextStyle(
@@ -573,6 +562,16 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    // En erreur de rafraîchissement, la carte 2.5 ci-dessus
+                    // l'explique déjà : pas de « aucune demande » trompeur.
+                    if (_demandesAssignees.isEmpty && _erreurDemandes == null)
+                      _CarteEtat(
+                        icone: Icons.hourglass_empty,
+                        titre: 'Aucune demande pour le moment',
+                        texte: disponible
+                            ? 'Tu es en ligne : les demandes proches apparaîtront ici.'
+                            : 'Tu es hors ligne : passe en ligne pour recevoir des demandes.',
+                      ),
                     ..._demandesAssignees.map((demande) {
                       final enAttente = demande['statut'] == 'chauffeur_trouve';
                       final demandeId = demande['id'] as int;
@@ -582,6 +581,16 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                           ) ??
                           DateTime.now();
                       return _CarteDemande(
+                        // Clé incluant enAttente (pas juste l'id) : force un
+                        // remontage complet du sous-arbre quand le statut
+                        // bascule 'chauffeur_trouve' -> 'en_route' (la Row
+                        // change de structure : 3 boutons Expanded vs.
+                        // Expanded+boutons fixes). Sans ça, Flutter tente de
+                        // réutiliser en place l'ancien arbre de rendu, ce qui
+                        // provoquait "BoxConstraints forces an infinite
+                        // width" en cascade (jusqu'à un écran blanc) au
+                        // moment précis de l'acceptation d'une course.
+                        key: ValueKey('${demandeId}_$enAttente'),
                         demande: demande,
                         enAttente: enAttente,
                         enTraitement: _enTraitement == demande['id'],
@@ -931,6 +940,9 @@ class _CarteStat extends StatelessWidget {
 }
 
 /// Une carte de demande instantanée assignée au conducteur.
+/// Bouton icône dans une Row : largeur minimale finie (voir _CarteDemande).
+const Size _tailleBoutonIcone = Size(48, 44);
+
 class _CarteDemande extends StatelessWidget {
   final dynamic demande;
   final bool enAttente;
@@ -941,6 +953,7 @@ class _CarteDemande extends StatelessWidget {
   final VoidCallback onAnnuler;
 
   const _CarteDemande({
+    super.key,
     required this.demande,
     required this.enAttente,
     required this.enTraitement,
@@ -1034,34 +1047,45 @@ class _CarteDemande extends StatelessWidget {
               ],
             )
           else
+            // Les deux boutons icône ont une largeur minimale FINIE
+            // (_tailleBoutonIcone) : le thème de l'app (main.dart) impose
+            // minimumSize: Size.fromHeight(52), soit une largeur minimale
+            // infinie, impossible à placer dans cette Row de taille libre
+            // ("BoxConstraints forces an infinite width") — la carte entière
+            // ne se dessinait plus, et « Demandes en cours » restait vide.
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Expanded(
-                  child: Text(
-                    'En route',
-                    style: TextStyle(
-                      color: Colors.green,
-                      fontWeight: FontWeight.bold,
+                const Text(
+                  'En route',
+                  style: TextStyle(
+                    color: Colors.green,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    OutlinedButton(
+                      onPressed: onChat,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: _tailleBoutonIcone,
+                        foregroundColor: CouleursTaama.indigo,
+                        side: const BorderSide(color: CouleursTaama.indigo),
+                      ),
+                      child: const Icon(Icons.chat_bubble_outline, size: 18),
                     ),
-                  ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: onChat,
-                  icon: const Icon(Icons.chat_bubble_outline, size: 18),
-                  label: const Text('Chat'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: CouleursTaama.indigo,
-                    side: const BorderSide(color: CouleursTaama.indigo),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: onAnnuler,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    side: const BorderSide(color: Colors.red),
-                  ),
-                  child: const Icon(Icons.cancel_outlined, size: 18),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: onAnnuler,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: _tailleBoutonIcone,
+                        foregroundColor: Colors.red,
+                        side: const BorderSide(color: Colors.red),
+                      ),
+                      child: const Icon(Icons.cancel_outlined, size: 18),
+                    ),
+                  ],
                 ),
               ],
             ),
