@@ -6,7 +6,8 @@ import 'package:latlong2/latlong.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../theme/couleurs_taama.dart';
-import '../widgets/taama_map.dart' show TaamaMapTiles, attributionCarteTaama;
+import '../widgets/couche_carte_taama.dart';
+import '../carte/fond_carte.dart';
 import 'chat_screen.dart';
 
 class EcranCourier extends StatefulWidget {
@@ -586,13 +587,8 @@ class _EcranCourierState extends State<EcranCourier> {
                   initialZoom: 13.0,
                 ),
                 children: [
-                  TileLayer(
-                    urlTemplate: TaamaMapTiles.clair,
-                    subdomains: TaamaMapTiles.subdomains,
-                    userAgentPackageName: TaamaMapTiles.userAgent,
-                    errorTileCallback: (t, e, s) {},
-                  ),
-                  attributionCarteTaama(),
+                  const FondCarteTaama(),
+                  const CoucheCarteTaama(),
                   MarkerLayer(
                     markers: [
                       // Point de collecte
@@ -624,6 +620,7 @@ class _EcranCourierState extends State<EcranCourier> {
                         ),
                     ],
                   ),
+                  const AttributionCarteTaama(),
                 ],
               ),
 
@@ -882,13 +879,8 @@ class _MiniCarte extends StatelessWidget {
             ),
           ),
           children: [
-            TileLayer(
-              urlTemplate: TaamaMapTiles.clair,
-              subdomains: TaamaMapTiles.subdomains,
-              userAgentPackageName: TaamaMapTiles.userAgent,
-              errorTileCallback: (t, e, s) {},
-            ),
-            attributionCarteTaama(),
+            const FondCarteTaama(apercu: true),
+            const CoucheCarteTaama(),
             MarkerLayer(
               markers: [
                 Marker(
@@ -905,6 +897,7 @@ class _MiniCarte extends StatelessWidget {
                 ),
               ],
             ),
+            const AttributionCarteTaama(),
           ],
         ),
       ),
@@ -1076,13 +1069,8 @@ class _EcranSelectionAdresseState
               onTap: (_, p) => setState(() => _point = p),
             ),
             children: [
-              TileLayer(
-                urlTemplate: TaamaMapTiles.clair,
-                subdomains: TaamaMapTiles.subdomains,
-                userAgentPackageName: TaamaMapTiles.userAgent,
-                errorTileCallback: (t, e, s) {},
-              ),
-              attributionCarteTaama(),
+              const FondCarteTaama(),
+              const CoucheCarteTaama(),
               if (_point != null)
                 MarkerLayer(
                   markers: [
@@ -1094,6 +1082,7 @@ class _EcranSelectionAdresseState
                     ),
                   ],
                 ),
+              const AttributionCarteTaama(),
             ],
           ),
           Positioned(

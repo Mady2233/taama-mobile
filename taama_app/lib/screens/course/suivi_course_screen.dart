@@ -171,6 +171,13 @@ class SuiviCourseScreen extends StatelessWidget {
                 itineraire: itineraire,
                 themeNuit: true,
                 margeCadrage: const EdgeInsets.fromLTRB(56, 110, 56, 320),
+                // Le panneau du bas couvre le coin inférieur : l'attribution
+                // passe sous la barre haute (boutons de 44 px à haut + 12).
+                alignementAttribution: Alignment.topLeft,
+                margeAttribution: EdgeInsets.only(
+                  left: 14,
+                  top: MediaQuery.paddingOf(context).top + 64,
+                ),
               ),
             ),
             _BarreHaute(

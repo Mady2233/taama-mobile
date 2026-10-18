@@ -10,8 +10,8 @@
 //  - la caméra cadre automatiquement tous les points d'intérêt ;
 //  - le fond de tuiles suit le thème (clair / nuit) sans code appelant.
 //
-// Aucune clé d'API n'est écrite ici : l'URL des tuiles arrive par
-// --dart-define via TaamaMapTiles.
+// Aucune adresse de tuiles ni clé n'est écrite ici : tout arrive par
+// --dart-define, voir lib/config/carte_config.dart et FondCarteTaama.
 
 import 'dart:math' as math;
 
@@ -19,58 +19,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../carte/fond_carte.dart';
 import '../theme/taama_theme.dart';
-
-// ---------------------------------------------------------------------------
-// Configuration des tuiles
-// ---------------------------------------------------------------------------
-
-/// Fonds de carte. Les URL viennent de --dart-define pour ne jamais
-/// committer une clé d'API dans le dépôt.
-///
-///   flutter run \
-///     --dart-define=MAP_TILES_LIGHT=https://.../{z}/{x}/{y}.png \
-///     --dart-define=MAP_TILES_DARK=https://.../{z}/{x}/{y}.png
-///
-/// Sans valeur fournie, on retombe sur CartoDB Voyager (mêmes données
-/// OSM, style visuel épuré façon Uber/Google Maps — routes lisibles,
-/// labels discrets, palette pastel) plutôt que les tuiles OSM brutes :
-/// même style que taama_conducteur (voir fond_carte_taama.dart, dont ce
-/// fichier s'inspire), gratuit, sans clé API.
-class TaamaMapTiles {
-  TaamaMapTiles._();
-
-  static const String _voyager =
-      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
-
-  static const String clair =
-      String.fromEnvironment('MAP_TILES_LIGHT', defaultValue: _voyager);
-  static const String sombre =
-      String.fromEnvironment('MAP_TILES_DARK', defaultValue: _voyager);
-
-  /// Sous-domaines CartoDB pour paralléliser le chargement des tuiles —
-  /// sans effet si une URL --dart-define personnalisée n'utilise pas
-  /// le motif {s}.
-  static const List<String> subdomains = ['a', 'b', 'c', 'd'];
-
-  static const String userAgent = 'com.taama.taama_app';
-
-  static String pour(Brightness luminosite) =>
-      luminosite == Brightness.dark ? sombre : clair;
-}
-
-/// Attribution requise par la licence des données (OpenStreetMap) et du
-/// style visuel (CARTO) — même contenu que taama_conducteur/lib/widgets/
-/// fond_carte_taama.dart, à ajouter aux children de chaque FlutterMap.
-Widget attributionCarteTaama() {
-  return RichAttributionWidget(
-    alignment: AttributionAlignment.bottomLeft,
-    attributions: [
-      TextSourceAttribution('© OpenStreetMap contributors'),
-      TextSourceAttribution('© CARTO'),
-    ],
-  );
-}
+import 'couche_carte_taama.dart';
 
 // ---------------------------------------------------------------------------
 // Modèle d'un véhicule affiché
@@ -111,6 +62,8 @@ class TaamaMap extends StatefulWidget {
     this.zoomInitial = 14.5,
     this.margeCadrage = const EdgeInsets.all(56),
     this.controller,
+    this.alignementAttribution = Alignment.bottomLeft,
+    this.margeAttribution = const EdgeInsets.all(6),
   });
 
   final LatLng? positionClient;
@@ -130,6 +83,11 @@ class TaamaMap extends StatefulWidget {
   final double zoomInitial;
   final EdgeInsets margeCadrage;
   final MapController? controller;
+
+  /// Position de l'attribution OSM/CARTO, à garder hors des barres et
+  /// panneaux que l'écran superpose à la carte.
+  final Alignment alignementAttribution;
+  final EdgeInsets margeAttribution;
 
   @override
   State<TaamaMap> createState() => _TaamaMapState();
@@ -180,8 +138,6 @@ class _TaamaMapState extends State<TaamaMap> {
   Widget build(BuildContext context) {
     final nuit = widget.themeNuit ??
         (Theme.of(context).brightness == Brightness.dark);
-    final urlTuiles =
-        TaamaMapTiles.pour(nuit ? Brightness.dark : Brightness.light);
 
     return FlutterMap(
       mapController: _carte,
@@ -201,13 +157,13 @@ class _TaamaMapState extends State<TaamaMap> {
         },
       ),
       children: [
-        TileLayer(
-          urlTemplate: urlTuiles,
-          subdomains: TaamaMapTiles.subdomains,
-          userAgentPackageName: TaamaMapTiles.userAgent,
-          maxNativeZoom: 19,
-        ),
-        attributionCarteTaama(),
+        FondCarteTaama(nuit: nuit),
+        CoucheCarteTaama(nuit: nuit, reserves: [
+          ZoneReservee.attribution(
+            alignement: widget.alignementAttribution,
+            marge: widget.margeAttribution,
+          ),
+        ]),
         if (widget.itineraire.length >= 2)
           PolylineLayer(
             polylines: [
@@ -262,6 +218,11 @@ class _TaamaMapState extends State<TaamaMap> {
                 child: PointClient(nuit: nuit),
               ),
           ],
+        ),
+        AttributionCarteTaama(
+          nuit: nuit,
+          alignement: widget.alignementAttribution,
+          marge: widget.margeAttribution,
         ),
       ],
     );

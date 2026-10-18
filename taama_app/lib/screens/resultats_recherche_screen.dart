@@ -9,7 +9,8 @@ import '../models/service_course.dart';
 import '../services/api_service.dart';
 import '../services/routing_service.dart';
 import '../theme/couleurs_taama.dart';
-import '../widgets/taama_map.dart' show TaamaMapTiles, attributionCarteTaama;
+import '../widgets/couche_carte_taama.dart';
+import '../carte/fond_carte.dart';
 import '../widgets/widget_choix_vehicule.dart';
 import 'course/suivi_course_page.dart';
 import 'recherche_screen.dart';
@@ -1058,13 +1059,8 @@ class _CarteApercuItineraireState extends State<_CarteApercuItineraire> {
               initialZoom: 13.0,
             ),
             children: [
-              TileLayer(
-                urlTemplate: TaamaMapTiles.clair,
-                subdomains: TaamaMapTiles.subdomains,
-                userAgentPackageName: TaamaMapTiles.userAgent,
-                errorTileCallback: (tile, error, stack) {},
-              ),
-              attributionCarteTaama(),
+              const FondCarteTaama(),
+              const CoucheCarteTaama(),
               if (_trace != null)
                 PolylineLayer(
                   polylines: [
@@ -1137,6 +1133,7 @@ class _CarteApercuItineraireState extends State<_CarteApercuItineraire> {
                     ),
                 ],
               ),
+              const AttributionCarteTaama(),
             ],
           ),
           // Overlay de chargement uniquement pendant un calcul en cours (GPS

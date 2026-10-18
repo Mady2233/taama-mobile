@@ -11,6 +11,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme/couleurs_taama.dart';
 import '../services/location_service.dart';
 import '../services/api_service.dart';
+import '../widgets/couche_carte_taama.dart';
+import '../carte/fond_carte.dart';
 
 /// Convertit le champ JSON brut `arrets` d'une demande (venant de l'API,
 /// voir ArretDemandeSerializer côté backend) en liste triée par ordre, prête
@@ -533,6 +535,17 @@ class _EcranNavigationState extends State<EcranNavigation> {
 
   @override
   Widget build(BuildContext context) {
+    final nuit = MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+    // Au-dessus du panneau bas (bouton de 54 px + 2 × 16 de marge), côté
+    // droit : le badge de vitesse occupe la gauche.
+    final margeAttribution = EdgeInsets.only(
+      right: 12,
+      bottom: 94 + MediaQuery.paddingOf(context).bottom,
+    );
+    // Nuit : palette de la maquette « Conducteur » ; jour : inchangé.
+    final texte = nuit ? CouleursTaama.blanc : CouleursTaama.indigo;
+    final texteSecondaire = nuit ? CouleursTaama.nuitTexteSecondaire : Colors.grey;
+    final ombre = nuit ? Colors.black26 : Colors.black12;
     return Scaffold(
       body: Stack(
         children: [
@@ -545,11 +558,18 @@ class _EcranNavigationState extends State<EcranNavigation> {
               initialZoom: 13.0,
             ),
             children: [
-              TileLayer(
-                urlTemplate:
-                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.taama.taama_conducteur',
-                errorTileCallback: (tile, error, stack) {},
+              FondCarteTaama(nuit: nuit),
+              // Densité réduite en conduite ; même position que
+              // l'attribution ci-dessous (au-dessus du panneau bas).
+              CoucheCarteTaama(
+                nuit: nuit,
+                densite: DensiteEtiquettes.navigation,
+                reserves: [
+                  ZoneReservee.attribution(
+                    alignement: Alignment.bottomRight,
+                    marge: margeAttribution,
+                  ),
+                ],
               ),
 
               // Itinéraire tracé en bleu
@@ -558,7 +578,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
                   polylines: [
                     Polyline(
                       points: _itineraire,
-                      color: CouleursTaama.indigo,
+                      color: nuit ? CouleursTaama.itineraireNuit : CouleursTaama.indigo,
                       strokeWidth: 5.0,
                     ),
                   ],
@@ -575,19 +595,19 @@ class _EcranNavigationState extends State<EcranNavigation> {
                       height: 48,
                       child: Container(
                         decoration: BoxDecoration(
-                          color: CouleursTaama.indigo,
+                          color: nuit ? CouleursTaama.blanc : CouleursTaama.indigo,
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: CouleursTaama.indigo
+                              color: (nuit ? CouleursTaama.blanc : CouleursTaama.indigo)
                                   .withValues(alpha: 0.4),
                               blurRadius: 8,
                             ),
                           ],
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.directions_car,
-                          color: Colors.white,
+                          color: nuit ? CouleursTaama.indigo : Colors.white,
                           size: 24,
                         ),
                       ),
@@ -656,6 +676,11 @@ class _EcranNavigationState extends State<EcranNavigation> {
                       ),
                 ],
               ),
+              AttributionCarteTaama(
+                nuit: nuit,
+                alignement: Alignment.bottomRight,
+                marge: margeAttribution,
+              ),
             ],
           ),
 
@@ -669,11 +694,11 @@ class _EcranNavigationState extends State<EcranNavigation> {
                 margin: const EdgeInsets.all(12),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: nuit ? CouleursTaama.indigo : Colors.white,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: const [
+                  boxShadow: [
                     BoxShadow(
-                      color: Colors.black12,
+                      color: ombre,
                       blurRadius: 10,
                     ),
                   ],
@@ -685,7 +710,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
                       children: [
                         IconButton(
                           onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.arrow_back),
+                          icon: Icon(Icons.arrow_back, color: nuit ? CouleursTaama.blanc : null),
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
                         ),
@@ -695,10 +720,10 @@ class _EcranNavigationState extends State<EcranNavigation> {
                             _jambeVersDestination
                                 ? widget.destination
                                 : 'Récupération du client',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
-                              color: CouleursTaama.indigo,
+                              color: texte,
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -716,24 +741,24 @@ class _EcranNavigationState extends State<EcranNavigation> {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          const Icon(Icons.route,
-                              size: 16, color: Colors.grey),
+                          Icon(Icons.route,
+                              size: 16, color: texteSecondaire),
                           const SizedBox(width: 4),
                           Text(
                             '${_distanceKm!.toStringAsFixed(1)} km',
-                            style: const TextStyle(
-                              color: Colors.grey,
+                            style: TextStyle(
+                              color: texteSecondaire,
                               fontSize: 13,
                             ),
                           ),
                           const SizedBox(width: 16),
-                          const Icon(Icons.access_time,
-                              size: 16, color: Colors.grey),
+                          Icon(Icons.access_time,
+                              size: 16, color: texteSecondaire),
                           const SizedBox(width: 4),
                           Text(
                             '$_dureeMinutes min',
-                            style: const TextStyle(
-                              color: Colors.grey,
+                            style: TextStyle(
+                              color: texteSecondaire,
                               fontSize: 13,
                             ),
                           ),
@@ -768,7 +793,9 @@ class _EcranNavigationState extends State<EcranNavigation> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
-                  color: _vitesseKmh > 80 ? Colors.red : Colors.white,
+                  color: _vitesseKmh > 80
+                      ? Colors.red
+                      : (nuit ? CouleursTaama.nuitPanneau : Colors.white),
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: const [
                     BoxShadow(color: Colors.black26, blurRadius: 6),
@@ -779,7 +806,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 14,
-                    color: _vitesseKmh > 80 ? Colors.white : CouleursTaama.indigo,
+                    color: _vitesseKmh > 80 ? Colors.white : texte,
                   ),
                 ),
               ),
@@ -816,14 +843,14 @@ class _EcranNavigationState extends State<EcranNavigation> {
             child: SafeArea(
               child: Container(
                 padding: const EdgeInsets.all(16),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(
+                decoration: BoxDecoration(
+                  color: nuit ? CouleursTaama.nuitPanneau : Colors.white,
+                  borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(20),
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black12,
+                      color: ombre,
                       blurRadius: 10,
                       offset: Offset(0, -2),
                     ),
@@ -832,15 +859,14 @@ class _EcranNavigationState extends State<EcranNavigation> {
                 child: _navigationDemarree
                     ? Row(
                         children: [
-                          const Icon(Icons.navigation,
-                              color: CouleursTaama.indigo),
+                          Icon(Icons.navigation, color: texte),
                           const SizedBox(width: 8),
-                          const Expanded(
+                          Expanded(
                             child: Text(
                               'Navigation en cours...',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: CouleursTaama.indigo,
+                                color: texte,
                               ),
                             ),
                           ),

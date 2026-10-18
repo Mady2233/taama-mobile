@@ -11,4 +11,9 @@ class CouleursTaama {
 
   static const Color grisTexte = Color(0xFF6B7280);
   static const Color blanc = Colors.white;
+
+  // Navigation de nuit (maquette « Conducteur »).
+  static const Color nuitPanneau = Color(0xFF22273D);
+  static const Color nuitTexteSecondaire = Color(0xFF9AA3C0);
+  static const Color itineraireNuit = Color(0xFFF0997B);
 }

@@ -15,7 +15,8 @@ import 'package:latlong2/latlong.dart';
 import '../../theme/taama_theme.dart';
 import '../../utils/format.dart';
 import '../../widgets/photo_avatar.dart';
-import '../../widgets/taama_map.dart' show TaamaMapTiles, attributionCarteTaama;
+import '../../widgets/couche_carte_taama.dart';
+import '../../carte/fond_carte.dart';
 
 // ---------------------------------------------------------------------------
 // Modèles d'affichage
@@ -703,13 +704,20 @@ class _BandeCarte extends StatelessWidget {
                 ),
               ),
               children: [
-                TileLayer(
-                  urlTemplate: TaamaMapTiles.clair,
-                  subdomains: TaamaMapTiles.subdomains,
-                  userAgentPackageName: TaamaMapTiles.userAgent,
-                  maxNativeZoom: 19,
-                ),
-                attributionCarteTaama(),
+                const FondCarteTaama(apercu: true),
+                // Mêmes positions que l'attribution et le bouton
+                // « recentrer » (36 x 36, à 12 du coin haut droit) ci-dessous.
+                const CoucheCarteTaama(reserves: [
+                  ZoneReservee.attribution(
+                    alignement: Alignment.topLeft,
+                    marge: EdgeInsets.all(8),
+                  ),
+                  ZoneReservee(
+                    alignement: Alignment.topRight,
+                    taille: Size(36, 36),
+                    marge: EdgeInsets.all(12),
+                  ),
+                ]),
                 MarkerLayer(
                   markers: [
                     for (final c in conducteurs)
@@ -727,6 +735,12 @@ class _BandeCarte extends StatelessWidget {
                         child: const _PointClient(),
                       ),
                   ],
+                ),
+                // La fiche chauffeur couvre le bas, le bouton recentrer le
+                // coin haut droit : l'attribution va en haut à gauche.
+                const AttributionCarteTaama(
+                  alignement: Alignment.topLeft,
+                  marge: EdgeInsets.all(8),
                 ),
               ],
             ),

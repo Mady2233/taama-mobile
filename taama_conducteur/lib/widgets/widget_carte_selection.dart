@@ -3,6 +3,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import '../theme/couleurs_taama.dart';
+import 'couche_carte_taama.dart';
+import '../carte/fond_carte.dart';
 
 /// Carte interactive pour sélectionner un point (départ ou arrivée).
 /// Le conducteur tape sur la carte pour positionner le marqueur.
@@ -93,11 +95,8 @@ class _EcranSelectionPointState extends State<EcranSelectionPoint> {
               },
             ),
             children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.taama.taama_conducteur',
-                errorTileCallback: (tile, error, stack) {},
-              ),
+              const FondCarteTaama(),
+              const CoucheCarteTaama(),
               if (_pointSelectionne != null)
                 MarkerLayer(
                   markers: [
@@ -113,6 +112,7 @@ class _EcranSelectionPointState extends State<EcranSelectionPoint> {
                     ),
                   ],
                 ),
+              const AttributionCarteTaama(),
             ],
           ),
 

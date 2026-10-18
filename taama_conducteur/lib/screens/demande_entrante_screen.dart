@@ -7,6 +7,8 @@ import 'package:geolocator/geolocator.dart';
 import '../services/api_service.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../theme/couleurs_taama.dart';
+import '../widgets/couche_carte_taama.dart';
+import '../carte/fond_carte.dart';
 import 'navigation_screen.dart';
 
 /// Vitesse moyenne d'approche en ville (Bamako) — même hypothèse que le
@@ -456,10 +458,8 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
         child: FlutterMap(
           options: MapOptions(initialCenter: depart, initialZoom: 14.5),
           children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.taama.conducteur',
-            ),
+            const FondCarteTaama(apercu: true),
+            const CoucheCarteTaama(),
             MarkerLayer(
               markers: [
                 Marker(
@@ -477,6 +477,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
                   ),
               ],
             ),
+            const AttributionCarteTaama(),
           ],
         ),
       ),
