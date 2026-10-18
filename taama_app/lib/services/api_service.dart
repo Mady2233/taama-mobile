@@ -371,7 +371,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> annulerReservation(
     int reservationId, {
-    String motif = 'autre',
+    String motif = 'AUTRE',
   }) async {
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/reservations/$reservationId/annuler/'),
@@ -453,7 +453,10 @@ class ApiService {
 
   static Future<Map<String, dynamic>> annulerDemande(
     int demandeId, {
-    String motif = 'autre',
+    // 'AUTRE' en majuscules : Annulation.MOTIF_CHOICES_CLIENT (backend)
+    // compare en set exact, sensible à la casse — 'autre' était rejeté en
+    // 400 à chaque annulation sans motif explicite.
+    String motif = 'AUTRE',
   }) async {
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/demandes/$demandeId/annuler/'),
@@ -465,7 +468,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> annulerDemandeChaufeur(
     int demandeId, {
-    String motif = 'autre',
+    String motif = 'AUTRE',
   }) async {
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/demandes/$demandeId/annuler-chauffeur/'),

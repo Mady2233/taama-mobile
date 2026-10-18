@@ -103,7 +103,7 @@ class _EcranVerificationOTPState extends State<EcranVerificationOTP> {
         elevation: 0, // Pour un design plat et dynamique
       ),
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -141,7 +141,14 @@ class _EcranVerificationOTPState extends State<EcranVerificationOTP> {
                   ),
                 ),
               ),
-              const Spacer(), // Je pousse le bouton tout en bas de mon écran
+              // Spacer() remplacé par un espacement fixe : à l'intérieur
+              // d'un SingleChildScrollView, Spacer() n'a pas de hauteur
+              // bornée dans laquelle s'étendre et provoque une erreur de
+              // layout. Le SingleChildScrollView est nécessaire pour que le
+              // contenu défile au lieu de déborder (bandes jaune/noir)
+              // quand le clavier numérique s'ouvre et réduit l'espace
+              // disponible.
+              const SizedBox(height: 32),
               ElevatedButton(
                 onPressed: _enChargement ? null : _verifierEtContinuer,
                 style: ElevatedButton.styleFrom(

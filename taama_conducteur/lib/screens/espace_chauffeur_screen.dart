@@ -657,6 +657,14 @@ class _CarteProfil extends StatelessWidget {
     required this.onToggle,
   });
 
+  /// « Toyota Corolla • AB1234 », sans jamais afficher « null » : chaque
+  /// segment vide ou absent est omis (ancien serveur sans `vehicule`,
+  /// véhicule non renseigné…). Vide → la ligne entière est masquée.
+  String get _ligneVehicule => [profil['vehicule'], profil['plaque']]
+      .map((v) => v?.toString().trim() ?? '')
+      .where((v) => v.isNotEmpty && v != 'null')
+      .join(' • ');
+
   String get _initiales {
     final parties = (profil['nom']?.toString() ?? '')
         .trim()
@@ -769,11 +777,13 @@ class _CarteProfil extends StatelessWidget {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  '${profil['vehicule']} • ${profil['plaque']}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                ),
+                if (_ligneVehicule.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    _ligneVehicule,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,

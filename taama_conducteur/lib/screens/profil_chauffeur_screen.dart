@@ -136,15 +136,41 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
     );
     if (source == null) return;
 
-    final image = await _picker.pickImage(source: source, imageQuality: 85);
-    if (image == null) return;
+    XFile? image;
+    try {
+      image = await _picker.pickImage(source: source, imageQuality: 85);
+    } catch (e) {
+      // pickImage peut lever (permission refusée, pas d'appareil photo
+      // disponible, etc.) — avant ce correctif, rien n'était affiché à
+      // l'écran dans ce cas, juste un plantage silencieux en debug.
+      debugPrint('[ProfilChauffeur] Erreur sélection photo ($source) : $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(
+          source == ImageSource.camera
+              ? 'Impossible d\'accéder à l\'appareil photo. Vérifie la permission dans les paramètres du téléphone.'
+              : 'Impossible d\'accéder à la galerie. Vérifie la permission dans les paramètres du téléphone.',
+        )),
+      );
+      return;
+    }
+    if (image == null) {
+      // Sélection annulée par l'utilisateur (retour sans choisir) — état
+      // normal, pas une erreur, mais utile à distinguer dans les logs du
+      // cas ci-dessus pendant le diagnostic.
+      debugPrint('[ProfilChauffeur] Sélection annulée ($source).');
+      return;
+    }
+    debugPrint('[ProfilChauffeur] Photo sélectionnée : ${image.path}');
 
     setState(() => _uploadPhotoEnCours = true);
     try {
       final chauffeur = await ApiService.uploaderPhotoProfil(File(image.path));
+      debugPrint('[ProfilChauffeur] Photo envoyée avec succès : ${chauffeur['photo_profil']}');
       if (!mounted) return;
       setState(() => _chauffeur = {...?_chauffeur, ...chauffeur});
     } catch (e) {
+      debugPrint('[ProfilChauffeur] Erreur envoi photo : $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),

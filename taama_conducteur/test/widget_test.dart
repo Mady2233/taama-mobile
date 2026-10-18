@@ -1,22 +1,29 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taama_conducteur/main.dart';
+import 'package:taama_conducteur/screens/connexion_screen.dart';
+import 'package:taama_conducteur/screens/onboarding_screen.dart';
+import 'package:taama_conducteur/screens/splash_screen.dart';
+
+/// Démarrage sans session : splash, puis onboarding au premier lancement,
+/// connexion ensuite. Aucun appel réseau (préférences simulées).
+Future<void> _demarrer(WidgetTester tester) async {
+  await tester.pumpWidget(const TaamaConducApp());
+  expect(find.byType(EcranSplash), findsOneWidget);
+  await tester.pump(const Duration(seconds: 3)); // animations du splash (2,6 s)
+  await tester.pump(const Duration(milliseconds: 700)); // transition en fondu
+}
 
 void main() {
-  testWidgets('Affiche l\'écran de connexion au démarrage', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const TaamaConducApp());
+  testWidgets('premier lancement : splash puis onboarding', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await _demarrer(tester);
+    expect(find.byType(EcranOnboarding), findsOneWidget);
+  });
 
-    // Vérifie que l'écran de connexion s'affiche bien.
-    expect(find.text('Taama Conducteur'), findsOneWidget);
-    expect(find.byType(TextField), findsOneWidget);
+  testWidgets('lancement suivant : splash puis connexion', (tester) async {
+    SharedPreferences.setMockInitialValues({'onboarding_vu': true});
+    await _demarrer(tester);
+    expect(find.byType(EcranConnexion), findsOneWidget);
   });
 }

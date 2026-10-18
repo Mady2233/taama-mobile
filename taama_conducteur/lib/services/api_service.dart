@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -163,7 +164,15 @@ class ApiService {
     requete.headers.addAll(_headers..remove('Content-Type'));
     requete.files.add(await http.MultipartFile.fromPath('photo', photo.path));
 
-    final reponseStream = await requete.send();
+    // Sans timeout, une connexion qui coupe en cours d'envoi laisse cet
+    // appel bloqué indéfiniment : le bouton reste en chargement pour
+    // toujours, sans jamais montrer d'erreur (c'est ce qui se produisait).
+    final http.StreamedResponse reponseStream;
+    try {
+      reponseStream = await requete.send().timeout(const Duration(seconds: 20));
+    } on TimeoutException {
+      throw Exception('Envoi trop long, connexion trop lente ou coupée. Réessaie.');
+    }
     final reponse = await http.Response.fromStream(reponseStream);
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }

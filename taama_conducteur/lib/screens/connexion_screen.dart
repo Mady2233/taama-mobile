@@ -164,93 +164,106 @@ class _EcranConnexionState extends State<EcranConnexion>
                 SafeArea(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(32, 24, 32, 0),
-                    child: Column(
-                      children: [
-                        // Logo
-                        Container(
-                          width: 80,
-                          height: 80,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              width: 1.5,
+                    // SingleChildScrollView : ce bloc décoratif déborde de
+                    // quelques pixels sur certains écrans (hauteur fixée à
+                    // 52% de l'écran, contenu tout juste trop grand) —
+                    // bandes jaune/noir au démarrage. Rien d'interactif ici,
+                    // un débordement invisible et scrollable ne se voit pas.
+                    child: SingleChildScrollView(
+                      child: Column(
+                        // Indispensable avec SingleChildScrollView : sans
+                        // min, la Column essaie de prendre la hauteur
+                        // "illimitée" que lui donne le scroll et son contenu
+                        // s'effondre (page blanche, seule l'icône du haut
+                        // visible).
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Logo
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                width: 1.5,
+                              ),
+                            ),
+                            child: CustomPaint(
+                              painter: _LogoPainter(),
+                              size: const Size(80, 80),
                             ),
                           ),
-                          child: CustomPaint(
-                            painter: _LogoPainter(),
-                            size: const Size(80, 80),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
+                          const SizedBox(height: 16),
 
-                        // Nom app
-                        const Text(
-                          'taama',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 42,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -1.5,
-                          ),
-                        ),
-
-                        // Slogan bilingue
-                        Text(
-                          'Espace Conducteur',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.7),
-                            fontSize: 14,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: CouleursTaama.terreCuite.withValues(
-                              alpha: 0.7,
-                            ),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: const Text(
-                            '"An b\'a sɔrɔ — On y arrive ensemble"',
+                          // Nom app
+                          const Text(
+                            'taama',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 11,
-                              fontStyle: FontStyle.italic,
+                              fontSize: 42,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -1.5,
                             ),
                           ),
-                        ),
 
-                        const SizedBox(height: 20),
+                          // Slogan bilingue
+                          Text(
+                            'Espace Conducteur',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.7),
+                              fontSize: 14,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: CouleursTaama.terreCuite.withValues(
+                                alpha: 0.7,
+                              ),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text(
+                              '"An b\'a sɔrɔ — On y arrive ensemble"',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
 
-                        // Stats rapides
-                        const Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            _StatItem(
-                              valeur: '500+',
-                              label: 'Clients',
-                              emoji: '👥',
-                            ),
-                            _StatItem(
-                              valeur: '4.8★',
-                              label: 'Note',
-                              emoji: '⭐',
-                            ),
-                            _StatItem(
-                              valeur: '100%',
-                              label: 'Sécurisé',
-                              emoji: '🛡️',
-                            ),
-                          ],
-                        ),
-                      ],
+                          const SizedBox(height: 20),
+
+                          // Stats rapides
+                          const Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              _StatItem(
+                                valeur: '500+',
+                                label: 'Clients',
+                                emoji: '👥',
+                              ),
+                              _StatItem(
+                                valeur: '4.8★',
+                                label: 'Note',
+                                emoji: '⭐',
+                              ),
+                              _StatItem(
+                                valeur: '100%',
+                                label: 'Sécurisé',
+                                emoji: '🛡️',
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

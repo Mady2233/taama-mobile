@@ -321,12 +321,16 @@ class _EcranRechercheState extends State<EcranRecherche> {
                 const Icon(Icons.history,
                     color: CouleursTaama.indigo, size: 18),
                 const SizedBox(width: 6),
-                const Text(
-                  'Destinations récentes',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                    color: CouleursTaama.indigo,
+                const Expanded(
+                  child: Text(
+                    'Destinations récentes',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: CouleursTaama.indigo,
+                    ),
                   ),
                 ),
               ],
@@ -384,12 +388,16 @@ class _EcranRechercheState extends State<EcranRecherche> {
               const Icon(Icons.local_fire_department,
                   color: CouleursTaama.terreCuite, size: 18),
               const SizedBox(width: 6),
-              const Text(
-                'Destinations populaires à Bamako',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: CouleursTaama.indigo,
+              const Expanded(
+                child: Text(
+                  'Destinations populaires à Bamako',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: CouleursTaama.indigo,
+                  ),
                 ),
               ),
             ],
@@ -403,7 +411,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
             physics: const NeverScrollableScrollPhysics(),
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            childAspectRatio: 2.8,
+            childAspectRatio: 2.5,
             children: _populaires.map((lieu) {
               return GestureDetector(
                 onTap: () => _valider(lieu['nom']!),
@@ -440,6 +448,8 @@ class _EcranRechercheState extends State<EcranRecherche> {
                             ),
                             Text(
                               lieu['quartier']!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 9,
                                 color: Colors.grey.shade500,

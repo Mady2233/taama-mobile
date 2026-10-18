@@ -239,7 +239,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
       if (!mounted) return;
       setState(() => _enTraitement = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        SnackBar(content: Text(_messageErreurLisible(e))),
       );
     }
   }
