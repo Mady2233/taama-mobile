@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/config_app.dart';
 import '../theme/couleurs_taama.dart';
 import '../widgets/widget_notation.dart';
 import '../widgets/widget_sos.dart';
@@ -161,9 +162,13 @@ class _EcranMesReservationsState extends State<EcranMesReservations> {
                         final paye = reservation['paye'] as bool? ?? false;
                         final (couleur, libelle) = _infosStatut(statut);
                         final estActive = statut == 'en_attente' || statut == 'confirmee';
-                        final peutPayer = statut == 'confirmee' && !paye;
+                        // Mode gratuit (lu sur le serveur) : réglée en espèces,
+                        // jamais « payée » dans l'app — pas de bouton Payer, et
+                        // la note ne l'attend pas (même règle côté serveur).
+                        final paiementActif = ConfigApp.paiementActif.value;
+                        final peutPayer = paiementActif && statut == 'confirmee' && !paye;
                         final dejaNote = reservation['deja_note'] as bool? ?? false;
-                        final peutNoter = paye && !dejaNote && (statut == 'confirmee' || statut == 'termine');
+                        final peutNoter = (paye || !paiementActif) && !dejaNote && (statut == 'confirmee' || statut == 'termine');
                         final estVoiture = conducteur['type_transport'] == 'Voiture';
                         final dateCreation = DateTime.tryParse(reservation['cree_le']?.toString() ?? '') ?? DateTime.now();
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/config_app.dart';
 import '../theme/couleurs_taama.dart';
 import 'profil_screen.dart';
 import 'portefeuille_screen.dart';
@@ -150,11 +151,15 @@ class _EcranCompteState extends State<EcranCompte> {
               const SizedBox(height: 20),
 
               // Menu items
-              _buildSection('Mon compte', [
-                _buildItem(Icons.account_balance_wallet, 'Mon portefeuille',
-                    CouleursTaama.or, () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) =>
-                            const EcranPortefeuille(estChauffeur: false)))),
+              // Mode gratuit (lu sur le serveur) : pas de portefeuille.
+              ValueListenableBuilder<bool>(
+                valueListenable: ConfigApp.paiementActif,
+                builder: (context, paiementActif, _) => _buildSection('Mon compte', [
+                if (paiementActif)
+                  _buildItem(Icons.account_balance_wallet, 'Mon portefeuille',
+                      CouleursTaama.or, () => Navigator.push(context,
+                          MaterialPageRoute(builder: (_) =>
+                              const EcranPortefeuille(estChauffeur: false)))),
                 _buildItem(Icons.event_seat, 'Mes réservations',
                     CouleursTaama.indigo, () => Navigator.push(context,
                         MaterialPageRoute(builder: (_) =>
@@ -164,6 +169,7 @@ class _EcranCompteState extends State<EcranCompte> {
                         MaterialPageRoute(builder: (_) =>
                             const MesConversationsClientScreen()))),
               ]),
+              ),
               const SizedBox(height: 16),
               _buildSection('Taama', [
                 _buildItem(Icons.star_rate, 'Donner mon avis',

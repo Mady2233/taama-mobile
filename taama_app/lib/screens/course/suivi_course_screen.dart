@@ -64,6 +64,7 @@ class SuiviCourseScreen extends StatelessWidget {
     required this.arrivee,
     required this.prixFcfa,
     required this.soldeFcfa,
+    this.paiementActif = false,
     required this.onRetour,
     required this.onAnnuler,
     this.mapController,
@@ -100,6 +101,11 @@ class SuiviCourseScreen extends StatelessWidget {
   final String arrivee;
   final int prixFcfa;
   final int soldeFcfa;
+
+  /// Paiement dans l'app actif (lu sur le serveur, voir ConfigApp). Faux
+  /// (mode gratuit) : ni solde, ni portefeuille, ni « Payer » ; la course se
+  /// règle en espèces au chauffeur.
+  final bool paiementActif;
 
   final LatLng? positionClient;
   final LatLng? positionDestination;
@@ -213,6 +219,7 @@ class SuiviCourseScreen extends StatelessWidget {
                 arrivee: arrivee,
                 prixFcfa: prixFcfa,
                 soldeFcfa: soldeFcfa,
+                paiementActif: paiementActif,
                 minutesAvantArrivee: minutesAvantArrivee,
                 distanceKm: distanceKm,
                 annulable: _annulable,
@@ -381,6 +388,7 @@ class _Feuille extends StatelessWidget {
     required this.arrivee,
     required this.prixFcfa,
     required this.soldeFcfa,
+    required this.paiementActif,
     required this.minutesAvantArrivee,
     required this.distanceKm,
     required this.annulable,
@@ -403,6 +411,7 @@ class _Feuille extends StatelessWidget {
   final String arrivee;
   final int prixFcfa;
   final int soldeFcfa;
+  final bool paiementActif;
   final int? minutesAvantArrivee;
   final double? distanceKm;
   final bool annulable;
@@ -500,6 +509,8 @@ class _Feuille extends StatelessWidget {
         arrivee: arrivee,
         prixFcfa: prixFcfa,
         soldeFcfa: soldeFcfa,
+        paiementActif: paiementActif,
+        montrerSolde: paiementActif,
       ),
       if (annulable) ...[
         const SizedBox(height: TaamaSpacing.lg),
@@ -511,7 +522,10 @@ class _Feuille extends StatelessWidget {
   // --- Course terminée : paiement puis notation ---------------------------
 
   List<Widget> _contenuFin(BuildContext context, ChauffeurCourse? c) {
-    final toutFait = dejaPayee && (dejaNotee || onNoter == null);
+    // Mode gratuit : réglée en espèces hors de l'app, rien n'attend `paye`
+    // (sinon ni note ni « Terminer » ne seraient jamais possibles).
+    final regle = dejaPayee || !paiementActif;
+    final toutFait = regle && (dejaNotee || onNoter == null);
 
     return [
       Center(
@@ -568,9 +582,10 @@ class _Feuille extends StatelessWidget {
         arrivee: arrivee,
         prixFcfa: prixFcfa,
         soldeFcfa: soldeFcfa,
-        montrerSolde: !dejaPayee,
+        paiementActif: paiementActif,
+        montrerSolde: paiementActif && !dejaPayee,
       ),
-      if (!dejaPayee && onPayer != null) ...[
+      if (paiementActif && !dejaPayee && onPayer != null) ...[
         const SizedBox(height: TaamaSpacing.lg),
         _BlocPaiement(
           prixFcfa: prixFcfa,
@@ -579,7 +594,7 @@ class _Feuille extends StatelessWidget {
           onPayer: onPayer!,
         ),
       ],
-      if (dejaPayee) ...[
+      if (paiementActif && dejaPayee) ...[
         const SizedBox(height: TaamaSpacing.md),
         const _Confirmation(texte: 'Paiement enregistré'),
       ],
@@ -594,7 +609,7 @@ class _Feuille extends StatelessWidget {
             enCours: noteEnCours,
             // Noter avant de payer n'a pas de sens : le montant peut
             // encore bouger (attente, arrêt supplémentaire).
-            actif: dejaPayee || onPayer == null,
+            actif: regle || onPayer == null,
             onNoter: onNoter!,
           ),
       ],
@@ -1241,6 +1256,7 @@ class _BlocTrajet extends StatelessWidget {
     required this.arrivee,
     required this.prixFcfa,
     required this.soldeFcfa,
+    required this.paiementActif,
     this.montrerSolde = true,
   });
 
@@ -1248,6 +1264,7 @@ class _BlocTrajet extends StatelessWidget {
   final String arrivee;
   final int prixFcfa;
   final int soldeFcfa;
+  final bool paiementActif;
   final bool montrerSolde;
 
   @override
@@ -1326,9 +1343,11 @@ class _BlocTrajet extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Prix fixe · portefeuille Taama',
-                      style: TextStyle(
+                    Text(
+                      paiementActif
+                          ? 'Prix fixe · portefeuille Taama'
+                          : 'Prix fixe · paiement en espèces au chauffeur',
+                      style: const TextStyle(
                         fontSize: 11,
                         color: TaamaColors.onNightFaint,
                       ),

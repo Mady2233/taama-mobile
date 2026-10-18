@@ -5,6 +5,7 @@ import 'config/api_config.dart';
 import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
+import 'services/config_app.dart';
 import 'services/notification_service.dart';
 import 'theme/taama_theme.dart';
 
@@ -43,6 +44,11 @@ void main() {
     } catch (e) {
       debugPrint('Token restore error: $e');
     }
+
+    // Mode gratuit / paiement : valeur gardée tout de suite, serveur
+    // interrogé sans retarder l'ouverture (voir ConfigApp).
+    await ConfigApp.chargerValeurGardee();
+    unawaited(ConfigApp.rafraichir());
 
     runApp(const TaamaApp());
   }, (error, stack) {

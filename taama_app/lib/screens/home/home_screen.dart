@@ -134,6 +134,7 @@ class HomeScreen extends StatelessWidget {
     this.onRefaireCourse,
     this.onDicterDestination,
     this.chargementConducteurs = false,
+    this.paiementActif = false,
   });
 
   /// Prénom seul. Vide ou null → salutation neutre (jamais le numéro).
@@ -149,6 +150,10 @@ class HomeScreen extends StatelessWidget {
   final List<ConducteurProche> conducteursProches;
   final LatLng? positionClient;
   final bool chargementConducteurs;
+
+  /// Paiement dans l'app actif (lu sur le serveur, voir ConfigApp). Faux
+  /// (mode gratuit) : ni solde, ni portefeuille, ni « Recharger ».
+  final bool paiementActif;
   final DerniereCourse? derniereCourse;
 
   final VoidCallback onChercherDestination;
@@ -195,6 +200,7 @@ class HomeScreen extends StatelessWidget {
               quartier: quartier,
               urlPhotoProfil: urlPhotoProfil,
               soldeFcfa: soldeFcfa,
+              paiementActif: paiementActif,
               suggestions: suggestions,
               onProfil: onProfil,
               onPortefeuille: onPortefeuille,
@@ -203,7 +209,7 @@ class HomeScreen extends StatelessWidget {
               onAjouterAdresse: onAjouterAdresse,
               onDicterDestination: onDicterDestination,
             ),
-            const _BandeConfiance(),
+            _BandeConfiance(paiementActif: paiementActif),
             _BandeCarte(
               positionClient: positionClient,
               conducteurs: conducteursProches,
@@ -274,7 +280,7 @@ class HomeScreen extends StatelessWidget {
                       onTap: onRefaireCourse,
                     ),
                   ],
-                  if (soldeFcfa <= 0) ...[
+                  if (paiementActif && soldeFcfa <= 0) ...[
                     const SizedBox(height: TaamaSpacing.lg),
                     _BandeauPortefeuille(onRecharger: onPortefeuille),
                   ],
@@ -299,6 +305,7 @@ class _EnTete extends StatelessWidget {
     required this.quartier,
     required this.urlPhotoProfil,
     required this.soldeFcfa,
+    required this.paiementActif,
     required this.suggestions,
     required this.onProfil,
     required this.onPortefeuille,
@@ -312,6 +319,7 @@ class _EnTete extends StatelessWidget {
   final String? quartier;
   final String? urlPhotoProfil;
   final int soldeFcfa;
+  final bool paiementActif;
   final List<SuggestionDestination> suggestions;
   final VoidCallback onProfil;
   final VoidCallback onPortefeuille;
@@ -390,7 +398,8 @@ class _EnTete extends StatelessWidget {
                   ],
                 ),
               ),
-              _PuceSolde(soldeFcfa: soldeFcfa, onTap: onPortefeuille),
+              if (paiementActif)
+                _PuceSolde(soldeFcfa: soldeFcfa, onTap: onPortefeuille),
             ],
           ),
           const SizedBox(height: TaamaSpacing.xl),
@@ -623,7 +632,11 @@ class _PuceAjout extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _BandeConfiance extends StatelessWidget {
-  const _BandeConfiance();
+  const _BandeConfiance({required this.paiementActif});
+
+  /// Mode gratuit : « Espèces », jamais un portefeuille qu'on ne peut pas
+  /// utiliser.
+  final bool paiementActif;
 
   @override
   Widget build(BuildContext context) {
@@ -656,7 +669,9 @@ class _BandeConfiance extends StatelessWidget {
         children: [
           item(Icons.verified_user_rounded, 'Vérifiés'),
           item(Icons.sell_rounded, 'Prix fixe'),
-          item(Icons.account_balance_wallet_rounded, 'Portefeuille'),
+          paiementActif
+              ? item(Icons.account_balance_wallet_rounded, 'Portefeuille')
+              : item(Icons.payments_outlined, 'Espèces'),
         ],
       ),
     );

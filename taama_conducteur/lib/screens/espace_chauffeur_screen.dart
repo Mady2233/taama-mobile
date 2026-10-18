@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import '../services/api_service.dart';
+import '../services/config_app.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/location_service.dart';
 import '../theme/couleurs_taama.dart';
@@ -49,6 +50,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   @override
   void initState() {
     super.initState();
+    ConfigApp.paiementActif.addListener(_surChangementPaiement);
     _chargerProfil();
     _chargerSolde();
     _rafraichirTout();
@@ -60,6 +62,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
 
   @override
   void dispose() {
+    ConfigApp.paiementActif.removeListener(_surChangementPaiement);
     _timerPolling?.cancel();
     for (final service in _servicesLocalisation.values) {
       service.arreter();
@@ -143,7 +146,16 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     await _rafraichirTout();
   }
 
+  /// Réponse du serveur sur le mode gratuit arrivée après l'ouverture.
+  void _surChangementPaiement() {
+    if (!mounted) return;
+    setState(() {});
+    _chargerSolde();
+  }
+
   Future<void> _chargerSolde() async {
+    // Mode gratuit : aucun solde affiché, donc aucune requête.
+    if (!ConfigApp.paiementActif.value) return;
     try {
       final solde = await ApiService.monSolde();
       if (!mounted) return;
@@ -407,6 +419,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
               );
             },
           ),
+          if (ConfigApp.paiementActif.value)
           IconButton(
             icon: const Icon(Icons.account_balance_wallet, color: Colors.white),
             tooltip: 'Mon portefeuille',
@@ -507,15 +520,18 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                           libelle: 'Courses du jour',
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _CarteStat(
-                          icone: Icons.account_balance_wallet,
-                          couleur: CouleursTaama.indigo,
-                          valeur: _solde != null ? '$_solde' : '...',
-                          libelle: 'Solde (FCFA)',
+                      // Mode gratuit (lu sur le serveur) : pas de solde.
+                      if (ConfigApp.paiementActif.value) ...[
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _CarteStat(
+                            icone: Icons.account_balance_wallet,
+                            couleur: CouleursTaama.indigo,
+                            valeur: _solde != null ? '$_solde' : '...',
+                            libelle: 'Solde (FCFA)',
+                          ),
                         ),
-                      ),
+                      ],
                       const SizedBox(width: 10),
                       Expanded(
                         child: _CarteStat(

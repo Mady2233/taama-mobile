@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'config/api_config.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
+import 'services/config_app.dart';
 import 'services/demande_entrante_navigator.dart';
 import 'services/notification_service.dart';
 import 'theme/couleurs_taama.dart';
@@ -28,6 +31,11 @@ void main() async {
   } catch (e) {
     debugPrint('Token restore error: $e');
   }
+
+  // Mode gratuit / paiement : valeur gardée tout de suite, serveur
+  // interrogé sans retarder l'ouverture (voir ConfigApp).
+  await ConfigApp.chargerValeurGardee();
+  unawaited(ConfigApp.rafraichir());
 
   runApp(const TaamaConducApp());
 }

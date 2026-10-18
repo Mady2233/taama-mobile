@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/config_app.dart';
 import 'connexion_screen.dart';
 
 class EcranOnboarding extends StatefulWidget {
@@ -16,7 +17,14 @@ class _EcranOnboardingState extends State<EcranOnboarding>
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
 
-  final List<_OnboardingData> _pages = [
+  // Mode gratuit (lu sur le serveur) : la page « Paiement / Recharge » ne
+  // promet pas un portefeuille qu'on ne peut pas utiliser.
+  late final List<_OnboardingData> _pages = [
+    for (final page in _toutesLesPages)
+      if (!page.paiement || ConfigApp.paiementActif.value) page,
+  ];
+
+  final List<_OnboardingData> _toutesLesPages = [
     _OnboardingData(
       illustration: '🗺️',
       gradient: [const Color(0xFF1C2B4A), const Color(0xFF2D4A7A)],
@@ -30,6 +38,7 @@ class _EcranOnboardingState extends State<EcranOnboarding>
     _OnboardingData(
       illustration: '💳',
       gradient: [const Color(0xFFC8623D), const Color(0xFFD4844A)],
+      paiement: true,
       titreFr: 'Paiement sécurisé\nvia Mobile Money',
       titreBambara: 'Sɔngɔ san ka ɲɛ\nMobile Money fɛ',
       descFr: 'Recharge ton compte Taama\navec Orange Money, Moov ou Wave.',
@@ -393,6 +402,9 @@ class _OnboardingData {
   final String emoji1, emoji2, emoji3;
   final Color accentColor;
 
+  /// Page liée au paiement dans l'app : masquée en mode gratuit.
+  final bool paiement;
+
   const _OnboardingData({
     required this.illustration,
     required this.gradient,
@@ -404,5 +416,6 @@ class _OnboardingData {
     required this.emoji2,
     required this.emoji3,
     required this.accentColor,
+    this.paiement = false,
   });
 }

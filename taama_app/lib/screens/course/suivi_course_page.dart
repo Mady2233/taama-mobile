@@ -14,6 +14,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../services/api_service.dart';
+import '../../services/config_app.dart';
 import '../../services/location_service.dart';
 import '../../services/routing_service.dart';
 import '../../utils/format.dart';
@@ -91,6 +92,8 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> {
   // ─── Chargement des données ───────────────────────────────────────────
 
   Future<void> _chargerSolde() async {
+    // Mode gratuit : aucun solde affiché, donc aucune requête.
+    if (!ConfigApp.paiementActif.value) return;
     try {
       final solde = await ApiService.monSolde();
       if (!mounted) return;
@@ -376,6 +379,13 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> {
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ConfigApp.paiementActif,
+      builder: (context, paiementActif, _) => _ecran(context, paiementActif),
+    );
+  }
+
+  Widget _ecran(BuildContext context, bool paiementActif) {
     return SuiviCourseScreen(
       statut: _statut,
       chauffeur: _chauffeur,
@@ -387,6 +397,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> {
       arrivee: widget.destination,
       prixFcfa: _prixEstime ?? 0,
       soldeFcfa: _soldeFcfa,
+      paiementActif: paiementActif,
       positionClient: _positionDepart,
       positionDestination: _positionDestination,
       positionChauffeur: _positionChauffeur,
@@ -407,7 +418,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> {
       onMessage: _chauffeurBrut == null ? null : _ouvrirChat,
       paiementEnCours: _paiementEnCours,
       dejaPayee: _paye,
-      onPayer: _payer,
+      onPayer: paiementActif ? _payer : null,
       noteEnCours: _noteEnCours,
       dejaNotee: _dejaNote,
       onNoter: _noter,

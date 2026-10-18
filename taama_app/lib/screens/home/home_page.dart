@@ -11,6 +11,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../services/api_service.dart';
+import '../../services/config_app.dart';
 import '../../services/routing_service.dart';
 import '../courier_screen.dart';
 import '../portefeuille_screen.dart';
@@ -73,6 +74,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _chargerSolde() async {
+    // Mode gratuit : aucun solde affiché, donc aucune requête.
+    if (!ConfigApp.paiementActif.value) return;
     try {
       final solde = await ApiService.monSolde();
       if (!mounted) return;
@@ -292,7 +295,15 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ConfigApp.paiementActif,
+      builder: (context, paiementActif, _) => _ecran(context, paiementActif),
+    );
+  }
+
+  Widget _ecran(BuildContext context, bool paiementActif) {
     return HomeScreen(
+      paiementActif: paiementActif,
       prenom: _prenom,
       quartier: _quartier,
       // ⚠️ Aucune source actuelle, voir rapport.
