@@ -26,15 +26,17 @@ class _EcranConnexionState extends State<EcranConnexion>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
-    _slideAnim = Tween<Offset>(
-      begin: const Offset(0, 0.3),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _entreeController, curve: Curves.easeOutCubic,
-    ));
-    _fadeAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _entreeController, curve: Curves.easeIn),
-    );
+    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: _entreeController,
+            curve: Curves.easeOutCubic,
+          ),
+        );
+    _fadeAnim = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _entreeController, curve: Curves.easeIn));
     _entreeController.forward();
   }
 
@@ -49,7 +51,8 @@ class _EcranConnexionState extends State<EcranConnexion>
     final tel = _telController.text.trim();
     if (tel.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Entre ton numéro de téléphone')));
+        const SnackBar(content: Text('Entre ton numéro de téléphone')),
+      );
       return;
     }
 
@@ -67,8 +70,8 @@ class _EcranConnexionState extends State<EcranConnexion>
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(
-            e.toString().replaceAll('Exception: ', ''))));
+        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+      );
     } finally {
       if (mounted) setState(() => _enChargement = false);
     }
@@ -99,26 +102,31 @@ class _EcranConnexionState extends State<EcranConnexion>
 
           // ── Illustration Bamako (cercles + rues stylisées) ──
           Positioned(
-            top: 0, left: 0, right: 0,
+            top: 0,
+            left: 0,
+            right: 0,
             height: size.height * 0.52,
             child: Stack(
               children: [
                 // Cercles de fond
                 Positioned(
-                  top: -40, right: -60,
+                  top: -40,
+                  right: -60,
                   child: Container(
-                    width: 250, height: 250,
+                    width: 250,
+                    height: 250,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: CouleursTaama.terreCuite
-                          .withValues(alpha: 0.15),
+                      color: CouleursTaama.terreCuite.withValues(alpha: 0.15),
                     ),
                   ),
                 ),
                 Positioned(
-                  top: 80, left: -80,
+                  top: 80,
+                  left: -80,
                   child: Container(
-                    width: 200, height: 200,
+                    width: 200,
+                    height: 200,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.white.withValues(alpha: 0.05),
@@ -126,9 +134,11 @@ class _EcranConnexionState extends State<EcranConnexion>
                   ),
                 ),
                 Positioned(
-                  bottom: 20, right: 20,
+                  bottom: 20,
+                  right: 20,
                   child: Container(
-                    width: 120, height: 120,
+                    width: 120,
+                    height: 120,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: CouleursTaama.or.withValues(alpha: 0.1),
@@ -138,7 +148,9 @@ class _EcranConnexionState extends State<EcranConnexion>
 
                 // Illustration Bamako stylisée (grille de rues)
                 Positioned(
-                  bottom: 30, left: 0, right: 0,
+                  bottom: 30,
+                  left: 0,
+                  right: 0,
                   child: Opacity(
                     opacity: 0.12,
                     child: CustomPaint(
@@ -156,7 +168,8 @@ class _EcranConnexionState extends State<EcranConnexion>
                       children: [
                         // Logo
                         Container(
-                          width: 80, height: 80,
+                          width: 80,
+                          height: 80,
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(20),
@@ -195,10 +208,13 @@ class _EcranConnexionState extends State<EcranConnexion>
                         const SizedBox(height: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 5),
+                            horizontal: 14,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
-                            color: CouleursTaama.terreCuite
-                                .withValues(alpha: 0.7),
+                            color: CouleursTaama.terreCuite.withValues(
+                              alpha: 0.7,
+                            ),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: const Text(
@@ -215,21 +231,23 @@ class _EcranConnexionState extends State<EcranConnexion>
 
                         // Stats rapides
                         const Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.spaceEvenly,
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
                             _StatItem(
-                                valeur: '500+',
-                                label: 'Clients',
-                                emoji: '👥'),
+                              valeur: '500+',
+                              label: 'Clients',
+                              emoji: '👥',
+                            ),
                             _StatItem(
-                                valeur: '4.8★',
-                                label: 'Note',
-                                emoji: '⭐'),
+                              valeur: '4.8★',
+                              label: 'Note',
+                              emoji: '⭐',
+                            ),
                             _StatItem(
-                                valeur: '100%',
-                                label: 'Sécurisé',
-                                emoji: '🛡️'),
+                              valeur: '100%',
+                              label: 'Sécurisé',
+                              emoji: '🛡️',
+                            ),
                           ],
                         ),
                       ],
@@ -242,7 +260,9 @@ class _EcranConnexionState extends State<EcranConnexion>
 
           // ── Panel de connexion ──
           Positioned(
-            bottom: 0, left: 0, right: 0,
+            bottom: 0,
+            left: 0,
+            right: 0,
             child: SlideTransition(
               position: _slideAnim,
               child: FadeTransition(
@@ -250,8 +270,9 @@ class _EcranConnexionState extends State<EcranConnexion>
                 child: Container(
                   decoration: const BoxDecoration(
                     color: Colors.white,
-                    borderRadius:
-                        BorderRadius.vertical(top: Radius.circular(32)),
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(32),
+                    ),
                   ),
                   padding: const EdgeInsets.fromLTRB(28, 28, 28, 40),
                   child: Column(
@@ -261,7 +282,8 @@ class _EcranConnexionState extends State<EcranConnexion>
                       // Handle
                       Center(
                         child: Container(
-                          width: 40, height: 4,
+                          width: 40,
+                          height: 4,
                           decoration: BoxDecoration(
                             color: Colors.grey.shade300,
                             borderRadius: BorderRadius.circular(2),
@@ -294,29 +316,34 @@ class _EcranConnexionState extends State<EcranConnexion>
                         decoration: BoxDecoration(
                           color: Colors.grey.shade50,
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                              color: Colors.grey.shade200),
+                          border: Border.all(color: Colors.grey.shade200),
                         ),
                         child: Row(
                           children: [
                             // Indicatif Mali
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 16),
+                                horizontal: 14,
+                                vertical: 16,
+                              ),
                               decoration: BoxDecoration(
                                 border: Border(
                                   right: BorderSide(
-                                      color: Colors.grey.shade200),
+                                    color: Colors.grey.shade200,
+                                  ),
                                 ),
                               ),
                               child: const Row(
                                 children: [
                                   Text('🇲🇱', style: TextStyle(fontSize: 18)),
                                   SizedBox(width: 6),
-                                  Text('+223',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: CouleursTaama.indigo)),
+                                  Text(
+                                    '+223',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: CouleursTaama.indigo,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -325,13 +352,15 @@ class _EcranConnexionState extends State<EcranConnexion>
                                 controller: _telController,
                                 keyboardType: TextInputType.phone,
                                 style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w500),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                ),
                                 decoration: const InputDecoration(
                                   hintText: 'XX XX XX XX',
                                   border: InputBorder.none,
                                   contentPadding: EdgeInsets.symmetric(
-                                      horizontal: 14),
+                                    horizontal: 14,
+                                  ),
                                 ),
                                 onSubmitted: (_) => _continuer(),
                               ),
@@ -347,29 +376,34 @@ class _EcranConnexionState extends State<EcranConnexion>
                         style: ElevatedButton.styleFrom(
                           backgroundColor: CouleursTaama.terreCuite,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 16),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(14)),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                           elevation: 3,
-                          shadowColor: CouleursTaama.terreCuite
-                              .withValues(alpha: 0.4),
+                          shadowColor: CouleursTaama.terreCuite.withValues(
+                            alpha: 0.4,
+                          ),
                         ),
                         child: _enChargement
                             ? const SizedBox(
-                                width: 24, height: 24,
+                                width: 24,
+                                height: 24,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
-                                    color: Colors.white))
+                                  strokeWidth: 2.5,
+                                  color: Colors.white,
+                                ),
+                              )
                             : const Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.center,
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Text('Continuer',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16)),
+                                  Text(
+                                    'Continuer',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
                                   SizedBox(width: 8),
                                   Icon(Icons.arrow_forward, size: 18),
                                 ],
@@ -416,15 +450,21 @@ class _StatItem extends StatelessWidget {
       children: [
         Text(emoji, style: const TextStyle(fontSize: 20)),
         const SizedBox(height: 2),
-        Text(valeur,
-            style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 16)),
-        Text(label,
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.6),
-                fontSize: 10)),
+        Text(
+          valeur,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.6),
+            fontSize: 10,
+          ),
+        ),
       ],
     );
   }
@@ -477,12 +517,21 @@ class _LogoPainter extends CustomPainter {
       ..cubicTo(128 * sx, 278 * sy, 200 * sx, 296 * sy, 256 * sx, 344 * sy)
       ..cubicTo(312 * sx, 296 * sy, 384 * sx, 278 * sy, 402 * sx, 230 * sy);
     canvas.drawPath(path, paint);
-    canvas.drawCircle(Offset(110 * sx, 230 * sy), 18 * sx,
-        Paint()..color = Colors.white.withValues(alpha: 0.9));
-    canvas.drawCircle(Offset(402 * sx, 230 * sy), 18 * sx,
-        Paint()..color = Colors.white.withValues(alpha: 0.9));
-    canvas.drawCircle(Offset(256 * sx, 344 * sy), 15 * sx,
-        Paint()..color = CouleursTaama.or);
+    canvas.drawCircle(
+      Offset(110 * sx, 230 * sy),
+      18 * sx,
+      Paint()..color = Colors.white.withValues(alpha: 0.9),
+    );
+    canvas.drawCircle(
+      Offset(402 * sx, 230 * sy),
+      18 * sx,
+      Paint()..color = Colors.white.withValues(alpha: 0.9),
+    );
+    canvas.drawCircle(
+      Offset(256 * sx, 344 * sy),
+      15 * sx,
+      Paint()..color = CouleursTaama.or,
+    );
   }
 
   @override

@@ -18,14 +18,18 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
   List<ServiceCourse>? services,
 }) async {
   // Utilise les prix du backend si disponibles
-  final prixVoiture = detailPrixVoiture?['prix_final'] as int? ??
+  final prixVoiture =
+      detailPrixVoiture?['prix_final'] as int? ??
       (distanceKm * 150 + 500).round().clamp(500, 999999);
-  final prixMoto = detailPrixMoto?['prix_final'] as int? ??
+  final prixMoto =
+      detailPrixMoto?['prix_final'] as int? ??
       (distanceKm * 100 + 300).round().clamp(500, 999999);
 
-  final tempsVoiture = detailPrixVoiture?['temps_minutes'] as num? ??
+  final tempsVoiture =
+      detailPrixVoiture?['temps_minutes'] as num? ??
       (distanceKm / 20 * 60).round();
-  final tempsMoto = detailPrixMoto?['temps_minutes'] as num? ??
+  final tempsMoto =
+      detailPrixMoto?['temps_minutes'] as num? ??
       (distanceKm / 25 * 60).round();
 
   final majorationVoiture = detailPrixVoiture?['raison_majoration'] as String?;
@@ -76,7 +80,8 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
         children: [
           Center(
             child: Container(
-              width: 40, height: 4,
+              width: 40,
+              height: 4,
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
                 color: Colors.grey.shade300,
@@ -85,13 +90,18 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
             ),
           ),
 
-          Text('Vers $destination',
-              style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: CouleursTaama.indigo)),
-          Text('${distanceKm.toStringAsFixed(1)} km • ${tempsVoiture.round()} min estimé',
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+          Text(
+            'Vers $destination',
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+              color: CouleursTaama.indigo,
+            ),
+          ),
+          Text(
+            '${distanceKm.toStringAsFixed(1)} km • ${tempsVoiture.round()} min estimé',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+          ),
 
           // Badge majoration si heure de pointe
           if (majorationVoiture != null) ...[
@@ -105,21 +115,26 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.access_time,
-                      color: Colors.orange, size: 14),
+                  const Icon(Icons.access_time, color: Colors.orange, size: 14),
                   const SizedBox(width: 4),
-                  Text('$majorationVoiture — tarif majoré',
-                      style: const TextStyle(
-                          color: Colors.orange, fontSize: 12,
-                          fontWeight: FontWeight.bold)),
+                  Text(
+                    '$majorationVoiture — tarif majoré',
+                    style: const TextStyle(
+                      color: Colors.orange,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
             ),
           ],
 
           const SizedBox(height: 16),
-          const Text('Choisir un véhicule',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          const Text(
+            'Choisir un véhicule',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
           const SizedBox(height: 12),
 
           if (modeDynamique) ...[
@@ -240,14 +255,20 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.info_outline,
-                      size: 14, color: Colors.grey.shade500),
+                  Icon(
+                    Icons.info_outline,
+                    size: 14,
+                    color: Colors.grey.shade500,
+                  ),
                   const SizedBox(width: 4),
-                  Text('Comment est calculé le prix ?',
-                      style: TextStyle(
-                          color: Colors.grey.shade500,
-                          fontSize: 12,
-                          decoration: TextDecoration.underline)),
+                  Text(
+                    'Comment est calculé le prix ?',
+                    style: TextStyle(
+                      color: Colors.grey.shade500,
+                      fontSize: 12,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -258,14 +279,15 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
   );
 }
 
-void _afficherDetailPrix(
-    BuildContext context, Map<String, dynamic> detail) {
+void _afficherDetailPrix(BuildContext context, Map<String, dynamic> detail) {
   showDialog(
     context: context,
     builder: (ctx) => AlertDialog(
       contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-      title: const Text('Détail du prix 🚗',
-          style: TextStyle(fontWeight: FontWeight.bold)),
+      title: const Text(
+        'Détail du prix 🚗',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
       content: SizedBox(
         width: double.maxFinite,
         child: Column(
@@ -314,8 +336,7 @@ class _LignePrix extends StatelessWidget {
   final bool gras;
   final Color? couleur;
 
-  const _LignePrix(this.label, this.valeur,
-      {this.gras = false, this.couleur});
+  const _LignePrix(this.label, this.valeur, {this.gras = false, this.couleur});
 
   @override
   Widget build(BuildContext context) {
@@ -324,14 +345,20 @@ class _LignePrix extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label,
-              style: TextStyle(
-                  fontWeight: gras ? FontWeight.bold : FontWeight.normal,
-                  color: couleur)),
-          Text(valeur,
-              style: TextStyle(
-                  fontWeight: gras ? FontWeight.bold : FontWeight.normal,
-                  color: couleur ?? CouleursTaama.indigo)),
+          Text(
+            label,
+            style: TextStyle(
+              fontWeight: gras ? FontWeight.bold : FontWeight.normal,
+              color: couleur,
+            ),
+          ),
+          Text(
+            valeur,
+            style: TextStyle(
+              fontWeight: gras ? FontWeight.bold : FontWeight.normal,
+              color: couleur ?? CouleursTaama.indigo,
+            ),
+          ),
         ],
       ),
     );
@@ -346,9 +373,12 @@ class _CarteVehicule extends StatelessWidget {
   final VoidCallback onTap;
 
   const _CarteVehicule({
-    required this.icone, required this.label,
-    required this.description, required this.prix,
-    required this.tempsAttente, required this.onTap,
+    required this.icone,
+    required this.label,
+    required this.description,
+    required this.prix,
+    required this.tempsAttente,
+    required this.onTap,
     this.couleur = CouleursTaama.indigo,
   });
 
@@ -371,22 +401,33 @@ class _CarteVehicule extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label,
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                          color: couleur)),
-                  Text(description,
-                      style: TextStyle(
-                          color: Colors.grey.shade600, fontSize: 12)),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      color: couleur,
+                    ),
+                  ),
+                  Text(
+                    description,
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                  ),
                   Row(
                     children: [
-                      const Icon(Icons.access_time,
-                          size: 12, color: Colors.green),
+                      const Icon(
+                        Icons.access_time,
+                        size: 12,
+                        color: Colors.green,
+                      ),
                       const SizedBox(width: 3),
-                      Text('$tempsAttente de trajet',
-                          style: const TextStyle(
-                              color: Colors.green, fontSize: 11)),
+                      Text(
+                        '$tempsAttente de trajet',
+                        style: const TextStyle(
+                          color: Colors.green,
+                          fontSize: 11,
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -395,13 +436,15 @@ class _CarteVehicule extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text('$prix FCFA',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                        color: couleur)),
-                const Icon(Icons.chevron_right,
-                    color: Colors.grey, size: 20),
+                Text(
+                  '$prix FCFA',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                    color: couleur,
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
               ],
             ),
           ],
@@ -473,9 +516,10 @@ class _CarteService extends StatelessWidget {
                         child: Text(
                           service.nom,
                           style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 15,
-                              color: couleur),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            color: couleur,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -483,7 +527,9 @@ class _CarteService extends StatelessWidget {
                         const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: CouleursTaama.or.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(6),
@@ -491,14 +537,20 @@ class _CarteService extends StatelessWidget {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.ac_unit,
-                                  size: 11, color: CouleursTaama.or),
+                              const Icon(
+                                Icons.ac_unit,
+                                size: 11,
+                                color: CouleursTaama.or,
+                              ),
                               const SizedBox(width: 2),
-                              const Text('Climatisé',
-                                  style: TextStyle(
-                                      fontSize: 10,
-                                      color: CouleursTaama.or,
-                                      fontWeight: FontWeight.bold)),
+                              const Text(
+                                'Climatisé',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: CouleursTaama.or,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -509,18 +561,29 @@ class _CarteService extends StatelessWidget {
                   // description est vide — évite un espace mort dans la mise
                   // en page.
                   if (service.description.isNotEmpty)
-                    Text(service.description,
-                        style: TextStyle(
-                            color: Colors.grey.shade600, fontSize: 12)),
+                    Text(
+                      service.description,
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                      ),
+                    ),
                   if (service.disponible && service.etaMinutes != null)
                     Row(
                       children: [
-                        const Icon(Icons.access_time,
-                            size: 12, color: Colors.green),
+                        const Icon(
+                          Icons.access_time,
+                          size: 12,
+                          color: Colors.green,
+                        ),
                         const SizedBox(width: 3),
-                        Text('${service.etaMinutes} min',
-                            style: const TextStyle(
-                                color: Colors.green, fontSize: 11)),
+                        Text(
+                          '${service.etaMinutes} min',
+                          style: const TextStyle(
+                            color: Colors.green,
+                            fontSize: 11,
+                          ),
+                        ),
                       ],
                     ),
                 ],
@@ -530,27 +593,35 @@ class _CarteService extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 if (service.disponible && service.prix != null)
-                  Text('${service.prix} FCFA',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18,
-                          color: couleur))
+                  Text(
+                    '${service.prix} FCFA',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: couleur,
+                    ),
+                  )
                 else
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(6)),
-                    child: Text('Indisponible',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey.shade700,
-                            fontWeight: FontWeight.bold)),
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'Indisponible',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 if (service.disponible)
-                  const Icon(Icons.chevron_right,
-                      color: Colors.grey, size: 20),
+                  const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
               ],
             ),
           ],

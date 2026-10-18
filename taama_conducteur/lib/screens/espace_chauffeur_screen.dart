@@ -52,7 +52,10 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     _chargerProfil();
     _chargerSolde();
     _rafraichirTout();
-    _timerPolling = Timer.periodic(const Duration(seconds: 5), (_) => _rafraichirTout());
+    _timerPolling = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _rafraichirTout(),
+    );
   }
 
   @override
@@ -76,7 +79,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   void _synchroniserSuiviPosition() {
     try {
       final idsEnRoute = _demandesAssignees
-          .where((d) => d['statut'] == 'en_route' || d['statut'] == 'client_a_bord')
+          .where(
+            (d) => d['statut'] == 'en_route' || d['statut'] == 'client_a_bord',
+          )
           .map((d) => d['id'] as int)
           .toSet();
 
@@ -88,7 +93,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
         }
       }
 
-      final idsATerminer = _servicesLocalisation.keys.where((id) => !idsEnRoute.contains(id)).toList();
+      final idsATerminer = _servicesLocalisation.keys
+          .where((id) => !idsEnRoute.contains(id))
+          .toList();
       for (final id in idsATerminer) {
         _servicesLocalisation.remove(id)?.arreter();
       }
@@ -183,7 +190,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     } catch (e) {
       debugPrint('[DemandesAssignees] Erreur rafraîchissement : $e');
       if (mounted) {
-        setState(() => _erreurDemandes = 'Impossible de mettre à jour tes demandes.');
+        setState(
+          () => _erreurDemandes = 'Impossible de mettre à jour tes demandes.',
+        );
       }
     }
   }
@@ -198,7 +207,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     final idsDejaConnus = _demandesAssignees.map((d) => d['id']).toSet();
     for (final demande in nouvellesDemandes) {
       final id = demande['id'];
-      if (demande['statut'] == 'chauffeur_trouve' && !idsDejaConnus.contains(id)) {
+      if (demande['statut'] == 'chauffeur_trouve' &&
+          !idsDejaConnus.contains(id)) {
         DemandeEntranteNavigator.afficherSiNecessaire(
           id as int,
           demandeInitiale: demande as Map<String, dynamic>,
@@ -227,8 +237,11 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
       // général n'est plus actif (stream mort en silence, exception
       // avalée...), on le relance. Un chauffeur "disponible mais invisible"
       // est pire qu'un chauffeur clairement hors ligne.
-      if (profil['disponible'] == true && !_serviceLocalisationGenerale.enLigne) {
-        debugPrint('[Disponibilite] Suivi GPS inactif alors que disponible=true — relance');
+      if (profil['disponible'] == true &&
+          !_serviceLocalisationGenerale.enLigne) {
+        debugPrint(
+          '[Disponibilite] Suivi GPS inactif alors que disponible=true — relance',
+        );
         await _serviceLocalisationGenerale.demarrerSuiviPositionEnLigne();
       }
     } catch (e) {
@@ -284,8 +297,12 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   /// Message exact du serveur, ou « Pas de connexion » pour une erreur réseau.
   void _afficherErreur(Object e) {
     if (!mounted) return;
-    final message = e is ApiException ? e.message : 'Pas de connexion. Vérifie ton réseau et réessaie.';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    final message = e is ApiException
+        ? e.message
+        : 'Pas de connexion. Vérifie ton réseau et réessaie.';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _annulerCourse(int demandeId, DateTime dateCreation) async {
@@ -356,7 +373,10 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   void _ouvrirChat({required String roomName, required String titre}) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => EcranChat(roomName: roomName, titreConversation: titre)),
+      MaterialPageRoute(
+        builder: (context) =>
+            EcranChat(roomName: roomName, titreConversation: titre),
+      ),
     );
   }
 
@@ -367,7 +387,10 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     return Scaffold(
       backgroundColor: CouleursTaama.sable,
       appBar: AppBar(
-        title: const Text('Taama Conducteur', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Taama Conducteur',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
         backgroundColor: CouleursTaama.indigo,
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
@@ -378,7 +401,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const MesConversationsScreen()),
+                MaterialPageRoute(
+                  builder: (context) => const MesConversationsScreen(),
+                ),
               );
             },
           ),
@@ -388,7 +413,10 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const EcranPortefeuille(estChauffeur: true)),
+                MaterialPageRoute(
+                  builder: (context) =>
+                      const EcranPortefeuille(estChauffeur: true),
+                ),
               );
             },
           ),
@@ -398,7 +426,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const EcranProfilChauffeur()),
+                MaterialPageRoute(
+                  builder: (context) => const EcranProfilChauffeur(),
+                ),
               );
             },
           ),
@@ -420,7 +450,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
         ],
       ),
       body: _chargementInitial
-          ? const Center(child: CircularProgressIndicator(color: CouleursTaama.terreCuite))
+          ? const Center(
+              child: CircularProgressIndicator(color: CouleursTaama.terreCuite),
+            )
           : RefreshIndicator(
               color: CouleursTaama.terreCuite,
               onRefresh: () async {
@@ -440,7 +472,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                       libelleAction: 'Créer mon profil',
                       onAction: () => Navigator.pushAndRemoveUntil(
                         context,
-                        MaterialPageRoute(builder: (_) => const EcranInscriptionChauffeur()),
+                        MaterialPageRoute(
+                          builder: (_) => const EcranInscriptionChauffeur(),
+                        ),
                         (route) => false,
                       ),
                     )
@@ -487,7 +521,12 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                         child: _CarteStat(
                           icone: Icons.star,
                           couleur: CouleursTaama.or,
-                          valeur: _profil != null ? (_profil!['note'] as num?)?.toStringAsFixed(1) ?? '—' : '-',
+                          valeur: _profil != null
+                              ? (_profil!['note'] as num?)?.toStringAsFixed(
+                                      1,
+                                    ) ??
+                                    '—'
+                              : '-',
                           libelle: 'Note',
                         ),
                       ),
@@ -527,24 +566,34 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                   if (_demandesAssignees.isNotEmpty) ...[
                     const Text(
                       'Demandes en cours',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: CouleursTaama.indigo),
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: CouleursTaama.indigo,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     ..._demandesAssignees.map((demande) {
                       final enAttente = demande['statut'] == 'chauffeur_trouve';
                       final demandeId = demande['id'] as int;
-                      final dateCreation = DateTime.tryParse(demande['cree_le']?.toString() ?? '') ?? DateTime.now();
+                      final dateCreation =
+                          DateTime.tryParse(
+                            demande['cree_le']?.toString() ?? '',
+                          ) ??
+                          DateTime.now();
                       return _CarteDemande(
                         demande: demande,
                         enAttente: enAttente,
                         enTraitement: _enTraitement == demande['id'],
                         onRefuser: () => _refuserDemande(demande['id'] as int),
-                        onAccepter: () => _accepterDemande(demande['id'] as int),
+                        onAccepter: () =>
+                            _accepterDemande(demande['id'] as int),
                         onChat: () => _ouvrirChat(
                           roomName: 'demande_${demande['id']}',
                           titre: 'Client - ${demande['destination']}',
                         ),
-                        onAnnuler: () => _annulerCourse(demandeId, dateCreation),
+                        onAnnuler: () =>
+                            _annulerCourse(demandeId, dateCreation),
                       );
                     }),
                     const SizedBox(height: 24),
@@ -554,7 +603,11 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                   if (_livraisonsCourier.isNotEmpty) ...[
                     const Text(
                       '📦 Livraisons en cours',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: CouleursTaama.indigo),
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: CouleursTaama.indigo,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     ..._livraisonsCourier.map((livraison) {
@@ -575,7 +628,6 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                     }),
                     const SizedBox(height: 24),
                   ],
-
                 ],
               ),
             ),
@@ -590,13 +642,23 @@ class _CarteProfil extends StatelessWidget {
   final bool disponible;
   final VoidCallback onToggle;
 
-  const _CarteProfil({required this.profil, required this.disponible, required this.onToggle});
+  const _CarteProfil({
+    required this.profil,
+    required this.disponible,
+    required this.onToggle,
+  });
 
   String get _initiales {
-    final parties = (profil['nom']?.toString() ?? '').trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final parties = (profil['nom']?.toString() ?? '')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
     if (parties.isEmpty) return '?';
     if (parties.length == 1) {
-      return parties[0].substring(0, parties[0].length >= 2 ? 2 : 1).toUpperCase();
+      return parties[0]
+          .substring(0, parties[0].length >= 2 ? 2 : 1)
+          .toUpperCase();
     }
     return (parties[0][0] + parties[1][0]).toUpperCase();
   }
@@ -626,7 +688,9 @@ class _CarteProfil extends StatelessWidget {
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
-        MaterialPageRoute(builder: (context) => const EcranVerificationConducteur()),
+        MaterialPageRoute(
+          builder: (context) => const EcranVerificationConducteur(),
+        ),
       ),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -639,7 +703,14 @@ class _CarteProfil extends StatelessWidget {
           children: [
             Icon(icone, color: couleur, size: 14),
             const SizedBox(width: 4),
-            Text(libelle, style: TextStyle(color: couleur, fontWeight: FontWeight.bold, fontSize: 12)),
+            Text(
+              libelle,
+              style: TextStyle(
+                color: couleur,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
           ],
         ),
       ),
@@ -655,7 +726,13 @@ class _CarteProfil extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, 4))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
@@ -664,7 +741,11 @@ class _CarteProfil extends StatelessWidget {
             radius: 26,
             child: Text(
               _initiales,
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
             ),
           ),
           const SizedBox(width: 14),
@@ -672,7 +753,13 @@ class _CarteProfil extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(profil['nom']?.toString() ?? '', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                Text(
+                  profil['nom']?.toString() ?? '',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 2),
                 Text(
                   '${profil['vehicule']} • ${profil['plaque']}',
@@ -684,7 +771,10 @@ class _CarteProfil extends StatelessWidget {
                   runSpacing: 6,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: CouleursTaama.or.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(8),
@@ -692,9 +782,20 @@ class _CarteProfil extends StatelessWidget {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.star, color: CouleursTaama.or, size: 14),
+                          const Icon(
+                            Icons.star,
+                            color: CouleursTaama.or,
+                            size: 14,
+                          ),
                           const SizedBox(width: 4),
-                          Text(note, style: const TextStyle(color: CouleursTaama.or, fontWeight: FontWeight.bold, fontSize: 12)),
+                          Text(
+                            note,
+                            style: const TextStyle(
+                              color: CouleursTaama.or,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -768,7 +869,9 @@ class _CarteEtat extends StatelessWidget {
             const SizedBox(height: 14),
             FilledButton(
               onPressed: onAction,
-              style: FilledButton.styleFrom(backgroundColor: CouleursTaama.terreCuite),
+              style: FilledButton.styleFrom(
+                backgroundColor: CouleursTaama.terreCuite,
+              ),
               child: Text(libelleAction!),
             ),
           ],
@@ -784,7 +887,12 @@ class _CarteStat extends StatelessWidget {
   final String valeur;
   final String libelle;
 
-  const _CarteStat({required this.icone, required this.couleur, required this.valeur, required this.libelle});
+  const _CarteStat({
+    required this.icone,
+    required this.couleur,
+    required this.valeur,
+    required this.libelle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -798,12 +906,23 @@ class _CarteStat extends StatelessWidget {
         children: [
           Icon(icone, color: couleur, size: 22),
           const SizedBox(height: 6),
-          Text(valeur, style: TextStyle(color: couleur, fontWeight: FontWeight.bold, fontSize: 15)),
+          Text(
+            valeur,
+            style: TextStyle(
+              color: couleur,
+              fontWeight: FontWeight.bold,
+              fontSize: 15,
+            ),
+          ),
           const SizedBox(height: 2),
           Text(
             libelle,
             textAlign: TextAlign.center,
-            style: TextStyle(color: couleur, fontSize: 10, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              color: couleur,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
@@ -839,19 +958,33 @@ class _CarteDemande extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: const Border(left: BorderSide(color: CouleursTaama.terreCuite, width: 4)),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6)],
+        border: const Border(
+          left: BorderSide(color: CouleursTaama.terreCuite, width: 4),
+        ),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(demande['destination']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          Text(
+            demande['destination']?.toString() ?? '',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
           const SizedBox(height: 4),
-          Text('${demande['type_transport']}', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+          Text(
+            '${demande['type_transport']}',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          ),
           const SizedBox(height: 8),
           Text(
             '${demande['prix_estime']} FCFA',
-            style: const TextStyle(color: CouleursTaama.terreCuite, fontWeight: FontWeight.bold, fontSize: 20),
+            style: const TextStyle(
+              color: CouleursTaama.terreCuite,
+              fontWeight: FontWeight.bold,
+              fontSize: 20,
+            ),
           ),
           const SizedBox(height: 12),
           if (enAttente)
@@ -871,12 +1004,18 @@ class _CarteDemande extends StatelessWidget {
                 Expanded(
                   child: ElevatedButton(
                     onPressed: enTraitement ? null : onAccepter,
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
                     child: enTraitement
                         ? const SizedBox(
                             width: 16,
                             height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
                           )
                         : const Text('Accepter'),
                   ),
@@ -898,7 +1037,13 @@ class _CarteDemande extends StatelessWidget {
             Row(
               children: [
                 const Expanded(
-                  child: Text('En route', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                  child: Text(
+                    'En route',
+                    style: TextStyle(
+                      color: Colors.green,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
                 OutlinedButton.icon(
                   onPressed: onChat,
@@ -923,7 +1068,8 @@ class _CarteDemande extends StatelessWidget {
           // 'en_route' (vers le client) ou 'client_a_bord' (vers sa
           // destination) : avant acceptation, ni la navigation ni le
           // téléphone du client n'ont à être exposés au conducteur.
-          if (demande['statut'] == 'en_route' || demande['statut'] == 'client_a_bord') ...[
+          if (demande['statut'] == 'en_route' ||
+              demande['statut'] == 'client_a_bord') ...[
             const SizedBox(height: 8),
             ElevatedButton.icon(
               onPressed: () => Navigator.push(
@@ -935,23 +1081,28 @@ class _CarteDemande extends StatelessWidget {
                     // EcranNavigation géocode le texte `destination` (où le
                     // client VEUT ALLER) et affiche ce point comme position
                     // du client — bug corrigé ici.
-                    final departLat = (demande['depart_lat'] as num?)?.toDouble();
-                    final departLng = (demande['depart_lng'] as num?)?.toDouble();
-                    final destinationLat = (demande['destination_lat'] as num?)?.toDouble();
-                    final destinationLng = (demande['destination_lng'] as num?)?.toDouble();
+                    final departLat = (demande['depart_lat'] as num?)
+                        ?.toDouble();
+                    final departLng = (demande['depart_lng'] as num?)
+                        ?.toDouble();
+                    final destinationLat = (demande['destination_lat'] as num?)
+                        ?.toDouble();
+                    final destinationLng = (demande['destination_lng'] as num?)
+                        ?.toDouble();
                     // Si le client est déjà à bord (écran de navigation
                     // rouvert après l'avoir quitté), on route directement
                     // vers la destination — pas de 2e jambe à redéclencher,
                     // le passage en 'client_a_bord' a déjà eu lieu côté
                     // backend.
-                    final clientDejaABord = demande['statut'] == 'client_a_bord';
+                    final clientDejaABord =
+                        demande['statut'] == 'client_a_bord';
                     final positionClient = clientDejaABord
                         ? (destinationLat != null && destinationLng != null
-                            ? LatLng(destinationLat, destinationLng)
-                            : null)
+                              ? LatLng(destinationLat, destinationLng)
+                              : null)
                         : (departLat != null && departLng != null
-                            ? LatLng(departLat, departLng)
-                            : null);
+                              ? LatLng(departLat, departLng)
+                              : null);
                     return EcranNavigation(
                       demandeId: demande['id'] is int
                           ? demande['id'] as int
@@ -972,7 +1123,8 @@ class _CarteDemande extends StatelessWidget {
                 backgroundColor: CouleursTaama.indigo,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 10,
+                  horizontal: 16,
+                  vertical: 10,
                 ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10),
@@ -1009,8 +1161,15 @@ class _CarteLivraisonCourier extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: const Border(left: BorderSide(color: Colors.orange, width: 4)),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6)],
+          border: const Border(
+            left: BorderSide(color: Colors.orange, width: 4),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 6,
+            ),
+          ],
         ),
         child: Row(
           children: [
@@ -1025,7 +1184,10 @@ class _CarteLivraisonCourier extends StatelessWidget {
                 children: [
                   Text(
                     livraison['description_colis']?.toString() ?? '',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1039,7 +1201,11 @@ class _CarteLivraisonCourier extends StatelessWidget {
                   const SizedBox(height: 8),
                   Text(
                     '${livraison['prix'] ?? 0} FCFA',
-                    style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 18),
+                    style: const TextStyle(
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
                   ),
                 ],
               ),
