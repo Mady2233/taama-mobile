@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -38,11 +37,13 @@ class _EcranDemandeInstantaneeState
   bool _calcul = true;
   bool _enChargement = false;
   double? _distanceKm;
-  int? _prixEstimeVoiture;
-  int? _prixEstimeMoto;
   String? _erreur;
-  Map<String, dynamic>? _detailPrixVoiture;
-  Map<String, dynamic>? _detailPrixMoto;
+  // Devis reçus du serveur (POST /trajets/estimer/) — plus aucun prix
+  // calculé côté client : ce que cette liste contient est ce qui s'affiche,
+  // point final. Null tant qu'aucune estimation n'a réussi ; jamais vide-
+  // par-erreur silencieuse (voir _recalculerEstimation, _erreur distingue
+  // "en cours"/"échoué" de "0 service dispo").
+  List<ServiceCourse>? _services;
   // Position GPS du client au moment du calcul — transmise à la création de
   // la demande pour attribuer le chauffeur le plus proche.
   double? _departLat;
@@ -85,10 +86,22 @@ class _EcranDemandeInstantaneeState
     _calculerDistanceAuto();
   }
 
+  /// Prix le plus bas parmi les devis disponibles — sert de référence à
+  /// l'aperçu de réduction du code promo (la réduction réelle dépend du
+  /// service choisi ensuite dans le sheet, revalidée à la création).
+  int? get _prixReference {
+    final services = _services;
+    if (services == null) return null;
+    final prix = services
+        .where((s) => s.disponible && s.prix != null)
+        .map((s) => s.prix!);
+    return prix.isEmpty ? null : prix.reduce((a, b) => a < b ? a : b);
+  }
+
   Future<void> _verifierCodePromo() async {
     final code = _codePromoCtrl.text.trim();
     if (code.isEmpty) return;
-    final prixReference = _prixEstimeVoiture ?? _prixEstimeMoto;
+    final prixReference = _prixReference;
     if (prixReference == null) return;
 
     setState(() {
@@ -190,92 +203,49 @@ class _EcranDemandeInstantaneeState
     return null;
   }
 
-  /// Recalcule distance/prix pour le trajet complet (départ -> arrêts ->
+  /// Recalcule les devis pour le trajet complet (départ -> arrêts ->
   /// destination) — appelée après le calcul initial et à chaque ajout/retrait
-  /// d'arrêt. La distance locale (Haversine, somme des segments) est
-  /// toujours recalculée immédiatement ; le détail de prix backend
-  /// (tarification dynamique) n'est refait que SANS arrêt, ce moteur ne
-  /// sachant traiter qu'un trajet à 2 points — avec arrêts, seule
-  /// l'estimation locale (qui, elle, tient compte de tous les segments)
-  /// reste affichée, jamais un prix backend qui ignorerait les arrêts.
+  /// d'arrêt. Prix et distance viennent EXCLUSIVEMENT du serveur
+  /// (POST /trajets/estimer/, voir ApiService.estimerCourse) : aucune
+  /// formule locale, aucun repli sur une estimation approximative — un
+  /// échec réseau/HTTP est un état d'erreur explicite (_erreur), jamais un
+  /// prix fabriqué sur lequel le client pourrait confirmer une course.
   Future<void> _recalculerEstimation() async {
     if (_departLat == null || _departLng == null) return;
+    if (_destinationLat == null || _destinationLng == null) {
+      if (!mounted) return;
+      setState(() {
+        _services = null;
+        _distanceKm = null;
+        _erreur = 'Destination introuvable — réessayez';
+      });
+      return;
+    }
 
-    final latDest = _destinationLat ?? 12.6392; // Bamako par défaut
-    final lngDest = _destinationLng ?? -8.0029;
-
-    final points = <List<double>>[
-      [_departLat!, _departLng!],
-      for (final a in _arrets)
-        [a['latitude'] as double, a['longitude'] as double],
-      [latDest, lngDest],
-    ];
-
-    double distanceTotale = 0;
-    for (var i = 0; i < points.length - 1; i++) {
-      distanceTotale += _haversineKm(
-        points[i][0], points[i][1], points[i + 1][0], points[i + 1][1],
+    try {
+      final services = await ApiService.estimerCourse(
+        departLat: _departLat!, departLng: _departLng!,
+        arriveeLat: _destinationLat!, arriveeLng: _destinationLng!,
+        arrets: _arrets,
       );
-    }
-
-    final voiture = math.max(200, (distanceTotale * 150).round());
-    final moto = math.max(150, (distanceTotale * 100).round());
-    final prixV = ((voiture / 50).round() * 50);
-    final prixM = ((moto / 50).round() * 50);
-
-    if (!mounted) return;
-    setState(() {
-      _distanceKm = double.parse(distanceTotale.toStringAsFixed(1));
-      _prixEstimeVoiture = prixV;
-      _prixEstimeMoto = prixM;
-      if (_arrets.isNotEmpty) {
-        _detailPrixVoiture = null;
-        _detailPrixMoto = null;
-      }
-    });
-
-    if (_arrets.isEmpty && _destinationLat != null && _destinationLng != null) {
-      try {
-        final resVoiture = await ApiService.calculerDistanceGPS(
-          latDepart: _departLat!, lonDepart: _departLng!,
-          latArrivee: _destinationLat!, lonArrivee: _destinationLng!,
-          typeTransport: 'Voiture',
-        );
-        final resMoto = await ApiService.calculerDistanceGPS(
-          latDepart: _departLat!, lonDepart: _departLng!,
-          latArrivee: _destinationLat!, lonArrivee: _destinationLng!,
-          typeTransport: 'Moto',
-        );
-        if (mounted) {
-          setState(() {
-            _detailPrixVoiture = resVoiture['detail_prix'] as Map<String, dynamic>?;
-            _detailPrixMoto = resMoto['detail_prix'] as Map<String, dynamic>?;
-            if (_detailPrixVoiture != null) {
-              _prixEstimeVoiture = _detailPrixVoiture!['prix_final'] as int;
-            }
-            if (_detailPrixMoto != null) {
-              _prixEstimeMoto = _detailPrixMoto!['prix_final'] as int;
-            }
-          });
-        }
-      } catch (_) {
-        // Le détail de prix backend est optionnel : l'estimation locale
-        // ci-dessus reste valable si l'appel échoue.
-      }
+      if (!mounted) return;
+      setState(() {
+        _services = services;
+        // Même distance sur chaque entrée (un seul trajet estimé) — voir
+        // le commentaire de estimer_course, backend.
+        _distanceKm = services.isNotEmpty ? services.first.distanceKm : null;
+        _erreur = null;
+      });
+    } on EstimationIndisponibleException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _services = null;
+        _distanceKm = null;
+        _erreur = 'Impossible de calculer le prix — réessayez';
+      });
+      debugPrint('[Resultats] estimerCourse KO : $e');
     }
   }
-
-  double _haversineKm(double lat1, double lng1, double lat2, double lng2) {
-    const r = 6371.0;
-    final dLat = _rad(lat2 - lat1);
-    final dLng = _rad(lng2 - lng1);
-    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(_rad(lat1)) * math.cos(_rad(lat2)) *
-            math.sin(dLng / 2) * math.sin(dLng / 2);
-    return r * 2 * math.asin(math.sqrt(a.clamp(0, 1)));
-  }
-
-  double _rad(double deg) => deg * math.pi / 180;
 
   Future<void> _ajouterArret() async {
     if (_arrets.length >= _maxArrets) return;
@@ -315,58 +285,22 @@ class _EcranDemandeInstantaneeState
   }
 
   Future<void> _confirmer() async {
-    if (_distanceKm == null) {
-      // Ne devrait pas arriver (bouton désactivé tant que _distanceKm est
-      // null), mais jamais un no-op silencieux si ça se produit quand même.
+    final services = _services;
+    if (_distanceKm == null || services == null || services.isEmpty) {
+      // Ne devrait pas arriver (bouton désactivé tant que _services est
+      // null/vide), mais jamais un no-op silencieux si ça se produit quand même.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content:
-                Text('Distance non disponible, réessayez dans un instant.')),
+            content: Text('Prix non disponible, réessayez dans un instant.')),
       );
       return;
     }
-
-    // null par défaut = mode statique (widget_choix_vehicule.dart bascule
-    // dessus automatiquement, alimenté par les prix RÉELS de calculer-distance
-    // via _detailPrixVoiture/_detailPrixMoto). Tenté uniquement si on a les 4
-    // coordonnées requises par estimer_course ; toute erreur réseau/HTTP/
-    // timeout y bascule aussi explicitement (jamais une liste vide silencieuse
-    // confondue avec "0 service dispo"). Avec des arrêts : mode statique
-    // forcé — estimer_course ne sait traiter qu'un trajet à 2 points,
-    // afficherait un prix qui ignorerait les arrêts (voir _recalculerEstimation).
-    // _enChargement affiche un spinner borné (12s max, voir
-    // ApiService.estimerCourse) pendant cette tentative plutôt que de laisser
-    // le bouton muet le temps de l'appel.
-    List<ServiceCourse>? services;
-    if (widget.typePreselectionne == null &&
-        _arrets.isEmpty &&
-        _departLat != null && _departLng != null &&
-        _destinationLat != null && _destinationLng != null) {
-      setState(() => _enChargement = true);
-      try {
-        services = await ApiService.estimerCourse(
-          departLat: _departLat!, departLng: _departLng!,
-          arriveeLat: _destinationLat!, arriveeLng: _destinationLng!,
-        );
-      } on EstimationIndisponibleException catch (e) {
-        debugPrint('[Resultats] Estimation KO, flux statique : $e');
-        services = null;
-      } finally {
-        if (mounted) setState(() => _enChargement = false);
-      }
-    }
-    // Await ci-dessus => contexte potentiellement démonté avant d'ouvrir le
-    // sheet (contrairement à widget_choix_vehicule.dart, qui n'a aucun await
-    // dans son chemin d'interaction).
-    if (!mounted) return;
 
     final choix = await afficherChoixVehicule(
       context,
       destination: widget.destination,
       distanceKm: _distanceKm!,
       typePreselectionne: widget.typePreselectionne,
-      detailPrixVoiture: _detailPrixVoiture,
-      detailPrixMoto: _detailPrixMoto,
       services: services,
     );
     if (choix == null || !mounted) return;
@@ -392,36 +326,41 @@ class _EcranDemandeInstantaneeState
     final codePromoSaisi = _codePromoCtrl.text.trim();
     final codePromo = codePromoSaisi.isEmpty ? null : codePromoSaisi;
 
+    await _soumettre(
+      devisId: choix['devis_id'] as int,
+      typeServiceId: choix['type_service'] as int,
+      prixAffiche: choix['prix_estime'] as int?,
+      dateHeurePlanifiee: dateHeurePlanifiee,
+      codePromo: codePromo,
+    );
+  }
+
+  /// Poste la demande avec ce devis. Si le devis a expiré ENTRE le choix du
+  /// véhicule et cette confirmation, le serveur en renvoie un nouveau (même
+  /// service/trajet, prix recalculé maintenant) : même prix -> on continue
+  /// avec lui, sans rien redemander (rien n'a changé pour le client) ; prix
+  /// différent -> on l'affiche et on exige une confirmation explicite avant
+  /// de reposter. Jamais de commande envoyée sur un prix non validé.
+  /// [dejaRelance] borne à UNE seule reconfirmation automatique/silencieuse,
+  /// pour ne jamais boucler indéfiniment sur des devis qui expirent en
+  /// continu (réseau très lent, etc.).
+  Future<void> _soumettre({
+    required int devisId,
+    required int typeServiceId,
+    required int? prixAffiche,
+    required DateTime? dateHeurePlanifiee,
+    required String? codePromo,
+    bool dejaRelance = false,
+  }) async {
     setState(() => _enChargement = true);
     try {
-      final Map<String, dynamic> demande;
-      if (choix['type_service'] != null) {
-        demande = await ApiService.creerDemandeInstantanee(
-          destination: widget.destination,
-          distanceKm: _distanceKm!,
-          typeServiceId: choix['type_service'] as int,
-          dateHeurePlanifiee: dateHeurePlanifiee,
-          departLat: _departLat,
-          departLng: _departLng,
-          destinationLat: _destinationLat,
-          destinationLng: _destinationLng,
-          codePromo: codePromo,
-          arrets: _arrets,
-        );
-      } else {
-        demande = await ApiService.creerDemandeInstantanee(
-          destination: widget.destination,
-          distanceKm: _distanceKm!,
-          typeTransport: choix['type'] as String, // mode statique, clé historique
-          dateHeurePlanifiee: dateHeurePlanifiee,
-          departLat: _departLat,
-          departLng: _departLng,
-          destinationLat: _destinationLat,
-          destinationLng: _destinationLng,
-          codePromo: codePromo,
-          arrets: _arrets,
-        );
-      }
+      final demande = await ApiService.creerDemandeInstantanee(
+        destination: widget.destination,
+        devisId: devisId,
+        typeServiceId: typeServiceId,
+        dateHeurePlanifiee: dateHeurePlanifiee,
+        codePromo: codePromo,
+      );
       if (!mounted) return;
 
       if (dateHeurePlanifiee != null) {
@@ -445,11 +384,59 @@ class _EcranDemandeInstantaneeState
           ),
         );
       }
+    } on DevisExpireException catch (e) {
+      if (!mounted) return;
+      if (dejaRelance) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Le prix a expiré à nouveau — relance la recherche.')));
+        await _recalculerEstimation();
+        return;
+      }
+      if (prixAffiche != null && e.nouveauPrix == prixAffiche) {
+        // Même prix : le devis a juste dépassé sa fenêtre de 5 min entre le
+        // choix et la confirmation, rien n'a changé pour le client.
+        await _soumettre(
+          devisId: e.nouveauDevisId, typeServiceId: typeServiceId,
+          prixAffiche: e.nouveauPrix, dateHeurePlanifiee: dateHeurePlanifiee,
+          codePromo: codePromo, dejaRelance: true,
+        );
+        return;
+      }
+      // Prix différent : jamais de commande sur un prix non validé.
+      final accepte = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Le prix a changé'),
+          content: Text(
+            prixAffiche != null
+                ? 'Le prix est maintenant de ${e.nouveauPrix} FCFA (au lieu de $prixAffiche FCFA). Confirmer à ce nouveau prix ?'
+                : 'Le prix est maintenant de ${e.nouveauPrix} FCFA. Confirmer ?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annuler'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Confirmer'),
+            ),
+          ],
+        ),
+      );
+      if (accepte == true && mounted) {
+        await _soumettre(
+          devisId: e.nouveauDevisId, typeServiceId: typeServiceId,
+          prixAffiche: e.nouveauPrix, dateHeurePlanifiee: dateHeurePlanifiee,
+          codePromo: codePromo, dejaRelance: true,
+        );
+      } else if (mounted) {
+        await _recalculerEstimation();
+      }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(
-            e.toString().replaceAll('Exception: ', ''))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceAll('Exception: ', ''))));
     } finally {
       if (mounted) setState(() => _enChargement = false);
     }
@@ -703,13 +690,10 @@ class _EcranDemandeInstantaneeState
                                       '${_distanceKm!.toStringAsFixed(1)} km',
                                 ),
                                 _StatPrix(
-                                  label: '🚗 Voiture',
-                                  valeur: '$_prixEstimeVoiture FCFA',
-                                  accent: true,
-                                ),
-                                _StatPrix(
-                                  label: '🏍️ Moto',
-                                  valeur: '$_prixEstimeMoto FCFA',
+                                  label: '💰 À partir de',
+                                  valeur: _prixReference != null
+                                      ? '$_prixReference FCFA'
+                                      : 'Indisponible',
                                   accent: true,
                                 ),
                               ],
@@ -932,7 +916,8 @@ class _EcranDemandeInstantaneeState
 
             // Bouton confirmer
             ElevatedButton(
-              onPressed: (_calcul || _enChargement || _distanceKm == null)
+              onPressed: (_calcul || _enChargement || _distanceKm == null ||
+                      _services == null || _services!.isEmpty)
                   ? null
                   : _confirmer,
               style: ElevatedButton.styleFrom(

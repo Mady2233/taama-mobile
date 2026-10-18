@@ -17,6 +17,24 @@ class EstimationIndisponibleException implements Exception {
   String toString() => message;
 }
 
+/// Levée par creerDemandeInstantanee quand le devis a expiré ENTRE le choix
+/// du véhicule et la confirmation (fenêtre de 5 min, voir Devis côté
+/// backend) — porte le nouveau devis (même service/trajet, prix recalculé
+/// maintenant) que le serveur a déjà préparé, pour que l'appelant décide :
+/// même prix -> reconfirmer directement ; prix différent -> le montrer et
+/// exiger une confirmation explicite avant de reposter (jamais de commande
+/// sur un prix que le client n'a pas validé).
+class DevisExpireException implements Exception {
+  final int nouveauDevisId;
+  final int nouveauPrix;
+  final Map<String, dynamic>? detail;
+  DevisExpireException({
+    required this.nouveauDevisId,
+    required this.nouveauPrix,
+    this.detail,
+  });
+}
+
 /// Levée par supprimerMonCompte sur un refus métier (409 : course en
 /// cours, solde > 0…) : `message` vient du serveur, à afficher tel quel.
 class SuppressionCompteRefuseeException implements Exception {
@@ -267,12 +285,15 @@ class ApiService {
         'lon_arrivee': lonArrivee,
         'type_transport': typeTransport,
       }),
-    );
+    ).timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
   /// Estimation de prix par service (POST /trajets/estimer/) — jamais de
-  /// prix envoyé par le client, uniquement les 4 coordonnées. Lève
+  /// prix envoyé par le client, uniquement les 4 coordonnées (+ arrêts
+  /// optionnels). Chaque service DISPONIBLE revient avec un `devisId` figé
+  /// côté serveur (voir ServiceCourse) : c'est LUI qui doit être reposté à
+  /// la création, jamais un prix recalculé ici. Lève
   /// [EstimationIndisponibleException] pour toute erreur réseau/HTTP/format
   /// racine (jamais de liste vide silencieuse dans ces cas-là : une liste
   /// vide signifie "0 service dispo", ce qui est un résultat valide, pas une
@@ -282,6 +303,7 @@ class ApiService {
     required double departLng,
     required double arriveeLat,
     required double arriveeLng,
+    List<Map<String, dynamic>>? arrets,
   }) async {
     final http.Response reponse;
     try {
@@ -293,8 +315,16 @@ class ApiService {
           'depart_lng': departLng,
           'arrivee_lat': arriveeLat,
           'arrivee_lng': arriveeLng,
+          if (arrets != null && arrets.isNotEmpty)
+            'arrets': arrets
+                .map((a) => {
+                      'adresse': a['adresse'],
+                      'latitude': a['latitude'],
+                      'longitude': a['longitude'],
+                    })
+                .toList(),
         }),
-      );
+      ).timeout(const Duration(seconds: 12));
     } catch (e) {
       throw EstimationIndisponibleException('Estimation indisponible (réseau) : $e');
     }
@@ -353,61 +383,49 @@ class ApiService {
 
   // ─── Demandes instantanées ────────────────────────────────────────────────
 
+  /// Confirme une demande à partir d'un devis déjà obtenu via [estimerCourse]
+  /// — plus aucun prix, distance, coordonnées ni arrêts envoyés ici : le
+  /// serveur reprend tout depuis le devis figé (voir _consommer_devis,
+  /// backend), jamais une valeur fournie par le client à cet instant.
+  /// `typeServiceId` doit être celui du MÊME service que le devis (vérifié
+  /// côté serveur — DEVIS_SERVICE_DIFFERENT sinon).
   static Future<Map<String, dynamic>> creerDemandeInstantanee({
     required String destination,
-    required double distanceKm,
-    String? typeTransport,
-    int? typeServiceId,
+    required int devisId,
+    required int typeServiceId,
     DateTime? dateHeurePlanifiee,
-    double? departLat,
-    double? departLng,
-    double? destinationLat,
-    double? destinationLng,
     String? codePromo,
-    // Arrêts intermédiaires, DANS L'ORDRE de passage — chaque élément doit
-    // contenir 'adresse' (String), 'latitude' et 'longitude' (double),
-    // sinon le serveur rejette toute la demande (voir ArretSerializer,
-    // backend).
-    List<Map<String, dynamic>>? arrets,
   }) async {
-    assert(
-      (typeServiceId != null) != (typeTransport != null),
-      'Exactement un de typeServiceId / typeTransport doit être fourni',
-    );
-    // L'assert ci-dessus disparaît des builds release — ce garde-fou reste
-    // actif en prod, pour ne jamais poster une demande sans aucun type ni
-    // avec les deux à la fois.
-    if ((typeServiceId == null) == (typeTransport == null)) {
-      throw ArgumentError(
-          'Exactement un de typeServiceId / typeTransport doit être fourni');
-    }
-
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/demandes/creer/'),
       headers: _headers,
       body: jsonEncode({
         'destination': destination,
-        'distance_km': double.parse(distanceKm.toStringAsFixed(1)),
-        if (typeServiceId != null) 'type_service': typeServiceId,
-        if (typeServiceId == null && typeTransport != null)
-          'type_transport': typeTransport,
+        'devis_id': devisId,
+        'type_service': typeServiceId,
         if (dateHeurePlanifiee != null)
           'date_heure_planifiee': dateHeurePlanifiee.toIso8601String(),
-        if (departLat != null) 'depart_lat': departLat,
-        if (departLng != null) 'depart_lng': departLng,
-        if (destinationLat != null) 'destination_lat': destinationLat,
-        if (destinationLng != null) 'destination_lng': destinationLng,
         if (codePromo != null && codePromo.isNotEmpty) 'code_promo': codePromo,
-        if (arrets != null && arrets.isNotEmpty)
-          'arrets': arrets
-              .map((a) => {
-                    'adresse': a['adresse'],
-                    'latitude': a['latitude'],
-                    'longitude': a['longitude'],
-                  })
-              .toList(),
       }),
     );
+    // Cas particulier AVANT _traiterReponse (qui ne garde qu'un message
+    // texte, perdant nouveau_devis_id/nouveau_prix) : un devis expiré porte
+    // un nouveau devis tout prêt dans le corps de la réponse 409.
+    if (reponse.statusCode == 409) {
+      Map<String, dynamic>? corps;
+      try {
+        corps = jsonDecode(reponse.body) as Map<String, dynamic>;
+      } catch (_) {
+        // Corps non-JSON : traité comme une erreur 409 générique ci-dessous.
+      }
+      if (corps != null && corps['code'] == 'DEVIS_EXPIRE') {
+        throw DevisExpireException(
+          nouveauDevisId: corps['nouveau_devis_id'] as int,
+          nouveauPrix: corps['nouveau_prix'] as int,
+          detail: corps['detail'] as Map<String, dynamic>?,
+        );
+      }
+    }
     return _traiterReponse(reponse, codeAttendu: 201) as Map<String, dynamic>;
   }
 

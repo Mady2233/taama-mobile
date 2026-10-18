@@ -2,284 +2,261 @@ import 'package:flutter/material.dart';
 import '../models/service_course.dart';
 import '../theme/couleurs_taama.dart';
 
-/// Bottom sheet style DiDi : affiche les types de véhicules disponibles
-/// avec leur prix estimé AVANT que le client confirme la demande.
-///
-/// Utilise le détail de prix calculé par le backend (`detailPrixVoiture` /
-/// `detailPrixMoto`, tarification dynamique façon Uber) quand disponible,
-/// sinon retombe sur une estimation locale approximative.
+/// Bottom sheet style DiDi : affiche les services disponibles (catalogue
+/// TypeService) avec leur devis figé côté serveur, AVANT que le client
+/// confirme la demande. Plus aucun prix calculé ici : chaque carte affiche
+/// exactement le `prix`/`devisId` reçus de POST /trajets/estimer/ (voir
+/// ApiService.estimerCourse) — le choix du client renvoie ce devis tel quel,
+/// jamais un montant recalculé côté app.
 Future<Map<String, dynamic>?> afficherChoixVehicule(
   BuildContext context, {
   required String destination,
   required double distanceKm,
   String? typePreselectionne,
-  Map<String, dynamic>? detailPrixVoiture,
-  Map<String, dynamic>? detailPrixMoto,
-  List<ServiceCourse>? services,
+  required List<ServiceCourse> services,
 }) async {
-  // Utilise les prix du backend si disponibles
-  final prixVoiture =
-      detailPrixVoiture?['prix_final'] as int? ??
-      (distanceKm * 150 + 500).round().clamp(500, 999999);
-  final prixMoto =
-      detailPrixMoto?['prix_final'] as int? ??
-      (distanceKm * 100 + 300).round().clamp(500, 999999);
+  // typePreselectionne ('Voiture'/'Moto', ex. depuis l'écran Services) filtre
+  // la liste plutôt que de sauter le choix : le client voit toujours le prix
+  // RÉEL avant de confirmer, jamais un choix auto-validé sur un devis qu'il
+  // n'a pas vu. 'MOTO' est le seul type_vehicule qui vaut 'Moto' côté
+  // backend (type_transport_associe) — tout le reste vaut 'Voiture'.
+  final base = typePreselectionne == null
+      ? services
+      : services.where((s) =>
+          (s.typeVehicule == 'MOTO') == (typePreselectionne == 'Moto')).toList();
 
-  final tempsVoiture =
-      detailPrixVoiture?['temps_minutes'] as num? ??
-      (distanceKm / 20 * 60).round();
-  final tempsMoto =
-      detailPrixMoto?['temps_minutes'] as num? ??
-      (distanceKm / 25 * 60).round();
-
-  final majorationVoiture = detailPrixVoiture?['raison_majoration'] as String?;
-
-  // Si le véhicule a déjà été choisi en amont (ex : depuis l'écran Services),
-  // on saute le choix manuel et on renvoie directement l'estimation correspondante.
-  if (typePreselectionne != null) {
-    if (typePreselectionne == 'Moto') {
-      return {
-        'type': 'Moto',
-        'prix_estime': prixMoto,
-        'temps_minutes': tempsMoto,
-      };
-    }
-    return {
-      'type': 'Voiture',
-      'prix_estime': prixVoiture,
-      'temps_minutes': tempsVoiture,
-    };
-  }
-
-  // MODE DYNAMIQUE (piloté par le catalogue TypeService/estimer_course) si
-  // services est fourni et non vide, sinon MODE STATIQUE ci-dessous
-  // (2 cartes Flex/Moto en dur, comportement historique inchangé).
-  final bool modeDynamique = services != null && services.isNotEmpty;
-  final List<ServiceCourse> servicesTries = modeDynamique
-      ? (() {
-          final disponibles = services.where((s) => s.disponible).toList()
-            ..sort((a, b) => (a.prix ?? 0).compareTo(b.prix ?? 0));
-          final indisponibles = services.where((s) => !s.disponible).toList();
-          return [...disponibles, ...indisponibles];
-        })()
-      : const <ServiceCourse>[];
+  final disponibles = base.where((s) => s.disponible).toList()
+    ..sort((a, b) => (a.prix ?? 0).compareTo(b.prix ?? 0));
+  final indisponibles = base.where((s) => !s.disponible).toList();
+  final servicesTries = [...disponibles, ...indisponibles];
+  // Le moins cher disponible pilote l'en-tête (temps estimé, majoration,
+  // détail de prix) — les autres services partagent le même trajet/la même
+  // majoration horaire, seule leur tarification propre diffère.
+  final ServiceCourse? reference = disponibles.isEmpty ? null : disponibles.first;
+  final majoration = reference?.detail?['raison_majoration'] as String?;
 
   return showModalBottomSheet<Map<String, dynamic>>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (context) => Container(
+      // isScrollControlled: true laisse le sheet grandir jusqu'à toute la
+      // hauteur de l'écran, mais un contenu non scrollable déborde quand
+      // même si les cartes de service (mode dynamique, plusieurs services)
+      // ne tiennent pas — bandes jaune/noir en bas. ConstrainedBox +
+      // SingleChildScrollView : le sheet peut défiler au lieu de déborder.
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.9,
+      ),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: const EdgeInsets.all(20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-          ),
 
-          Text(
-            'Vers $destination',
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: CouleursTaama.indigo,
-            ),
-          ),
-          Text(
-            '${distanceKm.toStringAsFixed(1)} km • ${tempsVoiture.round()} min estimé',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-          ),
-
-          // Badge majoration si heure de pointe
-          if (majorationVoiture != null) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade100,
-                borderRadius: BorderRadius.circular(8),
+            Text(
+              'Vers $destination',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: CouleursTaama.indigo,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.access_time, color: Colors.orange, size: 14),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$majorationVoiture — tarif majoré',
-                    style: const TextStyle(
+            ),
+            Text(
+              reference?.etaMinutes != null
+                  ? '${distanceKm.toStringAsFixed(1)} km • ${reference!.etaMinutes} min estimé'
+                  : '${distanceKm.toStringAsFixed(1)} km',
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+            ),
+
+            // Badge majoration si heure de pointe
+            if (majoration != null) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.access_time,
                       color: Colors.orange,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+                      size: 14,
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          const SizedBox(height: 16),
-          const Text(
-            'Choisir un véhicule',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-          ),
-          const SizedBox(height: 12),
-
-          if (modeDynamique) ...[
-            // MODE DYNAMIQUE : une carte par ServiceCourse (disponibles
-            // triés par prix croissant en premier, indisponibles grisés
-            // ensuite — voir servicesTries plus haut).
-            for (final service in servicesTries) ...[
-              _CarteService(
-                service: service,
-                onTap: () {
-                  if (service.disponible) {
-                    Navigator.pop(context, {
-                      'type_service': service.id,
-                      'prix_estime': service.prix,
-                      'temps_minutes': service.etaMinutes,
-                    });
-                    return;
-                  }
-
-                  // Indisponible : propose un repli plutôt que de laisser
-                  // le client face à une carte grisée sans issue.
-                  final repli = trouverStandardDeRepli(servicesTries);
-                  if (repli != null) {
-                    showDialog(
-                      context: context,
-                      builder: (dialogContext) => AlertDialog(
-                        title: Text('Pas de ${service.nom} disponible'),
-                        content: Text(
-                          'Aucun ${service.nom} près de vous pour l\'instant.\n\n'
-                          'Commander ${repli.nom} à ${repli.prix} FCFA à la place ?',
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(dialogContext),
-                            child: const Text('Annuler'),
-                          ),
-                          ElevatedButton(
-                            onPressed: () {
-                              // Ferme d'abord le dialog (son propre
-                              // context), PUIS le sheet (context du
-                              // builder ci-dessus) — jamais l'inverse,
-                              // sinon le dialog resterait affiché sur un
-                              // sheet déjà fermé.
-                              Navigator.pop(dialogContext);
-                              Navigator.pop(context, {
-                                'type_service': repli.id,
-                                'prix_estime': repli.prix,
-                                'temps_minutes': repli.etaMinutes,
-                              });
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: CouleursTaama.terreCuite,
-                              foregroundColor: Colors.white,
-                            ),
-                            child: const Text('Commander'),
-                          ),
-                        ],
+                    const SizedBox(width: 4),
+                    Text(
+                      '$majoration — tarif majoré',
+                      style: const TextStyle(
+                        color: Colors.orange,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
                       ),
-                    );
-                  } else {
-                    showDialog(
-                      context: context,
-                      builder: (dialogContext) => AlertDialog(
-                        title: const Text('Indisponible'),
-                        content: const Text(
-                          'Aucune voiture disponible près de vous pour l\'instant.',
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(dialogContext),
-                            child: const Text('OK'),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-                },
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 10),
             ],
-          ] else ...[
-            // MODE STATIQUE (comportement historique, inchangé) : 2 cartes
-            // en dur, prix locaux/backend-detail déjà calculés plus haut.
-            _CarteVehicule(
-              icone: Icons.directions_car,
-              label: 'Taama Flex',
-              description: 'Confortable • 1-4 passagers',
-              prix: prixVoiture,
-              tempsAttente: '${tempsVoiture.round()} min',
-              onTap: () => Navigator.pop(context, {
-                'type': 'Voiture',
-                'prix_estime': prixVoiture,
-                'temps_minutes': tempsVoiture,
-              }),
-            ),
-            const SizedBox(height: 10),
 
-            _CarteVehicule(
-              icone: Icons.two_wheeler,
-              label: 'Taama Moto',
-              description: 'Rapide • Évite les embouteillages',
-              prix: prixMoto,
-              tempsAttente: '${tempsMoto.round()} min',
-              couleur: CouleursTaama.terreCuite,
-              onTap: () => Navigator.pop(context, {
-                'type': 'Moto',
-                'prix_estime': prixMoto,
-                'temps_minutes': tempsMoto,
-              }),
+            const SizedBox(height: 16),
+            const Text(
+              'Choisir un véhicule',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
             ),
-          ],
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
 
-          // Détail du prix (transparence totale)
-          if (detailPrixVoiture != null)
-            GestureDetector(
-              onTap: () => _afficherDetailPrix(context, detailPrixVoiture),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.info_outline,
-                    size: 14,
-                    color: Colors.grey.shade500,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Comment est calculé le prix ?',
-                    style: TextStyle(
+            if (servicesTries.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Text(
+                  'Aucun service disponible pour ce trajet pour le moment.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey.shade600),
+                ),
+              )
+            else ...[
+              // Une carte par ServiceCourse (disponibles triés par prix
+              // croissant en premier, indisponibles grisés ensuite — voir
+              // servicesTries plus haut).
+              for (final service in servicesTries) ...[
+                _CarteService(
+                  service: service,
+                  onTap: () {
+                    if (service.disponible) {
+                      Navigator.pop(context, {
+                        'type_service': service.id,
+                        'devis_id': service.devisId,
+                        'prix_estime': service.prix,
+                        'temps_minutes': service.etaMinutes,
+                      });
+                      return;
+                    }
+
+                    // Indisponible : propose un repli plutôt que de laisser
+                    // le client face à une carte grisée sans issue.
+                    final repli = trouverStandardDeRepli(servicesTries);
+                    if (repli != null) {
+                      showDialog(
+                        context: context,
+                        builder: (dialogContext) => AlertDialog(
+                          title: Text('Pas de ${service.nom} disponible'),
+                          content: Text(
+                            'Aucun ${service.nom} près de vous pour l\'instant.\n\n'
+                            'Commander ${repli.nom} à ${repli.prix} FCFA à la place ?',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(dialogContext),
+                              child: const Text('Annuler'),
+                            ),
+                            ElevatedButton(
+                              onPressed: () {
+                                // Ferme d'abord le dialog (son propre
+                                // context), PUIS le sheet (context du
+                                // builder ci-dessus) — jamais l'inverse,
+                                // sinon le dialog resterait affiché sur un
+                                // sheet déjà fermé.
+                                Navigator.pop(dialogContext);
+                                Navigator.pop(context, {
+                                  'type_service': repli.id,
+                                  'devis_id': repli.devisId,
+                                  'prix_estime': repli.prix,
+                                  'temps_minutes': repli.etaMinutes,
+                                });
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: CouleursTaama.terreCuite,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: const Text('Commander'),
+                            ),
+                          ],
+                        ),
+                      );
+                    } else {
+                      showDialog(
+                        context: context,
+                        builder: (dialogContext) => AlertDialog(
+                          title: const Text('Indisponible'),
+                          content: const Text(
+                            'Aucune voiture disponible près de vous pour l\'instant.',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(dialogContext),
+                              child: const Text('OK'),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                  },
+                ),
+                const SizedBox(height: 10),
+              ],
+            ],
+            const SizedBox(height: 12),
+
+            // Détail du prix (transparence totale)
+            if (reference?.detail != null)
+              GestureDetector(
+                onTap: () => _afficherDetailPrix(context, reference!.detail!),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: 14,
                       color: Colors.grey.shade500,
-                      fontSize: 12,
-                      decoration: TextDecoration.underline,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    Text(
+                      'Comment est calculé le prix ?',
+                      style: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 12,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          const SizedBox(height: 8),
-        ],
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     ),
   );
 }
 
+/// Détail tel que renvoyé par calculer_prix_service (backend) : pas de
+/// ventilation base/distance/temps (ce moteur n'a pas de terme temps,
+/// contrairement à l'ancien calculer_prix) — seuls distance, majoration
+/// éventuelle et prix final sont disponibles. Jamais de ligne inventée pour
+/// combler l'absence d'un sous-total que le serveur ne fournit pas.
 void _afficherDetailPrix(BuildContext context, Map<String, dynamic> detail) {
+  final raisonMajoration = detail['raison_majoration'] as String?;
   showDialog(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -293,21 +270,11 @@ void _afficherDetailPrix(BuildContext context, Map<String, dynamic> detail) {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _LignePrix('Prix de base', '${detail['prix_base']} FCFA'),
-            _LignePrix(
-              'Distance (${detail['distance_km']} km)',
-              '${detail['prix_distance']} FCFA',
-            ),
-            _LignePrix(
-              'Temps (${detail['temps_minutes']} min)',
-              '${detail['prix_temps']} FCFA',
-            ),
-            const Divider(),
-            _LignePrix('Sous-total', '${detail['sous_total']} FCFA'),
-            if (detail['raison_majoration'] != null)
+            _LignePrix('Distance', '${detail['distance_km']} km'),
+            if (raisonMajoration != null)
               _LignePrix(
-                '${detail['raison_majoration']} (×${detail['coefficient']})',
-                '+${((detail['coefficient'] - 1) * detail['sous_total']).round()} FCFA',
+                raisonMajoration,
+                '×${detail['coefficient']}',
                 couleur: Colors.orange,
               ),
             const Divider(),
@@ -360,95 +327,6 @@ class _LignePrix extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _CarteVehicule extends StatelessWidget {
-  final IconData icone;
-  final String label, description, tempsAttente;
-  final int prix;
-  final Color couleur;
-  final VoidCallback onTap;
-
-  const _CarteVehicule({
-    required this.icone,
-    required this.label,
-    required this.description,
-    required this.prix,
-    required this.tempsAttente,
-    required this.onTap,
-    this.couleur = CouleursTaama.indigo,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: couleur.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: couleur.withValues(alpha: 0.3)),
-        ),
-        child: Row(
-          children: [
-            Icon(icone, size: 32, color: couleur),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      color: couleur,
-                    ),
-                  ),
-                  Text(
-                    description,
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                  ),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.access_time,
-                        size: 12,
-                        color: Colors.green,
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        '$tempsAttente de trajet',
-                        style: const TextStyle(
-                          color: Colors.green,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '$prix FCFA',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                    color: couleur,
-                  ),
-                ),
-                const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
-              ],
-            ),
-          ],
-        ),
       ),
     );
   }

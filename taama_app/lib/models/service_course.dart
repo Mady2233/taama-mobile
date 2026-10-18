@@ -12,6 +12,13 @@ class ServiceCourse {
   final int? etaMinutes;
   final int placesMax;
   final int conducteursProches;
+  final double? distanceKm;
+  // Devis figé côté serveur (Devis.id, backend) — à reposter tel quel comme
+  // `devis_id` sur /trajets/demandes/creer/, avec ce même `id` en
+  // `type_service`. Null quand le service est indisponible (rien à
+  // consommer, voir estimer_course, views.py).
+  final int? devisId;
+  final Map<String, dynamic>? detail;
 
   const ServiceCourse({
     required this.id,
@@ -24,6 +31,9 @@ class ServiceCourse {
     required this.etaMinutes,
     required this.placesMax,
     required this.conducteursProches,
+    this.distanceKm,
+    this.devisId,
+    this.detail,
   });
 
   /// Parse défensif : un champ manquant ou mal typé retombe sur une valeur
@@ -52,6 +62,9 @@ class ServiceCourse {
       etaMinutes: (json['eta_minutes'] as num?)?.toInt(),
       placesMax: (json['places_max'] as num?)?.toInt() ?? 0,
       conducteursProches: (json['conducteurs_proches'] as num?)?.toInt() ?? 0,
+      distanceKm: (json['distance_km'] as num?)?.toDouble(),
+      devisId: (json['devis_id'] as num?)?.toInt(),
+      detail: json['detail'] as Map<String, dynamic>?,
     );
   }
 }
