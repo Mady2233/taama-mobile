@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'carte/journal_sans_cle.dart';
 import 'config/api_config.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
@@ -11,6 +12,8 @@ import 'services/notification_service.dart';
 import 'theme/couleurs_taama.dart';
 
 void main() async {
+  // Avant tout le reste : aucune clé d'API dans les journaux.
+  installerJournalSansCle();
   WidgetsFlutterBinding.ensureInitialized();
 
   // Pour vérifier ce que l'APK utilise vraiment (le --dart-define a-t-il

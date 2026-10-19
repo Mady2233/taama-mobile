@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'carte/journal_sans_cle.dart';
 import 'config/api_config.dart';
 import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
@@ -10,6 +11,8 @@ import 'services/notification_service.dart';
 import 'theme/taama_theme.dart';
 
 void main() {
+  // Avant tout le reste : aucune clé d'API dans les journaux.
+  installerJournalSansCle();
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
     FlutterError.onError = (details) {

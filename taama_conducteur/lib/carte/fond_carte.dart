@@ -9,6 +9,7 @@
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:http/http.dart' as http;
 
 import '../config/carte_config.dart';
 import '../widgets/couche_carte_taama.dart' show FondCarteIndisponible;
@@ -56,11 +57,40 @@ String cleCacheTuile(String url) =>
 
 /// Cache disque intégré de flutter_map (1 Go par défaut), plafonné pour les
 /// petits téléphones. Une seule instance pour toute l'app.
-NetworkTileProvider _fournisseurTuiles() => NetworkTileProvider(
-      cachingProvider: BuiltInMapCachingProvider.getOrCreateInstance(
-        maxCacheSize: 150 * 1024 * 1024,
-        tileKeyGenerator: cleCacheTuile,
-      ),
+/// [client] et [cache] : remplacés dans les tests seulement.
+@visibleForTesting
+NetworkTileProvider fournisseurTuiles({http.Client? client, MapCachingProvider? cache}) =>
+    NetworkTileProvider(
+      httpClient: client,
+      // Une erreur HTTP n'est JAMAIS dessinée comme une tuile : certains
+      // fournisseurs (MapTiler) joignent à leur 403 une image « Invalid key »
+      // que flutter_map afficherait par défaut, sans jamais signaler
+      // l'erreur — EtatFondCarte ne verrait rien. Ici, toute réponse non
+      // 200 lève l'erreur, et deux 401/403 affichent « Carte indisponible ».
+      attemptDecodeOfHttpErrorResponses: false,
+      cachingProvider: cache ??
+          BuiltInMapCachingProvider.getOrCreateInstance(
+            maxCacheSize: 150 * 1024 * 1024,
+            tileKeyGenerator: cleCacheTuile,
+          ),
+    );
+
+/// La couche de tuiles de FondCarteTaama, câblée sur EtatFondCarte. Exposée
+/// pour que les tests vérifient CE câblage-là, de bout en bout.
+@visibleForTesting
+TileLayer coucheTuilesTaama({
+  required String url,
+  bool apercu = false,
+  http.Client? client,
+  MapCachingProvider? cache,
+}) =>
+    TileLayer(
+      urlTemplate: url,
+      userAgentPackageName: 'com.taama',
+      tileProvider: fournisseurTuiles(client: client, cache: cache),
+      maxNativeZoom: 19,
+      panBuffer: apercu ? 0 : 1,
+      errorTileCallback: (_, erreur, __) => EtatFondCarte.signaler(erreur),
     );
 
 class FondCarteTaama extends StatelessWidget {
@@ -79,14 +109,7 @@ class FondCarteTaama extends StatelessWidget {
       valueListenable: EtatFondCarte.refuse,
       builder: (context, refuse, _) => refuse
           ? FondCarteIndisponible(nuit: nuit)
-          : TileLayer(
-              urlTemplate: CarteConfig.tuiles(nuit: nuit),
-              userAgentPackageName: 'com.taama',
-              tileProvider: _fournisseurTuiles(),
-              maxNativeZoom: 19,
-              panBuffer: apercu ? 0 : 1,
-              errorTileCallback: (_, erreur, __) => EtatFondCarte.signaler(erreur),
-            ),
+          : coucheTuilesTaama(url: CarteConfig.tuiles(nuit: nuit), apercu: apercu),
     );
   }
 }
