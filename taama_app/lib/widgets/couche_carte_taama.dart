@@ -93,6 +93,26 @@ Set<CategorieRepere> categoriesDuFond(String texte) => {
 final Set<CategorieRepere> reperesDessinesParLeFond =
     categoriesDuFond(CarteConfig.reperesDuFond);
 
+/// Noms de quartiers que le fond dessine déjà.
+enum QuartiersMasques {
+  aucun,
+
+  /// Grands quartiers seulement : les sous-quartiers restent affichés.
+  principaux,
+  tous,
+}
+
+/// « tous », « principaux » ; toute autre valeur (vide, inconnue) : aucun.
+QuartiersMasques quartiersDuFond(String texte) => switch (texte.trim()) {
+      'tous' => QuartiersMasques.tous,
+      'principaux' => QuartiersMasques.principaux,
+      _ => QuartiersMasques.aucun,
+    };
+
+/// Valeur fixée au build (CARTE_QUARTIERS_FOND).
+final QuartiersMasques quartiersDessinesParLeFond =
+    quartiersDuFond(CarteConfig.quartiersDuFond);
+
 /// Quartiers et repères visibles au zoom courant, du plus important au
 /// moins important. Une étiquette est omise si son rectangle (texte mesuré,
 /// plus un petit écart) touche celui d'une étiquette déjà placée, ou une
@@ -105,6 +125,7 @@ class CoucheCarteTaama extends StatefulWidget {
     this.densite = DensiteEtiquettes.normale,
     this.reserves = const [ZoneReservee.attribution()],
     this.reperesMasques,
+    this.quartiersMasques,
   });
 
   final bool nuit;
@@ -114,6 +135,10 @@ class CoucheCarteTaama extends StatefulWidget {
   /// Catégories de repères à ne jamais afficher. Null : celles que le fond
   /// dessine déjà (CARTE_REPERES_FOND).
   final Set<CategorieRepere>? reperesMasques;
+
+  /// Noms de quartiers à ne pas afficher. Null : ceux que le fond dessine
+  /// déjà (CARTE_QUARTIERS_FOND).
+  final QuartiersMasques? quartiersMasques;
 
   // Zoom minimal d'apparition.
   static const double zoomQuartiers = 12;
@@ -214,6 +239,7 @@ class _CoucheCarteTaamaState extends State<CoucheCarteTaama> {
   double? _echelle;
   DensiteEtiquettes? _densite;
   Set<CategorieRepere>? _masques;
+  QuartiersMasques? _quartiersMasques;
   LatLngBounds? _zone;
   List<_Place> _places = const [];
 
@@ -226,20 +252,23 @@ class _CoucheCarteTaamaState extends State<CoucheCarteTaama> {
     final vue = camera.visibleBounds;
     final zone = _zone;
     final masques = widget.reperesMasques ?? reperesDessinesParLeFond;
+    final quartiersMasques = widget.quartiersMasques ?? quartiersDessinesParLeFond;
     if (palier != _palier ||
         echelle.scale(10) != _echelle ||
         widget.densite != _densite ||
         !identical(masques, _masques) ||
+        quartiersMasques != _quartiersMasques ||
         zone == null ||
         !zone.containsBounds(vue)) {
       _palier = palier;
       _echelle = echelle.scale(10);
       _densite = widget.densite;
       _masques = masques;
+      _quartiersMasques = quartiersMasques;
       final nouvelleZone = _elargir(vue);
       _zone = nouvelleZone;
       _places = _selectionner(camera, nouvelleZone, palier, echelle,
-          DefaultTextStyle.of(context).style, widget.densite, masques);
+          DefaultTextStyle.of(context).style, widget.densite, masques, quartiersMasques);
     }
 
     final base = DefaultTextStyle.of(context).style;
@@ -284,7 +313,8 @@ class _CoucheCarteTaamaState extends State<CoucheCarteTaama> {
 
   List<_Place> _selectionner(
       MapCamera camera, LatLngBounds zone, double palier, TextScaler echelle,
-      TextStyle base, DensiteEtiquettes densite, Set<CategorieRepere> masques) {
+      TextStyle base, DensiteEtiquettes densite, Set<CategorieRepere> masques,
+      QuartiersMasques quartiersMasques) {
     // Rectangles mesurés au palier (≤ zoom réel) : à l'écran les étiquettes
     // ne peuvent que s'écarter, jamais se rapprocher.
     final occupes = <Rect>[];
@@ -294,6 +324,11 @@ class _CoucheCarteTaamaState extends State<CoucheCarteTaama> {
       if (places.length >= densite.plafond * 4) break;
       if (palier < c.zoomMin || !zone.contains(c.point)) continue;
       if (c.quartier != null && !c.quartier!.principal && !densite.sousQuartiers) continue;
+      if (c.quartier != null &&
+          (quartiersMasques == QuartiersMasques.tous ||
+              (quartiersMasques == QuartiersMasques.principaux && c.quartier!.principal))) {
+        continue;
+      }
       if (c.repere != null &&
           (c.importance > densite.importanceMax || masques.contains(c.repere!.categorie))) {
         continue;

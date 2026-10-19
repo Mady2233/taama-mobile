@@ -5,7 +5,8 @@
 ///     --dart-define=MAP_TILES_LIGHT=https://…/{z}/{x}/{y}.png?key=… \
 ///     --dart-define=MAP_TILES_DARK=https://…/{z}/{x}/{y}.png?key=… \
 ///     --dart-define="CARTE_ATTRIBUTION=© MapTiler © OpenStreetMap contributors" \
-///     --dart-define=CARTE_REPERES_FOND=pharmacie,banque
+///     --dart-define=CARTE_REPERES_FOND=pharmacie,banque \
+///     --dart-define=CARTE_QUARTIERS_FOND=tous
 ///
 /// Sans adresse de tuiles : aucune requête, la carte affiche « Carte
 /// indisponible pour le moment ». Une release sans ces valeurs est refusée
@@ -27,6 +28,11 @@ class CarteConfig {
   /// virgules (noms de CategorieRepere : pharmacie, banque…). La couche de
   /// repères Taama ne les répète pas.
   static const String reperesDuFond = String.fromEnvironment('CARTE_REPERES_FOND');
+
+  /// Noms de quartiers que le fond dessine déjà : « aucun » (défaut),
+  /// « principaux » ou « tous ». La couche Taama ne les répète pas.
+  static const String quartiersDuFond =
+      String.fromEnvironment('CARTE_QUARTIERS_FOND', defaultValue: 'aucun');
 
   static String tuiles({required bool nuit}) => nuit ? tuilesNuit : tuilesJour;
 

@@ -43,6 +43,7 @@ List<(String, Rect)> _etiquettes(WidgetTester t) {
 }
 
 void main() {
+  mainQuartiersDuFond();
   group('categoriesDuFond', () {
     test('noms séparés par des virgules, espaces tolérés', () {
       expect(categoriesDuFond('pharmacie, banque'),
@@ -106,5 +107,53 @@ void main() {
   testWidgets('sous le zoom 12 : aucune étiquette', (t) async {
     await _carte(t, const CoucheCarteTaama(), zoom: 11);
     expect(_etiquettes(t), isEmpty);
+  });
+}
+
+void mainQuartiersDuFond() {
+  group('quartiersDuFond', () {
+    test('valeurs reconnues', () {
+      expect(quartiersDuFond('tous'), QuartiersMasques.tous);
+      expect(quartiersDuFond(' principaux '), QuartiersMasques.principaux);
+    });
+    test('vide ou inconnu : aucun, jamais une erreur', () {
+      expect(quartiersDuFond(''), QuartiersMasques.aucun);
+      expect(quartiersDuFond('TOUS?'), QuartiersMasques.aucun);
+    });
+  });
+
+  final grands = {for (final q in quartiersBamako.where((q) => q.principal)) q.nom.toUpperCase()};
+  final tous = {for (final q in quartiersBamako) q.nom.toUpperCase()};
+
+  testWidgets('« tous » : aucun nom de quartier, repères toujours affichés', (t) async {
+    await _carte(t, const CoucheCarteTaama(reperesMasques: {}, quartiersMasques: QuartiersMasques.tous));
+    final noms = _etiquettes(t).map((e) => e.$1).toList();
+    expect(noms.where(tous.contains), isEmpty);
+    expect(noms, isNotEmpty, reason: 'les repères restent');
+  });
+
+  testWidgets('« principaux » : grands quartiers masqués, sous-quartiers gardés', (t) async {
+    // Même vue, sans masquage : elle doit montrer grands ET sous-quartiers,
+    // sinon le test ne prouverait rien.
+    const vue = 14.2;
+    await _carte(t, const CoucheCarteTaama(
+        reperesMasques: {}, quartiersMasques: QuartiersMasques.aucun), zoom: vue);
+    final avant = _etiquettes(t).map((e) => e.$1).toSet();
+    expect(avant.where(grands.contains), isNotEmpty, reason: 'précondition : un grand quartier visible');
+    final sousAvant = avant.where((n) => tous.contains(n) && !grands.contains(n)).toSet();
+
+    await _carte(t, const CoucheCarteTaama(
+        reperesMasques: {}, quartiersMasques: QuartiersMasques.principaux), zoom: vue);
+    final apres = _etiquettes(t).map((e) => e.$1).toSet();
+    expect(apres.where(grands.contains), isEmpty);
+    if (sousAvant.isNotEmpty) {
+      expect(apres.where((n) => tous.contains(n) && !grands.contains(n)), isNotEmpty,
+          reason: 'les sous-quartiers restent');
+    }
+  });
+
+  testWidgets('« aucun » : les quartiers restent affichés', (t) async {
+    await _carte(t, const CoucheCarteTaama(reperesMasques: {}, quartiersMasques: QuartiersMasques.aucun));
+    expect(_etiquettes(t).map((e) => e.$1).where(tous.contains), isNotEmpty);
   });
 }
