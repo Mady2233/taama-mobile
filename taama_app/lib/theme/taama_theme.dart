@@ -81,6 +81,39 @@ class TaamaShadows {
   ];
 }
 
+/// Polices de la v4 (accueil). Si elles ne sont pas encore déclarées dans
+/// pubspec.yaml, Flutter retombe sans erreur sur la police par défaut.
+class TaamaFonts {
+  TaamaFonts._();
+  static const String display = 'Sora'; // titres
+  static const String body = 'Manrope'; // texte courant
+}
+
+/// Styles de texte partagés : jamais de couleur ou de police en dur dans
+/// les écrans.
+class TaamaText {
+  TaamaText._();
+
+  static const TextStyle title = TextStyle(
+    fontFamily: TaamaFonts.display,
+    fontWeight: FontWeight.w800,
+    color: TaamaColors.textPrimary,
+    letterSpacing: -0.4,
+  );
+
+  static const TextStyle body = TextStyle(
+    fontFamily: TaamaFonts.body,
+    fontWeight: FontWeight.w600,
+    color: TaamaColors.textPrimary,
+  );
+
+  static const TextStyle muted = TextStyle(
+    fontFamily: TaamaFonts.body,
+    fontWeight: FontWeight.w700,
+    color: TaamaColors.textSecondary,
+  );
+}
+
 class TaamaTheme {
   TaamaTheme._();
 

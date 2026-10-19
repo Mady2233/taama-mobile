@@ -1,15 +1,29 @@
 // lib/screens/home/home_page.dart
 //
 // Pont entre les services/API existants et le widget purement
-// présentationnel HomeScreen v3 (voir home_screen.dart) — remplace
-// l'ancien EcranCarte comme contenu de l'onglet Accueil
-// (accueil_screen.dart). L'ancien écran (home_screen_legacy.dart) a été
-// supprimé : il reste consultable dans l'historique git.
+// présentationnel HomeScreen v4 (voir home_screen.dart) — contenu de
+// l'onglet Accueil (accueil_screen.dart).
+//
+// Changements v4 :
+// - chauffeurs proches rafraîchis toutes les 20 s, en pause quand l'app
+//   passe en arrière-plan (le glissement des marqueurs a besoin de mises à
+//   jour régulières) ; jamais deux requêtes en parallèle ;
+// - lecture JSON défensive (une entrée mal formée est ignorée, pas de crash) ;
+// - photo de profil acceptée uniquement en https ;
+// - durées OSRM des favoris calculées en parallèle ;
+// - dialogue « Nouvelle adresse » : contrôleurs libérés, longueurs limitées,
+//   message si l'enregistrement échoue ;
+// - solde rechargé si le paiement est réactivé à chaud ;
+// - logs uniquement en debug.
 
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../carte/fond_carte.dart';
 import '../../services/api_service.dart';
 import '../../services/config_app.dart';
 import '../../services/routing_service.dart';
@@ -20,10 +34,18 @@ import '../recherche_screen.dart';
 import '../resultats_recherche_screen.dart';
 import 'home_screen.dart';
 
-/// Durée de validité du cache client sur les temps de trajet OSRM des
-/// suggestions — évite un appel OSRM par ouverture de l'accueil, sans
-/// jamais montrer une durée trop vieille pour être pertinente.
+/// Validité du cache des temps de trajet OSRM des favoris.
 const Duration _dureeCacheOsrm = Duration(minutes: 5);
+
+/// Fréquence de rafraîchissement des chauffeurs proches (écran visible).
+const Duration _intervalleConducteurs = Duration(seconds: 20);
+
+const int _longueurMaxLibelle = 40;
+const int _longueurMaxAdresse = 200;
+
+void _journal(String message) {
+  if (kDebugMode) debugPrint('[HomePage] $message');
+}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -40,25 +62,69 @@ class _EntreeCacheDuree {
   bool get expiree => DateTime.now().difference(calculeeLe) > _dureeCacheOsrm;
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String? _prenom;
-  // ⚠️ Aucune source actuelle (pas de reverse-geocoding dans l'app) — voir
-  // rapport. HomeScreen gère déjà null proprement (ligne masquée).
+  // ⚠️ Aucune source actuelle (pas de reverse-geocoding) : HomeScreen
+  // affiche « Ma position » quand c'est null.
   final String? _quartier = null;
   int _soldeFcfa = 0;
   bool _chargementConducteurs = true;
-  List<ConducteurProche> _conducteurs = [];
-  List<SuggestionDestination> _suggestions = [];
+  bool _requeteConducteursEnCours = false;
+  List<ConducteurProche> _conducteurs = const [];
+  List<SuggestionDestination> _suggestions = const [];
   LatLng? _positionClient;
+  Timer? _minuteurConducteurs;
 
   final Map<String, _EntreeCacheDuree> _cacheDurees = {};
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    ConfigApp.paiementActif.addListener(_surChangementPaiement);
     _chargerProfil();
     _chargerSolde();
     _initialiserPositionPuisDependances();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    ConfigApp.paiementActif.removeListener(_surChangementPaiement);
+    _arreterRafraichissement();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState etat) {
+    switch (etat) {
+      case AppLifecycleState.resumed:
+        _chargerConducteursProches(silencieux: true);
+        _demarrerRafraichissement();
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _arreterRafraichissement();
+      case AppLifecycleState.inactive:
+        break;
+    }
+  }
+
+  void _demarrerRafraichissement() {
+    _minuteurConducteurs?.cancel();
+    _minuteurConducteurs = Timer.periodic(
+      _intervalleConducteurs,
+      (_) => _chargerConducteursProches(silencieux: true),
+    );
+  }
+
+  void _arreterRafraichissement() {
+    _minuteurConducteurs?.cancel();
+    _minuteurConducteurs = null;
+  }
+
+  void _surChangementPaiement() {
+    if (ConfigApp.paiementActif.value) _chargerSolde();
   }
 
   // ─── Chargement des données ───
@@ -67,9 +133,10 @@ class _HomePageState extends State<HomePage> {
     try {
       final profil = await ApiService.monProfil();
       if (!mounted) return;
-      setState(() => _prenom = (profil['first_name'] as String?)?.trim());
+      final prenom = (profil['first_name'] as String?)?.trim();
+      setState(() => _prenom = (prenom == null || prenom.isEmpty) ? null : prenom);
     } catch (e) {
-      debugPrint('[HomePage] Erreur chargement profil : $e');
+      _journal('Erreur chargement profil : $e');
     }
   }
 
@@ -81,21 +148,22 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
       setState(() => _soldeFcfa = solde);
     } catch (e) {
-      debugPrint('[HomePage] Erreur chargement solde : $e');
+      _journal('Erreur chargement solde : $e');
     }
   }
 
-  /// Position d'abord (nécessaire pour les conducteurs proches ET les
-  /// durées OSRM des suggestions), puis tout ce qui en dépend.
+  /// Position d'abord (nécessaire aux chauffeurs proches ET aux durées OSRM),
+  /// puis tout ce qui en dépend, puis le rafraîchissement périodique.
   Future<void> _initialiserPositionPuisDependances() async {
     await _obtenirPosition();
     await Future.wait([
       _chargerConducteursProches(),
       _chargerSuggestions(),
     ]);
+    if (mounted) _demarrerRafraichissement();
   }
 
-  Future<void> _obtenirPosition({bool forcer = false}) async {
+  Future<void> _obtenirPosition() async {
     try {
       if (!await Geolocator.isLocationServiceEnabled()) return;
       var permission = await Geolocator.checkPermission();
@@ -106,20 +174,20 @@ class _HomePageState extends State<HomePage> {
       if (permission == LocationPermission.deniedForever) return;
 
       final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
+        ),
       );
       if (!mounted) return;
-      setState(() {
-        _positionClient = LatLng(position.latitude, position.longitude);
-      });
+      setState(() => _positionClient = LatLng(position.latitude, position.longitude));
     } catch (e) {
-      debugPrint('[HomePage] Erreur position GPS : $e');
+      _journal('Erreur position GPS : $e');
     }
   }
 
-  /// ⚠️ Même limite que v2 : le backend n'expose pas de "type" d'adresse
-  /// (domicile/travail), seulement un libellé libre — déduction
-  /// heuristique, cosmétique uniquement (choix de l'icône).
+  /// ⚠️ Le backend n'expose pas de « type » d'adresse, seulement un libellé
+  /// libre : déduction cosmétique (choix de l'icône) uniquement.
   TypeAdresse _deduireType(String libelle) {
     final l = libelle.toLowerCase();
     if (l.contains('domicile') || l.contains('maison')) return TypeAdresse.domicile;
@@ -132,31 +200,30 @@ class _HomePageState extends State<HomePage> {
       final brut = await ApiService.mesAdressesFavorites();
       if (!mounted) return;
 
-      final suggestions = <SuggestionDestination>[];
-      for (final a in brut) {
-        final map = a as Map<String, dynamic>;
-        final id = map['id'].toString();
-        final libelle = (map['libelle'] ?? '').toString();
+      final entrees = brut.whereType<Map>().toList(growable: false);
+      // Durées OSRM en parallèle (avant : une à une, lent avec 5 favoris).
+      final suggestions = await Future.wait(entrees.map((map) async {
+        final id = map['id']?.toString() ?? '';
         final lat = (map['latitude'] as num?)?.toDouble();
         final lng = (map['longitude'] as num?)?.toDouble();
-
-        suggestions.add(SuggestionDestination(
+        final libelle = (map['libelle'] ?? '').toString().trim();
+        return SuggestionDestination(
           id: id,
           libelle: libelle,
           type: _deduireType(libelle),
           dureeMinutes: await _dureeAvecCache(id, lat, lng),
-        ));
-      }
+        );
+      }));
       if (!mounted) return;
-      setState(() => _suggestions = suggestions);
+      setState(() => _suggestions = [
+            for (final s in suggestions)
+              if (s.id.isNotEmpty && s.libelle.isNotEmpty) s,
+          ]);
     } catch (e) {
-      debugPrint('[HomePage] Erreur chargement suggestions : $e');
+      _journal('Erreur chargement suggestions : $e');
     }
   }
 
-  /// Cache 5 min sur les durées OSRM (étape 6 du brief) — un même
-  /// favori ne redéclenche pas d'appel OSRM à chaque ouverture de
-  /// l'accueil dans la fenêtre de validité.
   Future<int?> _dureeAvecCache(String id, double? lat, double? lng) async {
     final position = _positionClient;
     if (lat == null || lng == null || position == null) return null;
@@ -164,39 +231,61 @@ class _HomePageState extends State<HomePage> {
     final entree = _cacheDurees[id];
     if (entree != null && !entree.expiree) return entree.dureeMinutes;
 
-    final duree = await RoutingService.dureeMinutesVers(
-      depart: position,
-      arrivee: LatLng(lat, lng),
-    );
-    _cacheDurees[id] = _EntreeCacheDuree(duree, DateTime.now());
-    return duree;
+    try {
+      final duree = await RoutingService.dureeMinutesVers(
+        depart: position,
+        arrivee: LatLng(lat, lng),
+      );
+      _cacheDurees[id] = _EntreeCacheDuree(duree, DateTime.now());
+      return duree;
+    } catch (e) {
+      _journal('Erreur durée OSRM : $e');
+      return null; // la puce s'affiche sans durée
+    }
   }
 
-  ConducteurProche _conducteurDepuisJson(Map<String, dynamic> c) {
-    final noteBrute = c['note'];
+  static String? _urlHttpsOuNull(Object? valeur) {
+    if (valeur is! String) return null;
+    final uri = Uri.tryParse(valeur);
+    return (uri != null && uri.scheme == 'https' && uri.host.isNotEmpty) ? valeur : null;
+  }
+
+  /// null si l'entrée est inexploitable (pas de coordonnées valides).
+  ConducteurProche? _conducteurDepuisJson(Object? brut) {
+    if (brut is! Map) return null;
+    final id = brut['id']?.toString();
+    final lat = (brut['lat'] as num?)?.toDouble();
+    final lng = (brut['lng'] as num?)?.toDouble();
+    if (id == null || lat == null || lng == null) return null;
+    if (lat.abs() > 90 || lng.abs() > 180) return null;
+
+    final noteBrute = brut['note'];
     return ConducteurProche(
-      id: c['id'].toString(),
-      nomCourt: (c['nom_court'] ?? '').toString(),
-      position: LatLng((c['lat'] as num).toDouble(), (c['lng'] as num).toDouble()),
-      // null si le chauffeur n'a pas (encore) de photo de profil —
-      // PhotoAvatar retombe proprement sur les initiales dans ce cas.
-      urlPhoto: c['photo_profil'] as String?,
+      id: id,
+      nomCourt: (brut['nom_court'] ?? '').toString(),
+      position: LatLng(lat, lng),
+      urlPhoto: _urlHttpsOuNull(brut['photo_profil']),
       note: noteBrute == null ? null : double.tryParse(noteBrute.toString()),
-      modeleVehicule: c['vehicule'] as String?,
-      minutesAvant: c['temps_minutes'] as int?,
-      estMoto: c['type_transport'] == 'Moto',
+      modeleVehicule: brut['vehicule'] as String?,
+      minutesAvant: (brut['temps_minutes'] as num?)?.toInt(),
+      estMoto: brut['type_transport'] == CodesTransport.moto,
     );
   }
 
-  /// Seule donnée réactualisée par le pull-to-refresh de HomeScreen pour
-  /// les conducteurs — réel, l'endpoint existe et fonctionne déjà.
-  Future<void> _chargerConducteursProches() async {
-    if (mounted) setState(() => _chargementConducteurs = true);
+  /// [silencieux] : pas d'indicateur « Recherche… » (rafraîchissement auto),
+  /// pour éviter que la pastille clignote toutes les 20 s.
+  Future<void> _chargerConducteursProches({bool silencieux = false}) async {
+    if (_requeteConducteursEnCours) return;
     final position = _positionClient;
     if (position == null) {
-      if (mounted) setState(() => _chargementConducteurs = false);
+      if (mounted && _chargementConducteurs) {
+        setState(() => _chargementConducteurs = false);
+      }
       return;
     }
+
+    _requeteConducteursEnCours = true;
+    if (!silencieux && mounted) setState(() => _chargementConducteurs = true);
     try {
       final brut = await ApiService.conducteursProches(
         lat: position.latitude,
@@ -204,22 +293,29 @@ class _HomePageState extends State<HomePage> {
       );
       if (!mounted) return;
       setState(() {
-        _conducteurs = brut.map((c) => _conducteurDepuisJson(c as Map<String, dynamic>)).toList();
+        _conducteurs = [
+          for (final c in brut)
+            if (_conducteurDepuisJson(c) case final ConducteurProche conducteur) conducteur,
+        ];
         _chargementConducteurs = false;
       });
     } catch (e) {
-      debugPrint('[HomePage] Erreur chargement conducteurs proches : $e');
+      _journal('Erreur chargement conducteurs proches : $e');
       if (mounted) setState(() => _chargementConducteurs = false);
+    } finally {
+      _requeteConducteursEnCours = false;
     }
   }
 
-  /// onActualiser (étape 4) : "recharge conducteurs + tarifs". Les tarifs
-  /// n'ont aujourd'hui aucune source réelle (endpoint pas encore créé,
-  /// voir ApiService.tarifsMinServices) — rien à recharger de ce côté
-  /// tant qu'il n'existe pas. À décommenter/brancher quand il existera.
+  /// Les tarifs-min n'ont pas encore d'endpoint : seuls les chauffeurs
+  /// sont rechargés. À compléter quand ApiService.tarifsMinServices existera.
   Future<void> _actualiser() async {
     await _chargerConducteursProches();
-    // await _chargerTarifsMin(); // TODO: une fois l'endpoint créé.
+  }
+
+  Future<void> _recentrer() async {
+    await _obtenirPosition();
+    await _chargerConducteursProches(silencieux: true);
   }
 
   // ─── Navigation ───
@@ -246,50 +342,24 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _ajouterAdresse() async {
-    final libelleController = TextEditingController();
-    final adresseController = TextEditingController();
-
-    final confirme = await showDialog<bool>(
+    final saisie = await showDialog<({String libelle, String adresse})>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Nouvelle adresse'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: libelleController,
-              decoration: const InputDecoration(labelText: 'Libellé (ex. Domicile)'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: adresseController,
-              decoration: const InputDecoration(labelText: 'Adresse'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Annuler'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Enregistrer'),
-          ),
-        ],
-      ),
+      builder: (_) => const _DialogueNouvelleAdresse(),
     );
-    if (confirme != true || !mounted) return;
-
-    final libelle = libelleController.text.trim();
-    final adresse = adresseController.text.trim();
-    if (libelle.isEmpty || adresse.isEmpty) return;
+    if (saisie == null || !mounted) return;
 
     try {
-      await ApiService.enregistrerAdresseFavorite(libelle: libelle, adresse: adresse);
+      await ApiService.enregistrerAdresseFavorite(
+        libelle: saisie.libelle,
+        adresse: saisie.adresse,
+      );
       await _chargerSuggestions();
     } catch (e) {
-      debugPrint('[HomePage] Erreur enregistrement adresse favorite : $e');
+      _journal('Erreur enregistrement adresse favorite : $e');
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text("Impossible d'enregistrer l'adresse. Réessayez.")),
+      );
     }
   }
 
@@ -302,21 +372,27 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _ecran(BuildContext context, bool paiementActif) {
+    final nuit = Theme.of(context).brightness == Brightness.dark;
     return HomeScreen(
       paiementActif: paiementActif,
+      // Mêmes paramètres que taama_map.dart : `nuit` suit le thème. Pas
+      // d'`apercu` : cette carte se déplace et zoome, la rangée de tuiles
+      // préchargée autour de la vue est utile (aperçu fixe = apercu: true).
+      coucheFond: FondCarteTaama(nuit: nuit),
+      nuit: nuit,
       prenom: _prenom,
       quartier: _quartier,
-      // ⚠️ Aucune source actuelle, voir rapport.
+      // ⚠️ Aucune source actuelle : initiale du prénom affichée.
       urlPhotoProfil: null,
       soldeFcfa: _soldeFcfa,
-      // ⚠️ Endpoint tarifs-min pas encore créé (étape 5) — jamais de prix
-      // inventé, la section "Choisir un service" reste vide en attendant.
+      // ⚠️ Endpoint tarifs-min pas encore créé : tuiles sans prix, jamais
+      // de prix inventé.
       services: const [],
       suggestions: _suggestions,
       conducteursProches: _conducteurs,
       positionClient: _positionClient,
       chargementConducteurs: _chargementConducteurs,
-      // ⚠️ Endpoint dernière course pas encore créé (étape 5).
+      // ⚠️ Endpoint dernière course pas encore créé : carte masquée.
       derniereCourse: null,
       onChercherDestination: () => _ouvrirRecherche(),
       onSuggestion: (s) => _ouvrirDemandeInstantanee(s.libelle),
@@ -327,6 +403,8 @@ class _HomePageState extends State<HomePage> {
         context,
         MaterialPageRoute(builder: (_) => const EcranCourier()),
       ),
+      // Inaccessible en mode gratuit : HomeScreen n'affiche le solde que si
+      // paiementActif.
       onPortefeuille: () => Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => const EcranPortefeuille(estChauffeur: false)),
@@ -335,21 +413,82 @@ class _HomePageState extends State<HomePage> {
         context,
         MaterialPageRoute(builder: (_) => const EcranProfil()),
       ),
-      // ⚠️ _BandeCarte (home_screen.dart) est un StatelessWidget sans
-      // MapController exposé — FlutterMap.initialCenter n'est appliqué
-      // qu'à la création du widget, pas de façon réactive. Cette méthode
-      // rafraîchit bien _positionClient, mais un recentrage visuel garanti
-      // demanderait d'exposer un MapController depuis home_screen.dart
-      // (fichier fourni, copié tel quel — hors périmètre de ce lot).
-      onRecentrerCarte: () => _obtenirPosition(forcer: true),
-      // Jamais invoqué tant que derniereCourse est null (HomeScreen ne
-      // montre la carte "refaire" que si non-null) — câblé pour quand
-      // l'endpoint existera.
+      onRecentrerCarte: _recentrer,
       onRefaireCourse: null,
-      // ⚠️ Aucune fonctionnalité de dictée vocale dans l'app — optionnel,
-      // laissé à null plutôt que simulé.
       onDicterDestination: null,
       onActualiser: _actualiser,
+    );
+  }
+}
+
+/// Possède ses propres contrôleurs : ils sont libérés avec le dialogue
+/// (les libérer juste après showDialog plante pendant l'animation de sortie).
+class _DialogueNouvelleAdresse extends StatefulWidget {
+  const _DialogueNouvelleAdresse();
+
+  @override
+  State<_DialogueNouvelleAdresse> createState() => _DialogueNouvelleAdresseState();
+}
+
+class _DialogueNouvelleAdresseState extends State<_DialogueNouvelleAdresse> {
+  final _formulaire = GlobalKey<FormState>();
+  final _libelle = TextEditingController();
+  final _adresse = TextEditingController();
+
+  @override
+  void dispose() {
+    _libelle.dispose();
+    _adresse.dispose();
+    super.dispose();
+  }
+
+  String? _obligatoire(String? v) =>
+      (v == null || v.trim().isEmpty) ? 'Champ obligatoire' : null;
+
+  void _valider() {
+    if (!(_formulaire.currentState?.validate() ?? false)) return;
+    Navigator.pop(context, (libelle: _libelle.text.trim(), adresse: _adresse.text.trim()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Nouvelle adresse'),
+      content: Form(
+        key: _formulaire,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _libelle,
+              maxLength: _longueurMaxLibelle,
+              textInputAction: TextInputAction.next,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(labelText: 'Libellé (ex. Maison)'),
+              validator: _obligatoire,
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _adresse,
+              maxLength: _longueurMaxAdresse,
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(labelText: 'Adresse'),
+              validator: _obligatoire,
+              onFieldSubmitted: (_) => _valider(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler'),
+        ),
+        FilledButton(
+          onPressed: _valider,
+          child: const Text('Enregistrer'),
+        ),
+      ],
     );
   }
 }

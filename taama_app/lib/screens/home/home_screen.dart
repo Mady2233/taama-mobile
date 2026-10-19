@@ -1,487 +1,534 @@
 // lib/screens/home/home_screen.dart
 //
-// Accueil client Taama — v3 (maquette validée).
+// HomeScreen v4 — écran d'accueil client, PUREMENT présentationnel :
+// aucune requête ici, tout arrive par le constructeur (voir home_page.dart).
 //
-// Widget purement présentationnel : aucune logique réseau, aucun état global,
-// aucune valeur en dur. Tout arrive par les paramètres, toute action remonte
-// par un callback. La logique (appels API, cache, permissions) vit dans
-// home_page.dart.
+// Nouveautés v4 (maquette « Taama accueil client », écran 1) :
+// - carte plus grande, chauffeurs qui glissent, position qui pulse ;
+// - carte verrouillée plein nord (plus de texte à l'envers) ;
+// - MapController interne : le recentrage fonctionne vraiment ;
+// - feuille du bas qui monte + apparition en cascade des blocs ;
+// - exemples de destination qui défilent (tirés des favoris réels) ;
+// - mode gratuit : aucun solde/portefeuille, bandeau « espèces ».
+// Toutes les animations respectent « réduire les animations ».
+
+import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../theme/taama_theme.dart';
 import '../../utils/format.dart';
-import '../../widgets/photo_avatar.dart';
 import '../../widgets/couche_carte_taama.dart';
-import '../../carte/fond_carte.dart';
+import '../../widgets/photo_avatar.dart';
+import '../../widgets/taama/anime_en_boucle.dart';
+import '../../widgets/taama/couche_conducteurs_animes.dart';
+import '../../widgets/taama/pulsation_position.dart';
+import '../../widgets/taama/tuile_service.dart';
+import 'home_models.dart';
 
-// ---------------------------------------------------------------------------
-// Modèles d'affichage
-// ---------------------------------------------------------------------------
+export 'home_models.dart';
 
-enum TypeAdresse { domicile, travail, autre }
+const LatLng _centreBamako = LatLng(12.6392, -8.0029);
+const double _zoomInitial = 15;
 
-/// Raccourci proposé sous le champ de recherche.
-/// [dureeMinutes] vient du serveur (OSRM) ; null → aucune durée affichée.
-class SuggestionDestination {
-  const SuggestionDestination({
-    required this.id,
-    required this.libelle,
-    this.dureeMinutes,
-    this.type = TypeAdresse.autre,
-    this.miseEnAvant = false,
-  });
+/// La carte descend de cette hauteur SOUS l'arrondi de la feuille du bas.
+const double _carteSousFeuille = 40;
 
-  final String id;
-  final String libelle;
-  final int? dureeMinutes;
-  final TypeAdresse type;
+/// Attribution OSM/MapTiler : bas gauche, juste au-dessus de la feuille,
+/// jamais recouverte (obligation de licence). La même valeur est passée à
+/// CoucheCarteTaama pour qu'aucune étiquette de quartier ne s'y pose.
+const EdgeInsets _margeAttribution =
+    EdgeInsets.fromLTRB(6, 6, 6, _carteSousFeuille + 6);
 
-  /// Suggestion la plus probable à cette heure. Une seule à la fois.
-  final bool miseEnAvant;
-}
-
-/// Chauffeur affiché sur la bande carte.
-/// Le backend ne renvoie que prénom + initiale : jamais le nom complet
-/// ni le téléphone tant que la course n'est pas acceptée.
-class ConducteurProche {
-  const ConducteurProche({
-    required this.id,
-    required this.nomCourt,
-    required this.position,
-    this.urlPhoto,
-    this.note,
-    this.modeleVehicule,
-    this.minutesAvant,
-    this.estMoto = false,
-  });
-
-  final String id;
-  final String nomCourt;
-  final LatLng position;
-  final String? urlPhoto;
-  final double? note;
-  final String? modeleVehicule;
-  final int? minutesAvant;
-  final bool estMoto;
-}
-
-/// Service commandable, avec son prix plancher calculé côté serveur.
-class ServiceCourse {
-  const ServiceCourse({
-    required this.code,
-    required this.nom,
-    required this.argument,
-    required this.prixMinFcfa,
-    this.climatise = false,
-    this.disponible = true,
-    this.miseEnAvant = false,
-  });
-
-  final String code;
-  final String nom;
-  final String argument;
-  final int prixMinFcfa;
-  final bool climatise;
-  final bool disponible;
-  final bool miseEnAvant;
-}
-
-/// Dernière course terminée, pour la recommander en un tap.
-class DerniereCourse {
-  const DerniereCourse({
-    required this.id,
-    required this.depart,
-    required this.arrivee,
-    required this.prixFcfa,
-  });
-
-  final String id;
-  final String depart;
-  final String arrivee;
-  final int prixFcfa;
-}
-
-// ---------------------------------------------------------------------------
-// Écran
-// ---------------------------------------------------------------------------
-
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
-    required this.prenom,
-    required this.quartier,
-    required this.soldeFcfa,
-    required this.services,
-    required this.suggestions,
-    required this.conducteursProches,
+    required this.paiementActif,
+    required this.coucheFond,
+    this.nuit = false,
+    this.prenom,
+    this.quartier,
+    this.urlPhotoProfil,
+    this.soldeFcfa = 0,
+    this.services = const [],
+    this.suggestions = const [],
+    this.conducteursProches = const [],
+    this.positionClient,
+    this.chargementConducteurs = false,
+    this.derniereCourse,
     required this.onChercherDestination,
     required this.onSuggestion,
     required this.onAjouterAdresse,
     required this.onService,
     required this.onReserver,
     required this.onColis,
-    required this.onPortefeuille,
-    required this.onProfil,
-    required this.onRecentrerCarte,
-    required this.onActualiser,
-    this.positionClient,
-    this.urlPhotoProfil,
-    this.derniereCourse,
+    this.onPortefeuille,
+    this.onProfil,
+    this.onRecentrerCarte,
     this.onRefaireCourse,
     this.onDicterDestination,
-    this.chargementConducteurs = false,
-    this.paiementActif = false,
+    this.onActualiser,
   });
 
-  /// Prénom seul. Vide ou null → salutation neutre (jamais le numéro).
-  final String? prenom;
+  final bool paiementActif;
 
-  /// Quartier détecté. Null → on n'affiche pas la ligne.
+  /// Couche de tuiles seule, ex. `FondCarteTaama(...)`. Les quartiers
+  /// (CoucheCarteTaama) et l'attribution sont ajoutés ici, dans le bon ordre.
+  final Widget coucheFond;
+
+  /// Étiquettes et attribution en couleurs de nuit.
+  final bool nuit;
+
+  final String? prenom;
   final String? quartier;
   final String? urlPhotoProfil;
   final int soldeFcfa;
-
-  final List<ServiceCourse> services;
+  final List<ServiceAccueil> services;
   final List<SuggestionDestination> suggestions;
   final List<ConducteurProche> conducteursProches;
   final LatLng? positionClient;
   final bool chargementConducteurs;
-
-  /// Paiement dans l'app actif (lu sur le serveur, voir ConfigApp). Faux
-  /// (mode gratuit) : ni solde, ni portefeuille, ni « Recharger ».
-  final bool paiementActif;
   final DerniereCourse? derniereCourse;
 
   final VoidCallback onChercherDestination;
   final ValueChanged<SuggestionDestination> onSuggestion;
   final VoidCallback onAjouterAdresse;
-  final ValueChanged<ServiceCourse> onService;
+  final ValueChanged<ServiceAccueil> onService;
   final VoidCallback onReserver;
   final VoidCallback onColis;
-  final VoidCallback onPortefeuille;
-  final VoidCallback onProfil;
-  final VoidCallback onRecentrerCarte;
-  final VoidCallback? onRefaireCourse;
+  final VoidCallback? onPortefeuille;
+  final VoidCallback? onProfil;
+  final Future<void> Function()? onRecentrerCarte;
+  final ValueChanged<DerniereCourse>? onRefaireCourse;
   final VoidCallback? onDicterDestination;
-  final Future<void> Function() onActualiser;
+  final Future<void> Function()? onActualiser;
 
-  ConducteurProche? get _plusProche {
-    if (conducteursProches.isEmpty) return null;
-    final tries = [...conducteursProches]..sort((a, b) {
-        final ma = a.minutesAvant ?? 9999;
-        final mb = b.minutesAvant ?? 9999;
-        return ma.compareTo(mb);
-      });
-    return tries.first;
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+  final MapController _carte = MapController();
+  bool _cartePrete = false;
+
+  late final AnimationController _entree =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1100));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_entree.status == AnimationStatus.dismissed) {
+      if (MediaQuery.disableAnimationsOf(context)) {
+        _entree.value = 1;
+      } else {
+        _entree.forward();
+      }
+    }
   }
 
   @override
+  void didUpdateWidget(covariant HomeScreen ancien) {
+    super.didUpdateWidget(ancien);
+    final avant = ancien.positionClient;
+    final apres = widget.positionClient;
+    if (apres == null) return;
+    final aBouge = avant == null ||
+        const Distance().as(LengthUnit.Meter, avant, apres) > 50;
+    if (aBouge) {
+      // Jamais de move() pendant un build : on attend la fin de la frame.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _deplacerCarte(apres);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _entree.dispose();
+    _carte.dispose();
+    super.dispose();
+  }
+
+  void _deplacerCarte(LatLng point) {
+    if (!_cartePrete) return;
+    _carte.move(point, _carte.camera.zoom);
+  }
+
+  Future<void> _recentrer() async {
+    await widget.onRecentrerCarte?.call();
+    if (!mounted) return;
+    final p = widget.positionClient;
+    if (p != null) _deplacerCarte(p);
+  }
+
+  ServiceAccueil _service(String code, String libelle) =>
+      widget.services.firstWhere(
+        (s) => s.code == code,
+        orElse: () => ServiceAccueil(code: code, libelle: libelle),
+      );
+
+  /// Fondu + montée de 16 px, déclenché à [debut] (0..1) de l'entrée.
+  Widget _apparition(double debut, Widget enfant) {
+    final intervalle = Interval(debut, math.min(1.0, debut + 0.45), curve: Curves.easeOutCubic);
+    return AnimatedBuilder(
+      animation: _entree,
+      child: enfant,
+      builder: (context, child) {
+        final t = intervalle.transform(_entree.value);
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(offset: Offset(0, (1 - t) * 16), child: child),
+        );
+      },
+    );
+  }
+
+  // ─── Construction ───
+
+  @override
   Widget build(BuildContext context) {
-    // Barre de statut en icônes claires : l'en-tête (_EnTete) est en
-    // TaamaColors.navy, un fond sombre où des icônes de statut foncées
-    // (style par défaut) seraient illisibles.
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
-      child: Scaffold(
-      backgroundColor: TaamaColors.background,
-      body: RefreshIndicator(
-        color: TaamaColors.primary,
-        edgeOffset: 200,
-        onRefresh: onActualiser,
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            _EnTete(
-              prenom: prenom,
-              quartier: quartier,
-              urlPhotoProfil: urlPhotoProfil,
-              soldeFcfa: soldeFcfa,
-              paiementActif: paiementActif,
-              suggestions: suggestions,
-              onProfil: onProfil,
-              onPortefeuille: onPortefeuille,
-              onChercherDestination: onChercherDestination,
-              onSuggestion: onSuggestion,
-              onAjouterAdresse: onAjouterAdresse,
-              onDicterDestination: onDicterDestination,
-            ),
-            _BandeConfiance(paiementActif: paiementActif),
-            _BandeCarte(
-              positionClient: positionClient,
-              conducteurs: conducteursProches,
-              plusProche: _plusProche,
-              chargement: chargementConducteurs,
-              onRecentrer: onRecentrerCarte,
-            ),
-            Padding(
-              padding: const EdgeInsets.all(TaamaSpacing.lg),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (services.isNotEmpty) ...[
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Choisir un service',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: TaamaColors.textPrimary,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          'Prix annoncé avant le départ',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: TaamaColors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: TaamaSpacing.md),
-                    for (final s in services) ...[
-                      _LigneService(service: s, onTap: () => onService(s)),
-                      const SizedBox(height: 10),
-                    ],
-                    const SizedBox(height: TaamaSpacing.xs),
-                  ],
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _ActionSecondaire(
-                          icone: Icons.event_available_rounded,
-                          couleur: TaamaColors.success,
-                          libelle: 'Réserver',
-                          onTap: onReserver,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _ActionSecondaire(
-                          icone: Icons.inventory_2_rounded,
-                          couleur: TaamaColors.warning,
-                          libelle: 'Colis',
-                          onTap: onColis,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (derniereCourse != null) ...[
-                    const SizedBox(height: TaamaSpacing.lg),
-                    _CarteDerniereCourse(
-                      course: derniereCourse!,
-                      onTap: onRefaireCourse,
-                    ),
-                  ],
-                  if (paiementActif && soldeFcfa <= 0) ...[
-                    const SizedBox(height: TaamaSpacing.lg),
-                    _BandeauPortefeuille(onRecharger: onPortefeuille),
-                  ],
-                ],
+    return ColoredBox(
+      color: TaamaColors.background,
+      child: LayoutBuilder(
+        builder: (context, contraintes) {
+          final hauteurCarte = contraintes.maxHeight * 0.50;
+          return Stack(
+            children: [
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: hauteurCarte + _carteSousFeuille,
+                child: _carteWidget(),
               ),
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: _barreHaute(),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 16,
+                right: 16,
+                // Au-dessus de l'attribution (bas gauche), jamais dessus.
+                top: hauteurCarte - 86,
+                child: _barreBasCarte(),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                top: hauteurCarte,
+                child: _feuilleAnimee(),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _carteWidget() {
+    final position = widget.positionClient;
+    return FlutterMap(
+      mapController: _carte,
+      options: MapOptions(
+        initialCenter: position ?? _centreBamako,
+        initialZoom: _zoomInitial,
+        // Plein nord : la rotation retournait les noms de rue (tuiles raster).
+        interactionOptions: const InteractionOptions(
+          flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+        ),
+        onMapReady: () {
+          _cartePrete = true;
+          final p = widget.positionClient;
+          if (p != null) _deplacerCarte(p);
+        },
+      ),
+      children: [
+        widget.coucheFond,
+        CoucheCarteTaama(
+          nuit: widget.nuit,
+          reserves: const [
+            ZoneReservee.attribution(
+              alignement: Alignment.bottomLeft,
+              marge: _margeAttribution,
             ),
           ],
         ),
-      ),
+        CoucheConducteursAnimes(conducteurs: widget.conducteursProches),
+        if (position != null)
+          MarkerLayer(
+            markers: [
+              Marker(
+                point: position,
+                width: 76,
+                height: 76,
+                child: const PulsationPosition(),
+              ),
+            ],
+          ),
+        // TOUJOURS en dernier : rien ne doit la recouvrir.
+        AttributionCarteTaama(
+          nuit: widget.nuit,
+          alignement: Alignment.bottomLeft,
+          marge: _margeAttribution,
+        ),
+      ],
+    );
+  }
+
+  Widget _barreHaute() {
+    return Row(
+      children: [
+        _Avatar(prenom: widget.prenom, urlPhoto: widget.urlPhotoProfil, onTap: widget.onProfil),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _PiluleDepart(
+            libelle: widget.quartier ?? 'Ma position',
+            onTap: widget.onChercherDestination,
+          ),
+        ),
+        if (widget.paiementActif) ...[
+          const SizedBox(width: 10),
+          _PastilleSolde(soldeFcfa: widget.soldeFcfa, onTap: widget.onPortefeuille),
+        ],
+      ],
+    );
+  }
+
+  Widget _barreBasCarte() {
+    return Row(
+      children: [
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: _PastilleProximite(
+              chargement: widget.chargementConducteurs,
+              nombre: widget.conducteursProches.length,
+              onTap: widget.onActualiser,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        _BoutonRond(
+          icone: Icons.near_me_rounded,
+          info: 'Recentrer sur ma position',
+          onPressed: widget.onRecentrerCarte == null ? null : _recentrer,
+        ),
+      ],
+    );
+  }
+
+  Widget _feuilleAnimee() {
+    final montee = const Interval(0, 0.55, curve: Curves.easeOutCubic);
+    return AnimatedBuilder(
+      animation: _entree,
+      child: _feuille(),
+      builder: (context, child) => Transform.translate(
+        offset: Offset(0, (1 - montee.transform(_entree.value)) * 140),
+        child: child,
       ),
     );
   }
-}
 
-// ---------------------------------------------------------------------------
-// En-tête bleu nuit
-// ---------------------------------------------------------------------------
+  Widget _feuille() {
+    final exemples = [for (final s in widget.suggestions) s.libelle];
+    final derniere = widget.derniereCourse;
 
-class _EnTete extends StatelessWidget {
-  const _EnTete({
-    required this.prenom,
-    required this.quartier,
-    required this.urlPhotoProfil,
-    required this.soldeFcfa,
-    required this.paiementActif,
-    required this.suggestions,
-    required this.onProfil,
-    required this.onPortefeuille,
-    required this.onChercherDestination,
-    required this.onSuggestion,
-    required this.onAjouterAdresse,
-    required this.onDicterDestination,
-  });
-
-  final String? prenom;
-  final String? quartier;
-  final String? urlPhotoProfil;
-  final int soldeFcfa;
-  final bool paiementActif;
-  final List<SuggestionDestination> suggestions;
-  final VoidCallback onProfil;
-  final VoidCallback onPortefeuille;
-  final VoidCallback onChercherDestination;
-  final ValueChanged<SuggestionDestination> onSuggestion;
-  final VoidCallback onAjouterAdresse;
-  final VoidCallback? onDicterDestination;
-
-  String _titre() {
-    final h = DateTime.now().hour;
-    if (h < 12) return 'Où allez-vous\nce matin ?';
-    if (h < 18) return 'Où allez-vous ?';
-    return 'Où allez-vous\nce soir ?';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final nom = (prenom ?? '').trim();
-    final haut = MediaQuery.paddingOf(context).top;
-
-    return Container(
-      width: double.infinity,
-      color: TaamaColors.navy,
-      padding: EdgeInsets.fromLTRB(
-        TaamaSpacing.lg,
-        haut + TaamaSpacing.md,
-        TaamaSpacing.lg,
-        TaamaSpacing.lg,
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+        boxShadow: TaamaShadows.floating,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Semantics(
-                button: true,
-                label: 'Mon compte',
-                child: InkWell(
-                  onTap: onProfil,
-                  borderRadius: BorderRadius.circular(TaamaRadius.md),
-                  child: PhotoAvatar(
-                    nom: nom,
-                    urlPhoto: urlPhotoProfil,
-                    diametre: 42,
-                    forme: BoxShape.rectangle,
-                    couleurFond: TaamaColors.primary,
-                    couleurTexte: TaamaColors.textOnDark,
-                  ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: TaamaColors.border,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(width: TaamaSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      nom.isEmpty ? 'Bonjour' : 'Bonjour, $nom',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: TaamaColors.textOnDark,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (quartier != null && quartier!.isNotEmpty)
-                      Text(
-                        quartier!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: TaamaColors.onNavyMuted,
-                          fontSize: 12,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              if (paiementActif)
-                _PuceSolde(soldeFcfa: soldeFcfa, onTap: onPortefeuille),
-            ],
-          ),
-          const SizedBox(height: TaamaSpacing.xl),
-          Text(
-            _titre(),
-            style: const TextStyle(
-              color: TaamaColors.textOnDark,
-              fontSize: 27,
-              height: 1.15,
-              fontWeight: FontWeight.w800,
             ),
-          ),
-          const SizedBox(height: TaamaSpacing.md),
-          _ChampDestination(
-            onTap: onChercherDestination,
-            onDicter: onDicterDestination,
-          ),
-          if (suggestions.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 34,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
+            const SizedBox(height: 14),
+            _apparition(0.15, _salutation()),
+            const SizedBox(height: 14),
+            _apparition(
+              0.25,
+              Row(
                 children: [
-                  for (final s in suggestions) ...[
-                    _PuceSuggestion(
-                      suggestion: s,
-                      onTap: () => onSuggestion(s),
+                  Expanded(
+                    child: _BarreRecherche(
+                      exemples: exemples,
+                      onTap: widget.onChercherDestination,
+                      onDicter: widget.onDicterDestination,
                     ),
-                    const SizedBox(width: TaamaSpacing.sm),
-                  ],
-                  _PuceAjout(onTap: onAjouterAdresse),
+                  ),
+                  const SizedBox(width: 8),
+                  _BoutonPlusTard(onTap: widget.onReserver),
                 ],
               ),
             ),
+            const SizedBox(height: 14),
+            _apparition(
+              0.35,
+              _LieuxEnregistres(
+                suggestions: widget.suggestions,
+                onSuggestion: widget.onSuggestion,
+                onAjouter: widget.onAjouterAdresse,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _grilleServices(),
+            if (derniere != null && widget.onRefaireCourse != null) ...[
+              const SizedBox(height: 14),
+              _apparition(
+                0.8,
+                _CarteDerniereCourse(
+                  course: derniere,
+                  onTap: () => widget.onRefaireCourse!(derniere),
+                ),
+              ),
+            ],
+            if (!widget.paiementActif) ...[
+              const SizedBox(height: 14),
+              _apparition(0.9, const _BandeauEspeces()),
+            ],
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _salutation() {
+    final prenom = widget.prenom;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          (prenom == null || prenom.isEmpty) ? 'Bonjour' : 'Bonjour $prenom',
+          style: TaamaText.muted.copyWith(fontSize: 13),
+        ),
+        const SizedBox(height: 2),
+        Text('Où allons-nous ?', style: TaamaText.title.copyWith(fontSize: 24)),
+      ],
+    );
+  }
+
+  Widget _grilleServices() {
+    final moto = _service(CodesTransport.moto, 'Moto');
+    final voiture = _service(CodesTransport.voiture, 'Voiture');
+    String? desPrix(ServiceAccueil s) =>
+        s.prixMinFcfa == null ? null : 'dès ${formaterFcfa(s.prixMinFcfa!)}';
+
+    final tuiles = <Widget>[
+      TuileService(
+        icone: Icons.two_wheeler,
+        libelle: moto.libelle,
+        sousTitre: desPrix(moto),
+        miseEnAvant: true,
+        onTap: () => widget.onService(moto),
+      ),
+      TuileService(
+        icone: Icons.directions_car_filled,
+        libelle: voiture.libelle,
+        sousTitre: desPrix(voiture),
+        onTap: () => widget.onService(voiture),
+      ),
+      TuileService(
+        icone: Icons.inventory_2_outlined,
+        libelle: 'Colis',
+        couleurIcone: TaamaColors.primary,
+        onTap: widget.onColis,
+      ),
+      TuileService(
+        icone: Icons.event_outlined,
+        libelle: 'Réserver',
+        onTap: widget.onReserver,
+      ),
+    ];
+
+    return Row(
+      children: [
+        for (var i = 0; i < tuiles.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(child: _apparition(0.45 + i * 0.07, tuiles[i])),
         ],
+      ],
+    );
+  }
+}
+
+// ─── Petits widgets privés ───
+
+class _BoutonRond extends StatelessWidget {
+  const _BoutonRond({required this.icone, required this.info, required this.onPressed});
+
+  final IconData icone;
+  final String info;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 4,
+      shadowColor: TaamaColors.textPrimary,
+      child: IconButton(
+        tooltip: info,
+        onPressed: onPressed,
+        icon: Icon(icone, color: TaamaColors.primary),
+        constraints: const BoxConstraints.tightFor(width: 48, height: 48),
       ),
     );
   }
 }
 
-class _PuceSolde extends StatelessWidget {
-  const _PuceSolde({required this.soldeFcfa, required this.onTap});
+class _Avatar extends StatelessWidget {
+  const _Avatar({required this.prenom, required this.urlPhoto, required this.onTap});
 
-  final int soldeFcfa;
-  final VoidCallback onTap;
+  final String? prenom;
+  final String? urlPhoto;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: 'Portefeuille, ${formaterFcfa(soldeFcfa)}',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(TaamaRadius.pill),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(
-            color: TaamaColors.primary,
-            borderRadius: BorderRadius.circular(TaamaRadius.pill),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.account_balance_wallet_rounded,
-                  size: 15, color: TaamaColors.textOnDark),
-              const SizedBox(width: 6),
-              TweenAnimationBuilder<int>(
-                tween: IntTween(begin: 0, end: soldeFcfa),
-                duration: const Duration(milliseconds: 600),
-                curve: Curves.easeOutCubic,
-                builder: (_, valeur, __) => Text(
-                  formaterFcfa(valeur),
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: TaamaColors.textOnDark,
-                  ),
-                ),
-              ),
-            ],
+      label: 'Mon compte',
+      child: Material(
+        color: TaamaColors.primary,
+        shape: const CircleBorder(side: BorderSide(color: Colors.white, width: 2)),
+        elevation: 4,
+        shadowColor: TaamaColors.textPrimary,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          // PhotoAvatar gère déjà : https uniquement, repli sur les
+          // initiales (URL R2 expirée, hors ligne), décodage à la bonne taille.
+          child: PhotoAvatar(
+            nom: prenom ?? '',
+            urlPhoto: urlPhoto,
+            diametre: 48,
+            couleurFond: TaamaColors.primary,
+            couleurTexte: Colors.white,
           ),
         ),
       ),
@@ -489,53 +536,197 @@ class _PuceSolde extends StatelessWidget {
   }
 }
 
-class _ChampDestination extends StatelessWidget {
-  const _ChampDestination({required this.onTap, required this.onDicter});
+class _PiluleDepart extends StatelessWidget {
+  const _PiluleDepart({required this.libelle, required this.onTap});
 
+  final String libelle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(24),
+      elevation: 4,
+      shadowColor: TaamaColors.textPrimary,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: SizedBox(
+          height: 48,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Row(
+              children: [
+                const Icon(Icons.place_rounded, size: 20, color: TaamaColors.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Départ', style: TaamaText.muted.copyWith(fontSize: 11)),
+                      Text(
+                        libelle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TaamaText.body.copyWith(fontSize: 14, fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.expand_more_rounded, color: TaamaColors.navy),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PastilleSolde extends StatelessWidget {
+  const _PastilleSolde({required this.soldeFcfa, required this.onTap});
+
+  final int soldeFcfa;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: TaamaColors.navy,
+      borderRadius: BorderRadius.circular(24),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: SizedBox(
+          height: 48,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Center(
+              child: Text(
+                formaterFcfa(soldeFcfa),
+                style: TaamaText.body.copyWith(color: Colors.white, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PastilleProximite extends StatelessWidget {
+  const _PastilleProximite({required this.chargement, required this.nombre, required this.onTap});
+
+  final bool chargement;
+  final int nombre;
+  final Future<void> Function()? onTap;
+
+  String get _texte {
+    if (chargement) return 'Recherche de chauffeurs…';
+    if (nombre == 0) return 'Aucun chauffeur proche pour le moment';
+    return nombre == 1 ? '1 chauffeur autour de vous' : '$nombre chauffeurs autour de vous';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: TaamaColors.navy,
+      borderRadius: BorderRadius.circular(20),
+      elevation: 6,
+      shadowColor: TaamaColors.textPrimary,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap == null ? null : () => onTap!(),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimeEnBoucle(
+                  duree: const Duration(milliseconds: 800),
+                  builder: (context, t, child) => Opacity(opacity: 1 - 0.75 * t, child: child),
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: nombre > 0 ? TaamaColors.accentMint : TaamaColors.onNavyMuted,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    _texte,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TaamaText.body.copyWith(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BarreRecherche extends StatelessWidget {
+  const _BarreRecherche({required this.exemples, required this.onTap, required this.onDicter});
+
+  final List<String> exemples;
   final VoidCallback onTap;
   final VoidCallback? onDicter;
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: 'Entrer une destination',
-      child: Material(
-        color: TaamaColors.surface,
-        borderRadius: BorderRadius.circular(TaamaRadius.lg),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(TaamaRadius.lg),
+    return Material(
+      color: TaamaColors.primarySoft,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: SizedBox(
+          height: 58,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            padding: const EdgeInsets.only(left: 14, right: 4),
             child: Row(
               children: [
-                const Icon(Icons.search_rounded,
-                    size: 20, color: TaamaColors.primary),
-                const SizedBox(width: TaamaSpacing.md),
-                const Expanded(
-                  child: Text(
-                    'Entrer une destination',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: TaamaColors.textPrimary,
-                    ),
+                const Icon(Icons.search_rounded, color: TaamaColors.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Rechercher une destination',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TaamaText.body.copyWith(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: TaamaColors.textSecondary,
+                        ),
+                      ),
+                      if (exemples.isNotEmpty) _TexteDefilant(textes: exemples),
+                    ],
                   ),
                 ),
                 if (onDicter != null)
-                  Semantics(
-                    button: true,
-                    label: 'Dicter la destination',
-                    child: InkWell(
-                      onTap: onDicter,
-                      borderRadius: BorderRadius.circular(TaamaRadius.sm),
-                      child: const Padding(
-                        padding: EdgeInsets.all(4),
-                        child: Icon(Icons.mic_none_rounded,
-                            size: 20, color: TaamaColors.textSecondary),
-                      ),
-                    ),
+                  IconButton(
+                    tooltip: 'Dicter la destination',
+                    onPressed: onDicter,
+                    icon: const Icon(Icons.mic_none_rounded, color: TaamaColors.primary),
                   ),
               ],
             ),
@@ -546,13 +737,118 @@ class _ChampDestination extends StatelessWidget {
   }
 }
 
-class _PuceSuggestion extends StatelessWidget {
-  const _PuceSuggestion({required this.suggestion, required this.onTap});
+/// Fait défiler « ex. « lieu » » toutes les 3 s (fixe si animations réduites).
+class _TexteDefilant extends StatefulWidget {
+  const _TexteDefilant({required this.textes});
 
-  final SuggestionDestination suggestion;
+  final List<String> textes;
+
+  @override
+  State<_TexteDefilant> createState() => _TexteDefilantState();
+}
+
+class _TexteDefilantState extends State<_TexteDefilant> {
+  Timer? _minuteur;
+  int _indice = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _minuteur?.cancel();
+    _minuteur = null;
+    if (!MediaQuery.disableAnimationsOf(context) && widget.textes.length > 1) {
+      _minuteur = Timer.periodic(const Duration(seconds: 3), (_) {
+        if (mounted) setState(() => _indice++);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _minuteur?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final texte = widget.textes[_indice % widget.textes.length];
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 400),
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween(begin: const Offset(0, 0.4), end: Offset.zero).animate(animation),
+          child: child,
+        ),
+      ),
+      child: Text(
+        'ex. $texte',
+        key: ValueKey(_indice),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TaamaText.body.copyWith(
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          color: TaamaColors.primary,
+        ),
+      ),
+    );
+  }
+}
+
+class _BoutonPlusTard extends StatelessWidget {
+  const _BoutonPlusTard({required this.onTap});
+
   final VoidCallback onTap;
 
-  IconData get _icone => switch (suggestion.type) {
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: TaamaColors.border, width: 1.5),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: SizedBox(
+          height: 58,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                const Icon(Icons.schedule_rounded, size: 18, color: TaamaColors.primary),
+                const SizedBox(width: 6),
+                Text(
+                  'Plus tard',
+                  style: TaamaText.body.copyWith(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: TaamaColors.primary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LieuxEnregistres extends StatelessWidget {
+  const _LieuxEnregistres({
+    required this.suggestions,
+    required this.onSuggestion,
+    required this.onAjouter,
+  });
+
+  final List<SuggestionDestination> suggestions;
+  final ValueChanged<SuggestionDestination> onSuggestion;
+  final VoidCallback onAjouter;
+
+  static IconData _icone(TypeAdresse type) => switch (type) {
         TypeAdresse.domicile => Icons.home_rounded,
         TypeAdresse.travail => Icons.work_rounded,
         TypeAdresse.autre => Icons.place_rounded,
@@ -560,716 +856,87 @@ class _PuceSuggestion extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avant = suggestion.miseEnAvant;
-    final duree = suggestion.dureeMinutes;
-    final texte = duree == null
-        ? suggestion.libelle
-        : '${suggestion.libelle} · $duree min';
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(TaamaRadius.pill),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: avant ? TaamaColors.primary : TaamaColors.navyLight,
-          borderRadius: BorderRadius.circular(TaamaRadius.pill),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(_icone,
-                size: 14,
-                color: avant
-                    ? TaamaColors.textOnDark
-                    : TaamaColors.onNavyMuted),
-            const SizedBox(width: 6),
-            Text(
-              texte,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: avant ? FontWeight.w700 : FontWeight.w500,
-                color:
-                    avant ? TaamaColors.textOnDark : TaamaColors.onNavyMuted,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PuceAjout extends StatelessWidget {
-  const _PuceAjout({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: 'Ajouter une adresse',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(TaamaRadius.pill),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(
-            color: TaamaColors.navyLight,
-            borderRadius: BorderRadius.circular(TaamaRadius.pill),
-          ),
-          child: const Icon(Icons.add_rounded,
-              size: 16, color: TaamaColors.onNavyMuted),
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Bande de confiance
-// ---------------------------------------------------------------------------
-
-class _BandeConfiance extends StatelessWidget {
-  const _BandeConfiance({required this.paiementActif});
-
-  /// Mode gratuit : « Espèces », jamais un portefeuille qu'on ne peut pas
-  /// utiliser.
-  final bool paiementActif;
-
-  @override
-  Widget build(BuildContext context) {
-    Widget item(IconData icone, String texte) => Flexible(
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icone, size: 15, color: TaamaColors.success),
-              const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  texte,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: TaamaColors.textSecondary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-
-    return Container(
-      color: TaamaColors.surface,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      clipBehavior: Clip.none,
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          item(Icons.verified_user_rounded, 'Vérifiés'),
-          item(Icons.sell_rounded, 'Prix fixe'),
-          paiementActif
-              ? item(Icons.account_balance_wallet_rounded, 'Portefeuille')
-              : item(Icons.payments_outlined, 'Espèces'),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Bande carte + fiche du chauffeur le plus proche
-// ---------------------------------------------------------------------------
-
-class _BandeCarte extends StatelessWidget {
-  const _BandeCarte({
-    required this.positionClient,
-    required this.conducteurs,
-    required this.plusProche,
-    required this.chargement,
-    required this.onRecentrer,
-  });
-
-  final LatLng? positionClient;
-  final List<ConducteurProche> conducteurs;
-  final ConducteurProche? plusProche;
-  final bool chargement;
-  final VoidCallback onRecentrer;
-
-  static const double hauteur = 172;
-
-  @override
-  Widget build(BuildContext context) {
-    final centre = positionClient ?? const LatLng(12.6392, -8.0029); // Bamako
-
-    return SizedBox(
-      height: hauteur,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: FlutterMap(
-              options: MapOptions(
-                initialCenter: centre,
-                initialZoom: 14.5,
-                // Aperçu non interactif : la carte plein écran vient
-                // à l'étape suivante du parcours.
-                interactionOptions: const InteractionOptions(
-                  flags: InteractiveFlag.none,
-                ),
-              ),
-              children: [
-                const FondCarteTaama(apercu: true),
-                // Mêmes positions que l'attribution et le bouton
-                // « recentrer » (36 x 36, à 12 du coin haut droit) ci-dessous.
-                const CoucheCarteTaama(reserves: [
-                  ZoneReservee.attribution(
-                    alignement: Alignment.topLeft,
-                    marge: EdgeInsets.all(8),
-                  ),
-                  ZoneReservee(
-                    alignement: Alignment.topRight,
-                    taille: Size(36, 36),
-                    marge: EdgeInsets.all(12),
-                  ),
-                ]),
-                MarkerLayer(
-                  markers: [
-                    for (final c in conducteurs)
-                      Marker(
-                        point: c.position,
-                        width: 26,
-                        height: 26,
-                        child: _MarqueurConducteur(estMoto: c.estMoto),
-                      ),
-                    if (positionClient != null)
-                      Marker(
-                        point: positionClient!,
-                        width: 48,
-                        height: 48,
-                        child: const _PointClient(),
-                      ),
-                  ],
-                ),
-                // La fiche chauffeur couvre le bas, le bouton recentrer le
-                // coin haut droit : l'attribution va en haut à gauche.
-                const AttributionCarteTaama(
-                  alignement: Alignment.topLeft,
-                  marge: EdgeInsets.all(8),
-                ),
-              ],
+          for (final s in suggestions) ...[
+            _Puce(
+              icone: _icone(s.type),
+              texte: s.dureeMinutes == null ? s.libelle : '${s.libelle} · ${s.dureeMinutes} min',
+              fond: TaamaColors.primarySoft,
+              couleur: TaamaColors.primary,
+              onTap: () => onSuggestion(s),
             ),
-          ),
-          Positioned(
-            right: 12,
-            top: 12,
-            child: _BoutonCarte(
-              icone: Icons.my_location_rounded,
-              semantique: 'Recentrer sur ma position',
-              onTap: onRecentrer,
-            ),
-          ),
-          Positioned(
-            left: 12,
-            right: 12,
-            bottom: 10,
-            child: _FicheConducteur(
-              conducteur: plusProche,
-              autres: conducteurs.length > 1 ? conducteurs.length - 1 : 0,
-              chargement: chargement,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MarqueurConducteur extends StatelessWidget {
-  const _MarqueurConducteur({required this.estMoto});
-
-  final bool estMoto;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: TaamaColors.textPrimary,
-        borderRadius: BorderRadius.circular(TaamaRadius.sm),
-        boxShadow: TaamaShadows.card,
-      ),
-      child: Icon(
-        estMoto ? Icons.two_wheeler_rounded : Icons.local_taxi_rounded,
-        size: 16,
-        color: TaamaColors.textOnDark,
-      ),
-    );
-  }
-}
-
-/// Point du client avec halo pulsant. Respecte « réduire les animations ».
-class _PointClient extends StatefulWidget {
-  const _PointClient();
-
-  @override
-  State<_PointClient> createState() => _PointClientState();
-}
-
-class _PointClientState extends State<_PointClient>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1800),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const noyau = _NoyauPoint();
-    if (MediaQuery.disableAnimationsOf(context)) return const Center(child: noyau);
-
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        AnimatedBuilder(
-          animation: _ctrl,
-          builder: (_, __) {
-            final t = _ctrl.value;
-            return Container(
-              width: 20 + 26 * t,
-              height: 20 + 26 * t,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: TaamaColors.primary.withValues(alpha: 0.28 * (1 - t)),
-              ),
-            );
-          },
-        ),
-        noyau,
-      ],
-    );
-  }
-}
-
-class _NoyauPoint extends StatelessWidget {
-  const _NoyauPoint();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 20,
-      height: 20,
-      decoration: BoxDecoration(
-        color: TaamaColors.primary,
-        shape: BoxShape.circle,
-        border: Border.all(color: TaamaColors.surface, width: 3),
-      ),
-    );
-  }
-}
-
-class _BoutonCarte extends StatelessWidget {
-  const _BoutonCarte({
-    required this.icone,
-    required this.semantique,
-    required this.onTap,
-  });
-
-  final IconData icone;
-  final String semantique;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: semantique,
-      child: Material(
-        color: TaamaColors.surface,
-        borderRadius: BorderRadius.circular(TaamaRadius.md),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(TaamaRadius.md),
-          child: SizedBox(
-            width: 36,
-            height: 36,
-            child: Icon(icone, size: 19, color: TaamaColors.textPrimary),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Fiche flottante : photo du chauffeur le plus proche, note, véhicule, délai.
-class _FicheConducteur extends StatelessWidget {
-  const _FicheConducteur({
-    required this.conducteur,
-    required this.autres,
-    required this.chargement,
-  });
-
-  final ConducteurProche? conducteur;
-  final int autres;
-  final bool chargement;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = conducteur;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: TaamaColors.surface,
-        borderRadius: BorderRadius.circular(TaamaRadius.lg),
-        boxShadow: TaamaShadows.floating,
-      ),
-      child: c == null
-          ? Row(
-              children: [
-                Icon(
-                  chargement
-                      ? Icons.radar_rounded
-                      : Icons.schedule_rounded,
-                  size: 20,
-                  color: TaamaColors.textSecondary,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    chargement
-                        ? 'Recherche des chauffeurs autour de vous…'
-                        : 'Aucun chauffeur autour de vous pour le moment.',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: TaamaColors.textSecondary,
-                    ),
-                  ),
-                ),
-              ],
-            )
-          : Row(
-              children: [
-                PhotoAvatar(
-                  nom: c.nomCourt,
-                  urlPhoto: c.urlPhoto,
-                  diametre: 36,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${c.nomCourt} · le plus proche',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: TaamaColors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 1),
-                      Row(
-                        children: [
-                          if (c.note != null) ...[
-                            const Icon(Icons.star_rounded,
-                                size: 13, color: TaamaColors.star),
-                            const SizedBox(width: 2),
-                            Text(
-                              c.note!.toStringAsFixed(1).replaceAll('.', ','),
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: TaamaColors.textSecondary,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                          ],
-                          Expanded(
-                            child: Text(
-                              [
-                                if (c.modeleVehicule != null) c.modeleVehicule!,
-                                if (c.minutesAvant != null)
-                                  'à ${c.minutesAvant} min',
-                              ].join(' · '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: TaamaColors.textSecondary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                if (autres > 0)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: TaamaColors.successSoft,
-                      borderRadius: BorderRadius.circular(TaamaRadius.sm),
-                    ),
-                    child: Text(
-                      '+$autres autour',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: TaamaColors.success,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Ligne de service avec prix plancher
-// ---------------------------------------------------------------------------
-
-class _LigneService extends StatefulWidget {
-  const _LigneService({required this.service, required this.onTap});
-
-  final ServiceCourse service;
-  final VoidCallback onTap;
-
-  @override
-  State<_LigneService> createState() => _LigneServiceState();
-}
-
-class _LigneServiceState extends State<_LigneService> {
-  bool _presse = false;
-
-  IconData get _icone {
-    final s = widget.service;
-    if (s.code.toLowerCase().contains('moto')) return Icons.two_wheeler_rounded;
-    if (s.climatise) return Icons.ac_unit_rounded;
-    return Icons.directions_car_filled_rounded;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = widget.service;
-    final avant = s.miseEnAvant;
-    final actif = s.disponible;
-
-    final fondIcone = s.climatise
-        ? TaamaColors.warningSoft
-        : (avant ? TaamaColors.primarySoft : TaamaColors.surfaceMuted);
-    final couleurIcone = s.climatise
-        ? TaamaColors.warning
-        : (avant ? TaamaColors.primary : TaamaColors.textPrimary);
-
-    final carte = Opacity(
-      opacity: actif ? 1 : 0.5,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: TaamaColors.surface,
-          borderRadius: BorderRadius.circular(TaamaRadius.lg),
-          border: Border.all(
-            color: avant ? TaamaColors.primary : TaamaColors.border,
-            width: avant ? 2 : 0.5,
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: fondIcone,
-                borderRadius: BorderRadius.circular(TaamaRadius.md),
-              ),
-              child: Icon(_icone, size: 24, color: couleurIcone),
-            ),
-            const SizedBox(width: TaamaSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          s.nom,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: TaamaColors.textPrimary,
-                          ),
-                        ),
-                      ),
-                      if (s.climatise) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: TaamaColors.warningSoft,
-                            borderRadius:
-                                BorderRadius.circular(TaamaRadius.sm),
-                          ),
-                          child: const Text(
-                            'Climatisé',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              color: TaamaColors.warning,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    actif ? s.argument : 'Indisponible pour le moment',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: TaamaColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: TaamaSpacing.sm),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  formaterFcfa(s.prixMinFcfa),
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: TaamaColors.navy,
-                  ),
-                ),
-                const Text(
-                  'à partir de',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: TaamaColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
+            const SizedBox(width: 8),
           ],
-        ),
-      ),
-    );
-
-    final contenu = avant
-        ? Stack(
-            clipBehavior: Clip.none,
-            children: [
-              carte,
-              Positioned(
-                top: -9,
-                left: 14,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: TaamaColors.primary,
-                    borderRadius: BorderRadius.circular(TaamaRadius.sm),
-                  ),
-                  child: const Text(
-                    'Le plus choisi',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: TaamaColors.textOnDark,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          )
-        : carte;
-
-    return Semantics(
-      button: true,
-      enabled: actif,
-      label: '${s.nom}, ${s.argument}, à partir de '
-          '${formaterFcfa(s.prixMinFcfa)}',
-      child: GestureDetector(
-        onTapDown: actif ? (_) => setState(() => _presse = true) : null,
-        onTapUp: actif ? (_) => setState(() => _presse = false) : null,
-        onTapCancel: actif ? () => setState(() => _presse = false) : null,
-        onTap: actif ? widget.onTap : null,
-        child: AnimatedScale(
-          scale: _presse ? 0.98 : 1,
-          duration: const Duration(milliseconds: 110),
-          child: contenu,
-        ),
+          _Puce(
+            icone: Icons.add_rounded,
+            texte: suggestions.isEmpty ? 'Ajouter Maison ou Travail' : 'Ajouter',
+            fond: Colors.white,
+            couleur: TaamaColors.primary,
+            bordure: true,
+            onTap: onAjouter,
+          ),
+        ],
       ),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Actions secondaires, dernière course, portefeuille
-// ---------------------------------------------------------------------------
-
-class _ActionSecondaire extends StatelessWidget {
-  const _ActionSecondaire({
+class _Puce extends StatelessWidget {
+  const _Puce({
     required this.icone,
+    required this.texte,
+    required this.fond,
     required this.couleur,
-    required this.libelle,
     required this.onTap,
+    this.bordure = false,
   });
 
   final IconData icone;
+  final String texte;
+  final Color fond;
   final Color couleur;
-  final String libelle;
   final VoidCallback onTap;
+  final bool bordure;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: TaamaColors.surface,
-      borderRadius: BorderRadius.circular(TaamaRadius.lg),
+      color: fond,
+      shape: StadiumBorder(
+        side: bordure
+            ? const BorderSide(color: TaamaColors.border, width: 1.5)
+            : BorderSide.none,
+      ),
       child: InkWell(
+        customBorder: const StadiumBorder(),
         onTap: onTap,
-        borderRadius: BorderRadius.circular(TaamaRadius.lg),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(TaamaRadius.lg),
-            border: Border.all(color: TaamaColors.border, width: 0.5),
-          ),
-          child: Row(
-            children: [
-              Icon(icone, size: 20, color: couleur),
-              const SizedBox(width: 10),
-              Text(
-                libelle,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: TaamaColors.textPrimary,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44, maxWidth: 220),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icone, size: 16, color: couleur),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    texte,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TaamaText.body.copyWith(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: couleur,
+                    ),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1281,60 +948,42 @@ class _CarteDerniereCourse extends StatelessWidget {
   const _CarteDerniereCourse({required this.course, required this.onTap});
 
   final DerniereCourse course;
-  final VoidCallback? onTap;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: TaamaColors.navy,
-      borderRadius: BorderRadius.circular(TaamaRadius.lg),
+      color: TaamaColors.primarySoft,
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
+        borderRadius: BorderRadius.circular(18),
         onTap: onTap,
-        borderRadius: BorderRadius.circular(TaamaRadius.lg),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding: const EdgeInsets.all(14),
           child: Row(
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: TaamaColors.primary,
-                  borderRadius: BorderRadius.circular(TaamaRadius.md),
-                ),
-                child: const Icon(Icons.history_rounded,
-                    size: 20, color: TaamaColors.textOnDark),
-              ),
-              const SizedBox(width: TaamaSpacing.md),
+              const Icon(Icons.history_rounded, color: TaamaColors.primary),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      'Refaire votre dernière course',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: TaamaColors.textOnDark,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
+                    Text('Refaire votre dernière course',
+                        style: TaamaText.muted.copyWith(fontSize: 12)),
                     Text(
-                      '${course.depart} → ${course.arrivee} · '
-                      '${formaterFcfa(course.prixFcfa)}',
+                      course.destination,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: TaamaColors.onNavyMuted,
-                      ),
+                      style: TaamaText.body.copyWith(fontSize: 15, fontWeight: FontWeight.w800),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.arrow_forward_rounded,
-                  size: 20, color: TaamaColors.textOnDark),
+              if (course.prixFcfa != null)
+                Text(
+                  formaterFcfa(course.prixFcfa!),
+                  style: TaamaText.title.copyWith(fontSize: 15, color: TaamaColors.primary),
+                ),
             ],
           ),
         ),
@@ -1343,51 +992,49 @@ class _CarteDerniereCourse extends StatelessWidget {
   }
 }
 
-class _BandeauPortefeuille extends StatelessWidget {
-  const _BandeauPortefeuille({required this.onRecharger});
-
-  final VoidCallback onRecharger;
+class _BandeauEspeces extends StatelessWidget {
+  const _BandeauEspeces();
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(TaamaSpacing.lg),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: TaamaColors.surface,
-        borderRadius: BorderRadius.circular(TaamaRadius.lg),
-        border: Border.all(color: TaamaColors.border, width: 0.5),
+        color: TaamaColors.navy,
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
         children: [
-          const Expanded(
+          AnimeEnBoucle(
+            duree: const Duration(milliseconds: 1500),
+            builder: (context, t, child) =>
+                Transform.translate(offset: Offset(0, -4 * t), child: child),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: TaamaColors.primary,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.payments_outlined, color: Colors.white),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Votre portefeuille est vide',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: TaamaColors.textPrimary,
-                  ),
+                  'Prix fixe, payé en espèces',
+                  style: TaamaText.title.copyWith(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700),
                 ),
-                SizedBox(height: 2),
+                const SizedBox(height: 2),
                 Text(
-                  'Rechargez par Orange Money, Moov ou Wave.',
-                  style: TextStyle(
-                      fontSize: 12, color: TaamaColors.textSecondary),
+                  'Vous connaissez le prix avant de partir.',
+                  style: TaamaText.body.copyWith(color: TaamaColors.onNavyMuted, fontSize: 12.5),
                 ),
               ],
             ),
-          ),
-          const SizedBox(width: TaamaSpacing.md),
-          FilledButton(
-            onPressed: onRecharger,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(0, 40),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-            ),
-            child: const Text('Recharger'),
           ),
         ],
       ),
