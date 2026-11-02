@@ -39,6 +39,7 @@ class ChauffeurCourse {
     this.nombreCourses,
     this.vehicule,
     this.couleurVehicule,
+    this.couleurLibelle,
   });
 
   final String nomCourt;
@@ -47,8 +48,12 @@ class ChauffeurCourse {
   final double? note;
   final int? nombreCourses;
 
-  /// Ex. « Corolla ». La couleur est passée à part.
+  /// Ex. « Toyota Corolla ». La couleur est passée à part.
   final String? vehicule;
+
+  /// Couleur en toutes lettres, au féminin (« grise ») : voir
+  /// `couleurVehiculeFeminin()` (utils/format.dart). Null → non affichée.
+  final String? couleurLibelle;
 
   /// Résultat de `couleurVehicule()` (utils/format.dart). Null → aucune
   /// pastille : mieux qu'une couleur devinée, qui ferait chercher la
@@ -452,24 +457,17 @@ class _Feuille extends StatelessWidget {
         color: TaamaColors.night,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          if (c != null && !_terminee)
-            Positioned(top: -34, left: 18, child: _Medaillon(chauffeur: c)),
-          ListView(
-            controller: controleur,
-            padding: EdgeInsets.fromLTRB(
-              18,
-              (c == null || _terminee) ? 14 : 46,
-              18,
-              MediaQuery.paddingOf(context).bottom + 20,
-            ),
-            children: _terminee
-                ? _contenuFin(context, c)
-                : _contenuEnCours(context, c),
-          ),
-        ],
+      child: ListView(
+        controller: controleur,
+        padding: EdgeInsets.fromLTRB(
+          18,
+          14,
+          18,
+          MediaQuery.paddingOf(context).bottom + 20,
+        ),
+        children: _terminee
+            ? _contenuFin(context, c)
+            : _contenuEnCours(context, c),
       ),
     );
   }
@@ -481,12 +479,14 @@ class _Feuille extends StatelessWidget {
       if (c == null)
         const _EnAttente()
       else ...[
-        _LigneChauffeur(
-          chauffeur: c,
+        // Temps d'arrivée en tête, masqué tant qu'il est inconnu : jamais
+        // « 0 » ni « — » (voir SuiviCoursePage._mettreAJourItineraire).
+        _TempsArrivee(
           minutes: minutesAvantArrivee,
           distanceKm: distanceKm,
           statut: statut,
         ),
+        _CarteChauffeur(chauffeur: c),
         const SizedBox(height: TaamaSpacing.lg),
         _Etapes(statut: statut),
         if (onAppeler != null || onMessage != null) ...[
@@ -920,193 +920,224 @@ class _BlocNotationState extends State<BlocNotation> {
 // Éléments partagés
 // ---------------------------------------------------------------------------
 
-class _Medaillon extends StatelessWidget {
-  const _Medaillon({required this.chauffeur});
+/// Temps d'arrivée en tête de la feuille, en grand. Masqué tant qu'il est
+/// inconnu (jamais « 0 » ni « — ») ; le chiffre change en fondu.
+class _TempsArrivee extends StatelessWidget {
+  const _TempsArrivee({
+    required this.minutes,
+    required this.distanceKm,
+    required this.statut,
+  });
 
-  final ChauffeurCourse chauffeur;
+  final int? minutes;
+  final double? distanceKm;
+  final StatutCourse statut;
+
+  String get _libelle =>
+      statut == StatutCourse.aBord ? 'arrivée à destination' : 'arrivée';
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 96,
-      height: 76,
-      child: Stack(
-        clipBehavior: Clip.none,
+    final m = minutes;
+    if (m == null) return const SizedBox.shrink();
+    final reduit = MediaQuery.disableAnimationsOf(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: TaamaSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(4),
-            decoration: const BoxDecoration(
-              color: TaamaColors.night,
-              shape: BoxShape.circle,
-            ),
-            child: PhotoAvatar(
-              nom: chauffeur.nomCourt,
-              urlPhoto: chauffeur.urlPhoto,
-              diametre: 66,
-              couleurFond: TaamaColors.routeNight,
-              couleurTexte: TaamaColors.night,
-            ),
-          ),
-          if (chauffeur.note != null)
-            Positioned(
-              right: 6,
-              bottom: 4,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: TaamaColors.accentMint,
-                  borderRadius: BorderRadius.circular(TaamaRadius.pill),
-                  border: Border.all(color: TaamaColors.night, width: 2),
-                ),
-                child: Text(
-                  formaterNote(chauffeur.note!),
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF04342C),
+          AnimatedSwitcher(
+            duration: reduit ? Duration.zero : const Duration(milliseconds: 300),
+            transitionBuilder: (enfant, animation) =>
+                FadeTransition(opacity: animation, child: enfant),
+            child: Text.rich(
+              key: ValueKey(m),
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: '$m',
+                    style: const TextStyle(
+                      fontSize: 32,
+                      height: 1,
+                      fontWeight: FontWeight.w800,
+                      color: TaamaColors.textOnDark,
+                    ),
                   ),
-                ),
+                  const TextSpan(
+                    text: ' min',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: TaamaColors.onNightMuted,
+                    ),
+                  ),
+                ],
               ),
             ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            distanceKm == null ? _libelle : '$_libelle · ${formaterDistance(distanceKm!)}',
+            style: const TextStyle(fontSize: 13, color: TaamaColors.onNightMuted),
+          ),
         ],
       ),
     );
   }
 }
 
-class _LigneChauffeur extends StatelessWidget {
-  const _LigneChauffeur({
-    required this.chauffeur,
-    required this.minutes,
-    required this.distanceKm,
-    required this.statut,
-  });
+/// Chauffeur : photo ronde à côté du nom (repli sur les initiales), note et
+/// nombre de courses, véhicule en toutes lettres avec sa couleur, plaque
+/// en évidence — tout ce qu'il faut pour reconnaître la voiture.
+class _CarteChauffeur extends StatelessWidget {
+  const _CarteChauffeur({required this.chauffeur});
 
   final ChauffeurCourse chauffeur;
-  final int? minutes;
-  final double? distanceKm;
-  final StatutCourse statut;
 
-  String get _libelleTemps =>
-      statut == StatutCourse.aBord ? 'arrivée à destination' : 'arrivée';
+  /// « 4,9 · 120 courses », sans segment vide.
+  String? get _ligneConfiance {
+    final n = chauffeur.nombreCourses;
+    final morceaux = [
+      if (chauffeur.note != null) formaterNote(chauffeur.note!),
+      if (n != null && n > 0) n == 1 ? '1 course' : '$n courses',
+    ];
+    return morceaux.isEmpty ? null : morceaux.join(' · ');
+  }
+
+  /// « Toyota Corolla grise », sans « null » ni couleur devinée.
+  String? get _vehicule {
+    final morceaux = [
+      if (chauffeur.vehicule != null) chauffeur.vehicule!,
+      if (chauffeur.couleurLibelle != null) chauffeur.couleurLibelle!,
+    ];
+    return morceaux.isEmpty ? null : morceaux.join(' ');
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    final confiance = _ligneConfiance;
+    final vehicule = _vehicule;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                chauffeur.nomCourt,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 19,
-                  fontWeight: FontWeight.w700,
-                  color: TaamaColors.textOnDark,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
+        Row(
+          children: [
+            PhotoAvatar(
+              nom: chauffeur.nomCourt,
+              urlPhoto: chauffeur.urlPhoto,
+              diametre: 60,
+              couleurFond: TaamaColors.routeNight,
+              couleurTexte: TaamaColors.night,
+            ),
+            const SizedBox(width: TaamaSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: TaamaColors.surface,
-                      borderRadius: BorderRadius.circular(TaamaRadius.sm),
-                    ),
-                    child: Text(
-                      chauffeur.plaque,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.6,
-                        color: TaamaColors.textPrimary,
-                      ),
+                  Text(
+                    chauffeur.nomCourt,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w700,
+                      color: TaamaColors.textOnDark,
                     ),
                   ),
-                  if (chauffeur.vehicule != null)
+                  if (confiance != null) ...[
+                    const SizedBox(height: 3),
                     Row(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (chauffeur.couleurVehicule != null) ...[
-                          Container(
-                            width: 11,
-                            height: 11,
-                            decoration: BoxDecoration(
-                              color: chauffeur.couleurVehicule,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                  color: TaamaColors.nightBorder, width: 1),
-                            ),
-                          ),
-                          const SizedBox(width: 5),
+                        if (chauffeur.note != null) ...[
+                          const Icon(Icons.star_rounded, size: 15, color: TaamaColors.star),
+                          const SizedBox(width: 3),
                         ],
-                        Text(
-                          chauffeur.vehicule!,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: TaamaColors.onNightMuted,
+                        Flexible(
+                          child: Text(
+                            confiance,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13, color: TaamaColors.onNightMuted),
                           ),
                         ),
                       ],
                     ),
+                  ],
                 ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-        if (minutes != null) ...[
-          const SizedBox(width: TaamaSpacing.md),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(
-                      text: '$minutes',
+        const SizedBox(height: TaamaSpacing.md),
+        Row(
+          children: [
+            if (chauffeur.couleurVehicule != null) ...[
+              Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: chauffeur.couleurVehicule,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: TaamaColors.nightBorder, width: 1.5),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: vehicule == null
+                  ? const SizedBox.shrink()
+                  : Text(
+                      vehicule,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 32,
-                        height: 1,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
                         color: TaamaColors.textOnDark,
                       ),
                     ),
-                    const TextSpan(
-                      text: ' min',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: TaamaColors.onNightMuted,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                distanceKm == null
-                    ? _libelleTemps
-                    : '$_libelleTemps · ${formaterDistance(distanceKm!)}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: TaamaColors.onNightMuted,
-                ),
-              ),
+            ),
+            if (chauffeur.plaque.trim().isNotEmpty) ...[
+              const SizedBox(width: TaamaSpacing.md),
+              _Plaque(texte: chauffeur.plaque.trim()),
             ],
-          ),
-        ],
+          ],
+        ),
       ],
+    );
+  }
+}
+
+/// Plaque d'immatriculation : encadré clair, bordure, gras et espacé,
+/// lisible de loin.
+class _Plaque extends StatelessWidget {
+  const _Plaque({required this.texte});
+
+  final String texte;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Plaque $texte',
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: TaamaColors.surface,
+          borderRadius: BorderRadius.circular(TaamaRadius.sm),
+          border: Border.all(color: TaamaColors.textPrimary, width: 1.5),
+        ),
+        child: Text(
+          texte.toUpperCase(),
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.4,
+            height: 1.1,
+            color: TaamaColors.textPrimary,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1127,12 +1158,9 @@ class _Etapes extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const libelles = ['Accepté', 'En route vers vous', 'À bord'];
-
-    Color barre(int i) {
-      if (_indice > i + 1) return TaamaColors.accentMint;
-      if (_indice == i + 1) return TaamaColors.routeNight;
-      return TaamaColors.nightControl;
-    }
+    final duree = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 600);
 
     return Column(
       children: [
@@ -1140,13 +1168,12 @@ class _Etapes extends StatelessWidget {
           children: [
             for (var i = 0; i < 3; i++) ...[
               Expanded(
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  height: 3,
-                  decoration: BoxDecoration(
-                    color: barre(i),
-                    borderRadius: BorderRadius.circular(TaamaRadius.pill),
-                  ),
+                child: _SegmentEtape(
+                  // Étape atteinte : le segment se remplit de gauche à
+                  // droite ; vert une fois dépassée, accent tant qu'en cours.
+                  rempli: _indice >= i + 1,
+                  couleur: _indice > i + 1 ? TaamaColors.accentMint : TaamaColors.routeNight,
+                  duree: duree,
                 ),
               ),
               if (i < 2) const SizedBox(width: 5),
@@ -1172,6 +1199,37 @@ class _Etapes extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// Un segment de la barre d'étapes : piste sombre, remplissage animé.
+class _SegmentEtape extends StatelessWidget {
+  const _SegmentEtape({required this.rempli, required this.couleur, required this.duree});
+
+  final bool rempli;
+  final Color couleur;
+  final Duration duree;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(TaamaRadius.pill),
+      child: Container(
+        height: 4,
+        color: TaamaColors.nightControl,
+        alignment: Alignment.centerLeft,
+        child: TweenAnimationBuilder<double>(
+          // Part de 0 à l'affichage : l'étape en cours se remplit sous les yeux.
+          tween: Tween(begin: 0, end: rempli ? 1 : 0),
+          duration: duree,
+          curve: Curves.easeOutCubic,
+          builder: (_, facteur, __) => FractionallySizedBox(
+            widthFactor: facteur,
+            child: AnimatedContainer(duration: duree, color: couleur),
+          ),
+        ),
+      ),
     );
   }
 }

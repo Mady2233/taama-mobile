@@ -1,4 +1,4 @@
-// Suivi de course (lot FOND) : temps d'arrivée jamais « 0 min » inventé,
+// Suivi de course (lots FOND + FORME) : temps d'arrivée jamais « 0 min » inventé,
 // bandeau quand le suivi temps réel décroche, glissement du marqueur, et
 // lecture d'une réponse OSRM en un seul appel.
 import 'package:flutter/material.dart';
@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:taama_app/screens/course/suivi_course_page.dart';
 import 'package:taama_app/screens/course/suivi_course_screen.dart';
 import 'package:taama_app/services/routing_service.dart';
+import 'package:taama_app/utils/format.dart';
 import 'package:taama_app/widgets/taama_map.dart';
 
 const _chauffeur = ChauffeurCourse(nomCourt: 'Mady T.', plaque: 'AB 1234 MD', vehicule: 'Toyota Corolla');
@@ -17,13 +18,15 @@ Future<void> _suivi(
   int? minutes,
   double? distanceKm,
   String? etatSuivi,
+  ChauffeurCourse chauffeur = _chauffeur,
+  VoidCallback? onPartager,
 }) async {
   await t.binding.setSurfaceSize(const Size(420, 1600));
   addTearDown(() => t.binding.setSurfaceSize(null));
   await t.pumpWidget(MaterialApp(
     home: SuiviCourseScreen(
       statut: statut,
-      chauffeur: _chauffeur,
+      chauffeur: chauffeur,
       depart: 'Point de départ',
       arrivee: 'Grand Marché',
       prixFcfa: 1500,
@@ -33,6 +36,7 @@ Future<void> _suivi(
       etatSuivi: etatSuivi,
       onRetour: () {},
       onAnnuler: () {},
+      onPartager: onPartager,
     ),
   ));
   await t.pump();
@@ -68,6 +72,71 @@ void main() {
     testWidgets('jamais affiché une fois la course terminée', (t) async {
       await _suivi(t, statut: StatutCourse.terminee, etatSuivi: 'Reconnexion au suivi…');
       expect(find.text('Reconnexion au suivi…'), findsNothing);
+    });
+  });
+
+  group('carte chauffeur (lot FORME)', () {
+    const complet = ChauffeurCourse(
+      nomCourt: 'Mady T.',
+      plaque: 'ab 1234 md',
+      vehicule: 'Toyota Corolla',
+      couleurLibelle: 'grise',
+      note: 4.9,
+      nombreCourses: 120,
+    );
+
+    testWidgets('véhicule en toutes lettres, couleur accordée en minuscules', (t) async {
+      await _suivi(t, chauffeur: complet);
+      expect(find.text('Toyota Corolla grise'), findsOneWidget);
+    });
+
+    testWidgets('plaque en évidence, en capitales', (t) async {
+      await _suivi(t, chauffeur: complet);
+      expect(find.text('AB 1234 MD'), findsOneWidget);
+    });
+
+    testWidgets('note et nombre de courses : « 4,9 · 120 courses »', (t) async {
+      await _suivi(t, chauffeur: complet);
+      expect(find.text('4,9 · 120 courses'), findsOneWidget);
+    });
+
+    testWidgets('une seule course : singulier', (t) async {
+      await _suivi(t,
+          chauffeur: const ChauffeurCourse(nomCourt: 'Mady T.', plaque: 'AB 1', nombreCourses: 1));
+      expect(find.text('1 course'), findsOneWidget);
+    });
+
+    testWidgets('ni note ni courses : aucune ligne, jamais « null »', (t) async {
+      await _suivi(t, chauffeur: const ChauffeurCourse(nomCourt: 'Mady T.', plaque: ''));
+      expect(find.textContaining('null'), findsNothing);
+      expect(find.textContaining(RegExp(r'\d+ courses?')), findsNothing);
+      expect(find.textContaining('Plaque'), findsNothing);
+    });
+
+    testWidgets('repli sur les initiales sans photo', (t) async {
+      await _suivi(t, chauffeur: complet);
+      expect(find.text('MT'), findsOneWidget);
+    });
+  });
+
+  group('bouton Partager', () {
+    testWidgets('masqué quand aucune action n’est câblée', (t) async {
+      await _suivi(t);
+      expect(find.bySemanticsLabel('Partager le suivi de ma course'), findsNothing);
+      expect(find.byIcon(Icons.ios_share_rounded), findsNothing);
+    });
+  });
+
+  group('couleurVehiculeFeminin', () {
+    test('code serveur en capitales : accordé au féminin, minuscules', () {
+      expect(couleurVehiculeFeminin('GRIS'), 'grise');
+      expect(couleurVehiculeFeminin('BLANC'), 'blanche');
+      expect(couleurVehiculeFeminin('Argent'), 'argentée');
+    });
+    test('AUTRE, vide ou inconnu : null (jamais de couleur devinée)', () {
+      expect(couleurVehiculeFeminin('AUTRE'), isNull);
+      expect(couleurVehiculeFeminin(''), isNull);
+      expect(couleurVehiculeFeminin(null), isNull);
     });
   });
 

@@ -64,6 +64,28 @@ Color? couleurVehicule(String? libelle) {
   return null;
 }
 
+/// Couleur du véhicule en toutes lettres, accordée au féminin (« une voiture
+/// grise », « une moto blanche ») : depuis le code serveur
+/// (Chauffeur.COULEUR_CHOICES : BLANC, GRIS…) ou le même mot en clair.
+/// Null pour une couleur inconnue ou « AUTRE » : jamais de couleur devinée,
+/// qui ferait chercher la mauvaise voiture.
+String? couleurVehiculeFeminin(String? code) {
+  if (code == null) return null;
+  const table = <String, String>{
+    'blanc': 'blanche',
+    'noir': 'noire',
+    'gris': 'grise',
+    'argent': 'argentée',
+    'rouge': 'rouge',
+    'bleu': 'bleue',
+    'vert': 'verte',
+    'jaune': 'jaune',
+    'marron': 'marron',
+    'beige': 'beige',
+  };
+  return table[_normaliser(code)];
+}
+
 String _normaliser(String texte) {
   const accents = 'àâäáãçèéêëîïíìôöóòõùûüúñ';
   const sans = 'aaaaacceeeeiiiiooooouuuun';

@@ -11,7 +11,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../services/api_service.dart';
 import '../../services/config_app.dart';
@@ -371,6 +370,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
           : int.tryParse(nombreCoursesRaw?.toString() ?? ''),
       vehicule: vehicule.isEmpty ? null : vehicule,
       couleurVehicule: couleurVehicule(c['couleur'] as String?),
+      couleurLibelle: couleurVehiculeFeminin(c['couleur'] as String?),
     );
   }
 
@@ -465,27 +465,6 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
     );
   }
 
-  /// URL de suivi public à partager. Toujours `null` pour l'instant : aucun
-  /// endpoint de suivi public n'existe côté backend (vérifié dans
-  /// trajets/urls.py) — je ne fabrique donc jamais de lien factice.
-  String? _lienSuiviPublic() => null;
-
-  Future<void> _partager() async {
-    final lien = _lienSuiviPublic();
-    if (lien == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Le partage du suivi n\'est pas encore disponible.'),
-        ),
-      );
-      return;
-    }
-    await SharePlus.instance.share(
-      ShareParams(text: lien, subject: 'Suivi de ma course Taama'),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<bool>(
@@ -519,7 +498,8 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       etatSuivi: _etatSuivi,
       onRetour: () => Navigator.of(context).maybePop(),
       onSos: () => afficherDialogueSOS(context, demandeId: widget.demandeId),
-      onPartager: _partager,
+      // Partage masqué : aucun suivi public côté serveur (pas de bouton inerte).
+      onPartager: null,
       onRecentrer: _positionDepart == null
           ? null
           : () => _mapController.move(_positionDepart!, 15.5),
