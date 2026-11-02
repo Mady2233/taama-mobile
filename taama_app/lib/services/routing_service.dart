@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import '../config/app_config.dart';
 
 /// Récupère le tracé réel d'un itinéraire routier via OSRM (même service
 /// public que le backend utilise pour le calcul de distance, voir
@@ -26,7 +28,7 @@ class RoutingService {
         '?overview=full&geometries=geojson',
       );
       final reponse = await http
-          .get(url, headers: {'User-Agent': 'TaamaApp/1.0'})
+          .get(url, headers: {'User-Agent': AppConfig.userAgentHttp})
           .timeout(const Duration(seconds: 8));
       if (reponse.statusCode != 200) return null;
 
@@ -43,6 +45,57 @@ class RoutingService {
       return coords
           .map((p) => LatLng((p[1] as num).toDouble(), (p[0] as num).toDouble()))
           .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Tracé + durée + distance en UN appel OSRM (au lieu de deux). Null sur
+  /// toute erreur : l'appelant n'affiche alors aucun temps, jamais un 0.
+  /// Minutes arrondies au-dessus, minimum 1.
+  static Future<({List<LatLng> trace, int minutes, double km})?> calculerItineraire({
+    required LatLng depart,
+    required LatLng arrivee,
+  }) async {
+    try {
+      final url = Uri.parse(
+        '$_baseUrl/route/v1/driving/'
+        '${depart.longitude},${depart.latitude};'
+        '${arrivee.longitude},${arrivee.latitude}'
+        '?overview=full&geometries=geojson',
+      );
+      final reponse = await http
+          .get(url, headers: {'User-Agent': AppConfig.userAgentHttp})
+          .timeout(const Duration(seconds: 12));
+      if (reponse.statusCode != 200) return null;
+      return lireItineraire(reponse.body);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Lecture d'une réponse OSRM /route (séparée pour être testable sans
+  /// réseau). Null si la réponse est inexploitable.
+  static ({List<LatLng> trace, int minutes, double km})? lireItineraire(String corps) {
+    try {
+      final donnees = jsonDecode(corps) as Map<String, dynamic>;
+      final routes = donnees['routes'] as List?;
+      if (donnees['code'] != 'Ok' || routes == null || routes.isEmpty) return null;
+      final route = routes[0] as Map<String, dynamic>;
+      final coords = route['geometry']?['coordinates'] as List?;
+      final secondes = route['duration'];
+      final metres = route['distance'];
+      if (coords == null || coords.length < 2 || secondes is! num || metres is! num) {
+        return null;
+      }
+      return (
+        trace: [
+          for (final p in coords)
+            LatLng(((p as List)[1] as num).toDouble(), (p[0] as num).toDouble()),
+        ],
+        minutes: math.max(1, (secondes / 60).ceil()),
+        km: metres / 1000,
+      );
     } catch (_) {
       return null;
     }
@@ -66,7 +119,7 @@ class RoutingService {
         '?overview=false',
       );
       final reponse = await http
-          .get(url, headers: {'User-Agent': 'TaamaApp/1.0'})
+          .get(url, headers: {'User-Agent': AppConfig.userAgentHttp})
           .timeout(const Duration(seconds: 8));
       if (reponse.statusCode != 200) return null;
 
@@ -98,7 +151,7 @@ class RoutingService {
         '$_baseUrl/route/v1/driving/$coordsUrl?overview=full&geometries=geojson',
       );
       final reponse = await http
-          .get(url, headers: {'User-Agent': 'TaamaApp/1.0'})
+          .get(url, headers: {'User-Agent': AppConfig.userAgentHttp})
           .timeout(const Duration(seconds: 8));
       if (reponse.statusCode != 200) return null;
 

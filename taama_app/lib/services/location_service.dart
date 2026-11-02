@@ -31,6 +31,10 @@ class LocationService {
   String? _demandeIdActive;
   void Function(double lat, double lng)? _callbackPositionActif;
 
+  /// Prévenu à chaque connexion réussie (true) et à chaque coupure ou
+  /// échec de connexion (false) : l'écran ne fige jamais le suivi en silence.
+  void Function(bool connecte)? _surConnexion;
+
   bool get connecte => _connecte;
 
   /// Établit la connexion WebSocket avec timeout et gestion d'erreur.
@@ -54,12 +58,14 @@ class LocationService {
       );
       
       _connecte = true;
+      _surConnexion?.call(true);
       debugPrint('[LocationService] WebSocket connecté pour demande $demandeId');
       return true;
     } catch (e) {
       debugPrint('[LocationService] Erreur connexion WebSocket : $e');
       _channel = null;
       _connecte = false;
+      _surConnexion?.call(false);
       return false;
     }
   }
@@ -147,10 +153,12 @@ class LocationService {
   /// Côté CLIENT : écoute les positions du conducteur en temps réel.
   Future<void> ecouterPosition(
     String demandeId,
-    void Function(double lat, double lng) onPosition,
-  ) async {
+    void Function(double lat, double lng) onPosition, {
+    void Function(bool connecte)? onConnexion,
+  }) async {
     if (!_arrete) return;
 
+    _surConnexion = onConnexion;
     _arrete = false;
     _demandeIdActive = demandeId;
     _callbackPositionActif = onPosition;
@@ -222,6 +230,7 @@ class LocationService {
   void _gererDeconnexion() {
     _connecte = false;
     if (_arrete) return; // arreter() appelé entre-temps : ne rien relancer.
+    _surConnexion?.call(false);
     _planifierReconnexion();
   }
 
@@ -273,6 +282,7 @@ class LocationService {
     _connecte = false;
     _demandeIdActive = null;
     _callbackPositionActif = null;
+    _surConnexion = null;
     debugPrint('[LocationService] Service arrêté proprement');
   }
 }

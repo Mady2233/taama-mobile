@@ -3,8 +3,9 @@
 // Carte réutilisable Taama (accueil, commande, suivi).
 //
 // Ce que ce widget garantit et que l'appelant n'a pas à refaire :
-//  - les marqueurs de véhicules GLISSENT entre deux positions reçues
-//    (WebSocket) au lieu de sauter, et pivotent selon leur cap ;
+//  - les marqueurs de véhicules GLISSENT (1 s) entre deux positions reçues
+//    (WebSocket) au lieu de sauter, et pivotent selon leur cap ; un saut de
+//    plus de 2 km (GPS aberrant) se fait d'un coup, sans traverser la ville ;
 //  - l'itinéraire est tracé en deux couches (halo + trait) pour rester
 //    lisible sur n'importe quel fond ;
 //  - la caméra cadre automatiquement tous les points d'intérêt ;
@@ -197,19 +198,6 @@ class _TaamaMapState extends State<TaamaMap> {
                 height: 26,
                 child: _MarqueurDestination(nuit: nuit),
               ),
-            for (final v in widget.vehicules)
-              Marker(
-                point: v.position,
-                width: 40,
-                height: 40,
-                child: VehiculeAnime(
-                  key: ValueKey(v.id),
-                  cible: v.position,
-                  estMoto: v.estMoto,
-                  miseEnAvant: v.miseEnAvant,
-                  nuit: nuit,
-                ),
-              ),
             if (widget.positionClient != null)
               Marker(
                 point: widget.positionClient!,
@@ -219,6 +207,33 @@ class _TaamaMapState extends State<TaamaMap> {
               ),
           ],
         ),
+        // Un calque par véhicule, au-dessus du client : la position GLISSE
+        // vers la nouvelle valeur au lieu de sauter (voir _TweenLatLng).
+        for (final v in widget.vehicules)
+          TweenAnimationBuilder<LatLng>(
+            key: ValueKey('calque_${v.id}'),
+            tween: _TweenLatLng(end: v.position),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : _dureeGlissement,
+            curve: Curves.easeInOut,
+            builder: (_, position, __) => MarkerLayer(
+              markers: [
+                Marker(
+                  point: position,
+                  width: 40,
+                  height: 40,
+                  child: VehiculeAnime(
+                    key: ValueKey(v.id),
+                    cible: v.position,
+                    estMoto: v.estMoto,
+                    miseEnAvant: v.miseEnAvant,
+                    nuit: nuit,
+                  ),
+                ),
+              ],
+            ),
+          ),
         AttributionCarteTaama(
           nuit: nuit,
           alignement: widget.alignementAttribution,
@@ -232,6 +247,37 @@ class _TaamaMapState extends State<TaamaMap> {
 // ---------------------------------------------------------------------------
 // Marqueur véhicule animé
 // ---------------------------------------------------------------------------
+
+/// Durée du glissement d'un véhicule d'une position reçue à la suivante.
+const Duration _dureeGlissement = Duration(milliseconds: 1000);
+
+/// Au-delà, le saut est traité comme une position aberrante ou une reprise
+/// après coupure : le marqueur y va directement au lieu de glisser à travers
+/// la ville.
+const double sautMaxGlissementMetres = 2000;
+
+/// Interpolation linéaire entre deux positions (TweenAnimationBuilder part
+/// de la position affichée à l'instant, donc un glissement en cours repart
+/// d'où il en était, sans à-coup).
+class _TweenLatLng extends Tween<LatLng> {
+  _TweenLatLng({super.end});
+
+  @override
+  LatLng lerp(double t) => interpolerPosition(begin ?? end!, end!, t);
+}
+
+/// Position à l'instant [t] (0..1) du glissement de [a] vers [b] ; [b]
+/// directement si la distance dépasse [sautMaxGlissementMetres].
+@visibleForTesting
+LatLng interpolerPosition(LatLng a, LatLng b, double t) {
+  if (const Distance().as(LengthUnit.Meter, a, b) > sautMaxGlissementMetres) {
+    return b;
+  }
+  return LatLng(
+    a.latitude + (b.latitude - a.latitude) * t,
+    a.longitude + (b.longitude - a.longitude) * t,
+  );
+}
 
 /// Interpole la position et le cap entre deux mises à jour WebSocket.
 ///

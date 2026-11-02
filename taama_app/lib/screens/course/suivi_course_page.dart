@@ -22,6 +22,26 @@ import '../../widgets/widget_sos.dart';
 import '../chat_screen.dart';
 import 'suivi_course_screen.dart';
 
+/// Texte du bandeau d'état du suivi, ou null si tout va bien. Séparé de
+/// l'écran pour être testé sans WebSocket.
+@visibleForTesting
+String? etatSuiviChauffeur({
+  required bool suiviDemarre,
+  required bool? connecte,
+  required DateTime? dernierePositionLe,
+  required bool positionConnue,
+  required DateTime maintenant,
+  required Duration ageMax,
+}) {
+  if (!suiviDemarre) return null;
+  if (connecte == false) return 'Reconnexion au suivi…';
+  if (!positionConnue || dernierePositionLe == null) return 'Localisation du chauffeur…';
+  if (maintenant.difference(dernierePositionLe) > ageMax) {
+    return 'Position en cours de mise à jour…';
+  }
+  return null;
+}
+
 class SuiviCoursePage extends StatefulWidget {
   const SuiviCoursePage({
     super.key,
@@ -38,7 +58,7 @@ class SuiviCoursePage extends StatefulWidget {
   State<SuiviCoursePage> createState() => _SuiviCoursePageState();
 }
 
-class _SuiviCoursePageState extends State<SuiviCoursePage> {
+class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingObserver {
   static const Duration _intervallePolling = Duration(seconds: 3);
 
   final LocationService _locationService = LocationService();
@@ -67,15 +87,33 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> {
 
   bool _suiviPositionDemarre = false;
 
-  /// Dernier statut pour lequel l'itinéraire OSRM a été (re)chargé — permet
-  /// de ne recharger qu'à un CHANGEMENT de statut, jamais à chaque position
-  /// GPS reçue (l'itinéraire lui-même ne bouge pas entre deux points d'un
-  /// même trajet, seul le marqueur du chauffeur bouge).
+  /// Faux en arrière-plan : une réponse de _rafraichir arrivée après la
+  /// suspension ne doit pas rouvrir le WebSocket de position.
+  bool _enPremierPlan = true;
+
+  /// Dernier statut traité : à chaque nouvelle étape (vers le client, puis
+  /// vers la destination), l'ancien temps d'arrivée est effacé.
   String? _statutItineraireCharge;
+
+  /// Dernier calcul OSRM : refait quand le chauffeur a bougé d'au moins
+  /// [_deplacementRecalcul] ou après [_ageMaxItineraire], jamais plus d'un
+  /// calcul à la fois (data mobile).
+  static const double _deplacementRecalcul = 150; // mètres
+  static const Duration _ageMaxItineraire = Duration(seconds: 30);
+  LatLng? _positionItineraire;
+  DateTime? _itineraireCalculeLe;
+  bool _calculItineraireEnCours = false;
+
+  /// État du suivi temps réel, pour ne jamais figer le marqueur en silence.
+  static const Duration _ageMaxPosition = Duration(seconds: 30);
+  bool? _suiviConnecte;
+  DateTime? _dernierePositionLe;
+  Timer? _timerFraicheur;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _chargerSolde();
     _rafraichir();
     _timerPolling =
@@ -84,9 +122,43 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timerPolling?.cancel();
-    _locationService.arreter();
+    _arreterSuiviPosition();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState etat) {
+    switch (etat) {
+      case AppLifecycleState.resumed:
+        _reprendreSuivi();
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _suspendreSuivi();
+      case AppLifecycleState.inactive:
+        break;
+    }
+  }
+
+  /// En arrière-plan : on coupe le polling 3 s et le WebSocket de position
+  /// (data/batterie ; le WebSocket serait de toute façon coupé par l'OS).
+  void _suspendreSuivi() {
+    _enPremierPlan = false;
+    _timerPolling?.cancel();
+    _timerPolling = null;
+    if (_suiviPositionDemarre) _arreterSuiviPosition();
+  }
+
+  /// Au retour au premier plan : on recharge l'état tout de suite et on
+  /// relance polling + WebSocket (via _rafraichir), sauf course déjà finie.
+  void _reprendreSuivi() {
+    _enPremierPlan = true;
+    if (_statutBrut == 'termine' || _statutBrut == 'annule') return;
+    _rafraichir();
+    _timerPolling?.cancel();
+    _timerPolling = Timer.periodic(_intervallePolling, (_) => _rafraichir());
   }
 
   // ─── Chargement des données ───────────────────────────────────────────
@@ -169,14 +241,21 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> {
       if (nouveauStatut == 'en_route' || nouveauStatut == 'client_a_bord') {
         _demarrerSuiviPosition();
       } else if (_suiviPositionDemarre) {
-        _locationService.arreter();
-        _suiviPositionDemarre = false;
+        _arreterSuiviPosition();
         if (mounted) setState(() => _positionChauffeur = null);
       }
 
       if (_statutItineraireCharge != nouveauStatut) {
         _statutItineraireCharge = nouveauStatut;
-        unawaited(_rechargerItineraire());
+        // Nouvelle étape : l'ancien temps ne vaut plus rien. Il est
+        // recalculé dès qu'on connaît la vraie position du chauffeur.
+        setState(() {
+          _minutesAvantArrivee = null;
+          _distanceKm = null;
+          _itineraire = const [];
+          _positionItineraire = null;
+        });
+        unawaited(_mettreAJourItineraire(force: true));
       }
     } catch (e) {
       debugPrint('[SuiviCoursePage] Erreur rafraîchissement demande : $e');
@@ -187,49 +266,79 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> {
   /// dès que le conducteur est en route, pour faire bouger le marqueur en
   /// temps réel sur la carte.
   void _demarrerSuiviPosition() {
-    if (_suiviPositionDemarre) return;
+    if (_suiviPositionDemarre || !_enPremierPlan) return;
     _suiviPositionDemarre = true;
+    _suiviConnecte = null; // connexion en cours
 
-    _locationService.ecouterPosition('${widget.demandeId}', (lat, lng) {
-      if (!mounted) return;
-      setState(() => _positionChauffeur = LatLng(lat, lng));
+    _locationService.ecouterPosition(
+      '${widget.demandeId}',
+      (lat, lng) {
+        if (!mounted) return;
+        setState(() {
+          _positionChauffeur = LatLng(lat, lng);
+          _dernierePositionLe = DateTime.now();
+        });
+        unawaited(_mettreAJourItineraire());
+      },
+      onConnexion: (connecte) {
+        if (mounted) setState(() => _suiviConnecte = connecte);
+      },
+    );
+    // Réévalue « position périmée » même quand plus rien n'arrive.
+    _timerFraicheur ??= Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted) setState(() {});
     });
+  }
+
+  void _arreterSuiviPosition() {
+    _locationService.arreter();
+    _suiviPositionDemarre = false;
+    _suiviConnecte = null;
+    _timerFraicheur?.cancel();
+    _timerFraicheur = null;
   }
 
   LatLng? get _pointCible =>
       _statutBrut == 'client_a_bord' ? _positionDestination : _positionDepart;
 
-  Future<void> _rechargerItineraire() async {
-    final origine = _positionChauffeur ?? _positionDepart;
+  /// Temps et distance depuis la VRAIE position du chauffeur, jamais depuis
+  /// le point de prise en charge : sans position, aucun temps affiché
+  /// (l'ancien calcul partait du départ vers lui-même → « 0 min · 0 m »).
+  Future<void> _mettreAJourItineraire({bool force = false}) async {
+    final origine = _positionChauffeur;
     final cible = _pointCible;
-    if (origine == null || cible == null) return;
-
-    final trace = await RoutingService.recupererItineraire(
-      depart: origine,
-      arrivee: cible,
-    );
-    final duree = await RoutingService.dureeMinutesVers(
-      depart: origine,
-      arrivee: cible,
-    );
-    if (!mounted) return;
-
-    setState(() {
-      _itineraire = trace ?? const [];
-      _minutesAvantArrivee = duree;
-      _distanceKm =
-          (trace == null || trace.length < 2) ? null : _longueurKm(trace);
-    });
-  }
-
-  double _longueurKm(List<LatLng> points) {
-    const calculDistance = Distance();
-    var metres = 0.0;
-    for (var i = 0; i < points.length - 1; i++) {
-      metres += calculDistance(points[i], points[i + 1]);
+    if (origine == null || cible == null || _calculItineraireEnCours) return;
+    if (!force && _positionItineraire != null && _itineraireCalculeLe != null) {
+      final bouge = const Distance().as(LengthUnit.Meter, _positionItineraire!, origine);
+      final age = DateTime.now().difference(_itineraireCalculeLe!);
+      if (bouge < _deplacementRecalcul && age < _ageMaxItineraire) return;
     }
-    return metres / 1000;
+    _calculItineraireEnCours = true;
+    _positionItineraire = origine;
+    _itineraireCalculeLe = DateTime.now();
+    try {
+      final r = await RoutingService.calculerItineraire(depart: origine, arrivee: cible);
+      // OSRM indisponible : on garde la dernière valeur connue (ou rien).
+      if (!mounted || r == null) return;
+      setState(() {
+        _itineraire = r.trace;
+        _minutesAvantArrivee = r.minutes;
+        _distanceKm = r.km;
+      });
+    } finally {
+      _calculItineraireEnCours = false;
+    }
   }
+
+  /// Bandeau sur la carte : jamais un marqueur figé sans explication.
+  String? get _etatSuivi => etatSuiviChauffeur(
+        suiviDemarre: _suiviPositionDemarre,
+        connecte: _suiviConnecte,
+        dernierePositionLe: _dernierePositionLe,
+        positionConnue: _positionChauffeur != null,
+        maintenant: DateTime.now(),
+        ageMax: _ageMaxPosition,
+      );
 
   // ─── Mapping vers le widget présentationnel ────────────────────────────
 
@@ -407,6 +516,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> {
       // Aucune phrase de situation calculée côté serveur pour l'instant —
       // jamais de texte inventé côté app.
       phraseSituation: null,
+      etatSuivi: _etatSuivi,
       onRetour: () => Navigator.of(context).maybePop(),
       onSos: () => afficherDialogueSOS(context, demandeId: widget.demandeId),
       onPartager: _partager,

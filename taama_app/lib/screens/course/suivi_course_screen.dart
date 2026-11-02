@@ -76,6 +76,7 @@ class SuiviCourseScreen extends StatelessWidget {
     this.minutesAvantArrivee,
     this.distanceKm,
     this.phraseSituation,
+    this.etatSuivi,
     this.onSos,
     this.onPartager,
     this.onRecentrer,
@@ -118,6 +119,10 @@ class SuiviCourseScreen extends StatelessWidget {
   /// Phrase calculée serveur (« … vient de tourner sur votre rue »).
   /// Null → ligne non affichée : jamais de texte inventé côté app.
   final String? phraseSituation;
+
+  /// État du suivi temps réel (« Reconnexion au suivi… »). Prioritaire sur
+  /// [phraseSituation] : un marqueur figé ne reste jamais sans explication.
+  final String? etatSuivi;
 
   final VoidCallback onRetour;
   final VoidCallback onAnnuler;
@@ -191,11 +196,14 @@ class SuiviCourseScreen extends StatelessWidget {
               onPartager: _terminee ? null : onPartager,
               onSos: _terminee ? null : onSos,
             ),
-            if (phraseSituation != null && !_terminee)
+            if ((etatSuivi ?? phraseSituation) != null && !_terminee)
               Positioned(
                 left: 14,
                 bottom: hauteur * 0.46,
-                child: _PhraseSituation(texte: phraseSituation!),
+                child: _PhraseSituation(
+                  texte: (etatSuivi ?? phraseSituation)!,
+                  alerte: etatSuivi != null,
+                ),
               ),
             if (onRecentrer != null)
               Positioned(
@@ -333,9 +341,13 @@ class _BoutonCarte extends StatelessWidget {
 }
 
 class _PhraseSituation extends StatelessWidget {
-  const _PhraseSituation({required this.texte});
+  const _PhraseSituation({required this.texte, this.alerte = false});
 
   final String texte;
+
+  /// Suivi dégradé (reconnexion, position périmée) : point ambre au lieu
+  /// du vert « en direct ».
+  final bool alerte;
 
   @override
   Widget build(BuildContext context) {
@@ -352,8 +364,10 @@ class _PhraseSituation extends StatelessWidget {
           Container(
             width: 7,
             height: 7,
-            decoration: const BoxDecoration(
-              color: TaamaColors.accentMint,
+            decoration: BoxDecoration(
+              // Ambre du thème, lisible sur la feuille nuit (warning est un
+              // brun prévu pour du texte sur fond clair).
+              color: alerte ? TaamaColors.star : TaamaColors.accentMint,
               shape: BoxShape.circle,
             ),
           ),
