@@ -87,17 +87,20 @@ class _EcranDemandeInstantaneeState
     _calculerDistanceAuto();
   }
 
-  /// Prix le plus bas parmi les devis disponibles — sert de référence à
+  /// « À partir de » (voir prixAPartirDe) : affiché avec ou sans chauffeur,
+  /// sert aussi de référence à
   /// l'aperçu de réduction du code promo (la réduction réelle dépend du
   /// service choisi ensuite dans le sheet, revalidée à la création).
-  int? get _prixReference {
-    final services = _services;
-    if (services == null) return null;
-    final prix = services
-        .where((s) => s.disponible && s.prix != null)
-        .map((s) => s.prix!);
-    return prix.isEmpty ? null : prix.reduce((a, b) => a < b ? a : b);
-  }
+  int? get _prixReference => prixAPartirDe(
+        _services ?? const [],
+        typePreselectionne: widget.typePreselectionne,
+      );
+
+  /// Information séparée du prix : commander exige un devis, donc un chauffeur.
+  bool get _chauffeurDisponible => chauffeurDisponible(
+        _services ?? const [],
+        typePreselectionne: widget.typePreselectionne,
+      );
 
   Future<void> _verifierCodePromo() async {
     final code = _codePromoCtrl.text.trim();
@@ -698,40 +701,57 @@ class _EcranDemandeInstantaneeState
                                   ),
                               ],
                             ),
-                            if (_prixReference == null) ...[
-                              // Réponse valide mais aucun service disponible :
-                              // le serveur ne chiffre que les services avec un
-                              // chauffeur en ligne à proximité (estimer_course).
-                              // On le dit plutôt qu'un « Indisponible » qui
-                              // fait croire à une panne — et jamais de prix
-                              // inventé.
-                              const SizedBox(height: 10),
-                              const Icon(Icons.person_search_rounded,
-                                  size: 22, color: Colors.white70),
-                              const SizedBox(height: 6),
-                              const Text(
-                                'Aucun chauffeur à proximité pour le moment',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700),
-                              ),
+                            // Disponibilité : ligne distincte du prix. Pas de
+                            // nombre de chauffeurs : une berline climatisée
+                            // compte à la fois dans Berline et Confort, le
+                            // total serait faux.
+                            const SizedBox(height: 10),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  _chauffeurDisponible
+                                      ? Icons.check_circle_rounded
+                                      : Icons.person_search_rounded,
+                                  size: 16,
+                                  color: _chauffeurDisponible
+                                      ? CouleursTaama.or
+                                      : Colors.white70,
+                                ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    _chauffeurDisponible
+                                        ? 'Chauffeurs à proximité'
+                                        : 'Aucun chauffeur à proximité pour le moment',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            // Sans chauffeur, aucun devis ne fige le prix
+                            // (l'heure de pointe peut le faire varier) : ne pas
+                            // le présenter comme définitif.
+                            if (!_chauffeurDisponible && _prixReference != null) ...[
                               const SizedBox(height: 4),
                               const Text(
-                                'Le prix s’affiche dès qu’un chauffeur est disponible près de vous.',
+                                'Prix estimé · confirmé dès qu’un chauffeur est disponible',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
-                                    color: Colors.white70, fontSize: 12),
+                                    color: Colors.white70, fontSize: 11.5),
                               ),
                             ],
                             const SizedBox(height: 8),
                             GestureDetector(
                               onTap: _calculerDistanceAuto,
                               child: Text(
-                                _prixReference == null
-                                    ? '🔄 Réessayer'
-                                    : '🔄 Recalculer',
+                                _chauffeurDisponible
+                                    ? '🔄 Recalculer'
+                                    : '🔄 Réessayer',
                                 style: TextStyle(
                                     color:
                                         Colors.white.withValues(alpha: 0.6),
@@ -946,7 +966,7 @@ class _EcranDemandeInstantaneeState
             // Bouton confirmer
             ElevatedButton(
               onPressed: (_calcul || _enChargement || _distanceKm == null ||
-                      _services == null || _services!.isEmpty)
+                      !_chauffeurDisponible)
                   ? null
                   : _confirmer,
               style: ElevatedButton.styleFrom(

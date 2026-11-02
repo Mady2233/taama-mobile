@@ -69,6 +69,37 @@ class ServiceCourse {
   }
 }
 
+/// Services concernés par le choix de l'écran précédent ('Voiture'/'Moto',
+/// null = tous). 'MOTO' est le seul type_vehicule qui vaut 'Moto' côté backend.
+List<ServiceCourse> filtrerServices(
+  List<ServiceCourse> services, {
+  String? typePreselectionne,
+}) {
+  if (typePreselectionne == null) return services;
+  return services
+      .where((s) => (s.typeVehicule == 'MOTO') == (typePreselectionne == 'Moto'))
+      .toList();
+}
+
+/// Prix « À partir de » : le moins cher parmi les services disponibles, sinon
+/// parmi tous les services chiffrés par le serveur (prix sans chauffeur).
+/// Null si le serveur n'a chiffré aucun service : jamais de prix inventé.
+int? prixAPartirDe(List<ServiceCourse> services, {String? typePreselectionne}) {
+  final chiffres = filtrerServices(services, typePreselectionne: typePreselectionne)
+      .where((s) => s.prix != null);
+  final disponibles = chiffres.where((s) => s.disponible);
+  final retenus = disponibles.isNotEmpty ? disponibles : chiffres;
+  if (retenus.isEmpty) return null;
+  return retenus.map((s) => s.prix!).reduce((a, b) => a < b ? a : b);
+}
+
+/// Un chauffeur peut-il prendre ce trajet maintenant ? Il faut alors un devis :
+/// c'est lui, pas le prix affiché, qui permet de commander.
+bool chauffeurDisponible(List<ServiceCourse> services, {String? typePreselectionne}) {
+  return filtrerServices(services, typePreselectionne: typePreselectionne)
+      .any((s) => s.disponible && s.devisId != null);
+}
+
 /// Le service DISPONIBLE, non climatisé, au prix le plus bas — utilisé pour
 /// proposer un repli quand le service choisi par le client est indisponible.
 /// Fonction pure, sans dépendance UI : testable isolément (voir

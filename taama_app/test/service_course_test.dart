@@ -7,22 +7,73 @@ ServiceCourse _service({
   bool necessiteClimatisation = false,
   bool disponible = true,
   int? prix = 1000,
+  String typeVehicule = 'BERLINE',
+  int? devisId = 10,
 }) {
   return ServiceCourse(
     id: id,
     nom: nom,
     description: '',
-    typeVehicule: 'BERLINE',
+    typeVehicule: typeVehicule,
     necessiteClimatisation: necessiteClimatisation,
     disponible: disponible,
     prix: prix,
     etaMinutes: 5,
     placesMax: 4,
     conducteursProches: 1,
+    devisId: devisId,
   );
 }
 
 void main() {
+  group('prixAPartirDe', () {
+    test('aucun chauffeur : le moins cher de tous les services chiffrés', () {
+      final services = [
+        _service(id: 1, disponible: false, devisId: null, prix: 2100),
+        _service(id: 2, disponible: false, devisId: null, prix: 1400, typeVehicule: 'MOTO'),
+      ];
+      expect(prixAPartirDe(services), 1400);
+    });
+    test('un service disponible a priorité sur un moins cher sans chauffeur', () {
+      final services = [
+        _service(id: 1, disponible: true, prix: 2100),
+        _service(id: 2, disponible: false, devisId: null, prix: 1400, typeVehicule: 'MOTO'),
+      ];
+      expect(prixAPartirDe(services), 2100);
+    });
+    test('respecte le choix Voiture/Moto', () {
+      final services = [
+        _service(id: 1, prix: 2100),
+        _service(id: 2, prix: 1400, typeVehicule: 'MOTO'),
+      ];
+      expect(prixAPartirDe(services, typePreselectionne: 'Voiture'), 2100);
+      expect(prixAPartirDe(services, typePreselectionne: 'Moto'), 1400);
+    });
+    test('service sans prix (4x4, Tricycle) ignoré ; liste vide : null', () {
+      expect(prixAPartirDe([_service(disponible: false, devisId: null, prix: null)]), isNull);
+      expect(prixAPartirDe(const []), isNull);
+    });
+  });
+
+  group('chauffeurDisponible', () {
+    test('faux sans service disponible, même avec des prix', () {
+      expect(chauffeurDisponible([_service(disponible: false, devisId: null)]), isFalse);
+      expect(chauffeurDisponible(const []), isFalse);
+    });
+    test('vrai seulement avec un devis à reposter', () {
+      expect(chauffeurDisponible([_service()]), isTrue);
+      expect(chauffeurDisponible([_service(devisId: null)]), isFalse);
+    });
+    test('un chauffeur Berline ne rend pas disponible un trajet Moto', () {
+      final services = [
+        _service(id: 1),
+        _service(id: 2, disponible: false, devisId: null, typeVehicule: 'MOTO'),
+      ];
+      expect(chauffeurDisponible(services, typePreselectionne: 'Moto'), isFalse);
+      expect(chauffeurDisponible(services, typePreselectionne: 'Voiture'), isTrue);
+    });
+  });
+
   group('trouverStandardDeRepli', () {
     test('retourne le service non-clim disponible le moins cher parmi plusieurs', () {
       final services = [
