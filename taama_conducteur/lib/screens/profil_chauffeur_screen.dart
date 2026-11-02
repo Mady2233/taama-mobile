@@ -331,6 +331,22 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
     messager.showSnackBar(SnackBar(content: Text(messageFinal)));
   }
 
+  /// « MOTO • Corola • AB 1234 MD » : libellé véhicule dédupliqué du
+  /// serveur (Chauffeur.vehicule_libelle — jamais « corola Corola »), et
+  /// aucun segment vide ni « null ».
+  String _ligneVehicule(Map<String, dynamic> c) {
+    String? texte(Object? v) {
+      final t = v?.toString().trim() ?? '';
+      return t.isEmpty || t == 'null' ? null : t;
+    }
+
+    final vehicule = texte(c['vehicule']) ??
+        texte('${texte(c['marque']) ?? ''} ${texte(c['modele']) ?? ''}');
+    return [texte(c['type_transport']), vehicule, texte(c['plaque'])]
+        .whereType<String>()
+        .join(' • ');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -447,9 +463,7 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  '${_chauffeur!['type_transport']} • '
-                                  '${_chauffeur!['marque'] ?? ''} ${_chauffeur!['modele'] ?? ''} • '
-                                  '${_chauffeur!['plaque']}',
+                                  _ligneVehicule(_chauffeur!),
                                   style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
                                 ),
                               ),

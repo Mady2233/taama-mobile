@@ -127,6 +127,35 @@ void main() {
     });
   });
 
+  group('libelleVehicule (miroir de Chauffeur.vehicule_libelle)', () {
+    test('marque et modèle identiques : une seule fois, majuscule initiale', () {
+      expect(libelleVehicule('corola', 'Corola'), 'Corola');
+      expect(libelleVehicule('corola', 'corola'), 'Corola');
+    });
+    test('marque et modèle distincts : les deux', () {
+      expect(libelleVehicule('toyota', 'corolla'), 'Toyota Corolla');
+    });
+    test('casse voulue par le chauffeur respectée', () {
+      expect(libelleVehicule('BMW', 'X5'), 'BMW X5');
+    });
+    test('un seul champ, ou aucun', () {
+      expect(libelleVehicule('', 'Corola'), 'Corola');
+      expect(libelleVehicule('  Toyota ', null), 'Toyota');
+      expect(libelleVehicule(null, '  '), isNull);
+    });
+  });
+
+  testWidgets('« Corola bleue » : jamais « corola Corola bleue »', (t) async {
+    await _suivi(t,
+        chauffeur: ChauffeurCourse(
+          nomCourt: 'Mady T.',
+          plaque: 'AB 1',
+          vehicule: libelleVehicule('corola', 'Corola'),
+          couleurLibelle: couleurVehiculeFeminin('BLEU'),
+        ));
+    expect(find.text('Corola bleue'), findsOneWidget);
+  });
+
   group('couleurVehiculeFeminin', () {
     test('code serveur en capitales : accordé au féminin, minuscules', () {
       expect(couleurVehiculeFeminin('GRIS'), 'grise');

@@ -86,6 +86,31 @@ String? couleurVehiculeFeminin(String? code) {
   return table[_normaliser(code)];
 }
 
+/// Marque + modèle en un seul texte, sans doublon : miroir de
+/// Chauffeur.vehicule_libelle (backend). marque « corola » + modèle
+/// « Corola » -> « Corola », jamais « corola Corola ». Majuscule initiale
+/// seulement pour un mot tout en minuscules (« BMW » reste « BMW »).
+/// Null si rien n'est renseigné.
+String? libelleVehicule(String? marque, String? modele) {
+  final ma = _capitaliserSiMinuscules(marque ?? '');
+  final mo = _capitaliserSiMinuscules(modele ?? '');
+  final String libelle;
+  if (ma.isEmpty) {
+    libelle = mo;
+  } else if (mo.isEmpty || mo.toLowerCase() == ma.toLowerCase()) {
+    libelle = ma;
+  } else {
+    libelle = '$ma $mo';
+  }
+  return libelle.isEmpty ? null : libelle;
+}
+
+String _capitaliserSiMinuscules(String mot) {
+  final m = mot.trim();
+  final toutMinuscules = m == m.toLowerCase() && m != m.toUpperCase();
+  return toutMinuscules ? '${m[0].toUpperCase()}${m.substring(1)}' : m;
+}
+
 String _normaliser(String texte) {
   const accents = 'àâäáãçèéêëîïíìôöóòõùûüúñ';
   const sans = 'aaaaacceeeeiiiiooooouuuun';

@@ -354,9 +354,12 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
     final c = _chauffeurBrut;
     if (c == null) return null;
 
-    final marque = c['marque']?.toString() ?? '';
-    final modele = c['modele']?.toString() ?? '';
-    final vehicule = '$marque $modele'.trim();
+    // Libellé dédupliqué du serveur (Chauffeur.vehicule_libelle) ; repli
+    // sur la même règle côté app si un serveur plus ancien ne l'envoie pas.
+    final vehiculeServeur = c['vehicule']?.toString().trim() ?? '';
+    final vehicule = vehiculeServeur.isNotEmpty
+        ? vehiculeServeur
+        : libelleVehicule(c['marque']?.toString(), c['modele']?.toString());
     final noteRaw = c['note'];
     final nombreCoursesRaw = c['nombre_courses'];
 
@@ -368,7 +371,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       nombreCourses: nombreCoursesRaw is int
           ? nombreCoursesRaw
           : int.tryParse(nombreCoursesRaw?.toString() ?? ''),
-      vehicule: vehicule.isEmpty ? null : vehicule,
+      vehicule: vehicule,
       couleurVehicule: couleurVehicule(c['couleur'] as String?),
       couleurLibelle: couleurVehiculeFeminin(c['couleur'] as String?),
     );
