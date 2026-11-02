@@ -19,6 +19,7 @@ import '../../services/routing_service.dart';
 import '../../utils/format.dart';
 import '../../widgets/widget_sos.dart';
 import '../chat_screen.dart';
+import '../resultats_recherche_screen.dart';
 import 'suivi_course_screen.dart';
 
 /// Texte du bandeau d'état du suivi, ou null si tout va bien. Séparé de
@@ -65,6 +66,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
   Timer? _timerPolling;
 
   String _statutBrut = 'en_recherche';
+  bool _aucunChauffeurAffiche = false;
   Map<String, dynamic>? _chauffeurBrut;
   int? _prixEstime;
   int _soldeFcfa = 0;
@@ -219,6 +221,12 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       // que d'afficher un état trompeur.
       if (nouveauStatut == 'annule') {
         _timerPolling?.cancel();
+        if (demande['aucun_chauffeur_trouve'] == true) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _afficherAucunChauffeurTrouve();
+          });
+          return;
+        }
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
@@ -453,6 +461,41 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Erreur lors de l\'envoi de la note')),
       );
+    }
+  }
+
+  /// La recherche a dépassé son délai côté serveur. Réessayer repart d'une
+  /// nouvelle estimation : un nouveau prix, jamais l'ancien devis.
+  Future<void> _afficherAucunChauffeurTrouve() async {
+    if (_aucunChauffeurAffiche) return;
+    _aucunChauffeurAffiche = true;
+    final reessayer = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogue) => AlertDialog(
+        title: const Text('Aucun chauffeur trouvé'),
+        content: const Text('Aucun chauffeur n’est disponible près de vous pour le moment. Rien ne vous a été facturé.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogue, false),
+            child: const Text('Fermer'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogue, true),
+            child: const Text('Réessayer'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (reessayer == true) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => EcranDemandeInstantanee(destination: widget.destination),
+        ),
+      );
+    } else {
+      Navigator.of(context).popUntil((route) => route.isFirst);
     }
   }
 

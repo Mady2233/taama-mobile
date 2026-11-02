@@ -96,8 +96,13 @@ class _EcranDemandeInstantaneeState
         typePreselectionne: widget.typePreselectionne,
       );
 
-  /// Information séparée du prix : commander exige un devis, donc un chauffeur.
+  /// Purement informatif : commander dépend de _peutCommander.
   bool get _chauffeurDisponible => chauffeurDisponible(
+        _services ?? const [],
+        typePreselectionne: widget.typePreselectionne,
+      );
+
+  bool get _peutCommander => peutCommander(
         _services ?? const [],
         typePreselectionne: widget.typePreselectionne,
       );
@@ -309,6 +314,14 @@ class _EcranDemandeInstantaneeState
     );
     if (choix == null || !mounted) return;
 
+    // Planifier reste réservé à un service avec un chauffeur proche : les
+    // courses planifiées ne sont pas encore activées automatiquement.
+    if (_planifier && choix['disponible'] != true) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Aucun chauffeur proche pour ce service : impossible de planifier pour le moment.')));
+      return;
+    }
+
     DateTime? dateHeurePlanifiee;
     if (_planifier && _datePlanifiee != null && _heurePlanifiee != null) {
       dateHeurePlanifiee = DateTime(
@@ -441,6 +454,9 @@ class _EcranDemandeInstantaneeState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(e.toString().replaceAll('Exception: ', ''))));
+      // Le devis n'est peut-être plus utilisable (purgé, déjà consommé) :
+      // jamais de client bloqué sur un devis mort.
+      await _recalculerEstimation();
     } finally {
       if (mounted) setState(() => _enChargement = false);
     }
@@ -723,7 +739,7 @@ class _EcranDemandeInstantaneeState
                                   child: Text(
                                     _chauffeurDisponible
                                         ? 'Chauffeurs à proximité'
-                                        : 'Aucun chauffeur à proximité pour le moment',
+                                        : 'Aucun chauffeur à proximité · nous en cherchons un pour vous',
                                     textAlign: TextAlign.center,
                                     style: const TextStyle(
                                         color: Colors.white,
@@ -733,13 +749,11 @@ class _EcranDemandeInstantaneeState
                                 ),
                               ],
                             ),
-                            // Sans chauffeur, aucun devis ne fige le prix
-                            // (l'heure de pointe peut le faire varier) : ne pas
-                            // le présenter comme définitif.
-                            if (!_chauffeurDisponible && _prixReference != null) ...[
+                            // Prix figé par le devis, avec ou sans chauffeur.
+                            if (_peutCommander) ...[
                               const SizedBox(height: 4),
                               const Text(
-                                'Prix estimé · confirmé dès qu’un chauffeur est disponible',
+                                'Prix fixé à l’avance',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                     color: Colors.white70, fontSize: 11.5),
@@ -966,7 +980,7 @@ class _EcranDemandeInstantaneeState
             // Bouton confirmer
             ElevatedButton(
               onPressed: (_calcul || _enChargement || _distanceKm == null ||
-                      !_chauffeurDisponible)
+                      !_peutCommander || (_planifier && !_chauffeurDisponible))
                   ? null
                   : _confirmer,
               style: ElevatedButton.styleFrom(

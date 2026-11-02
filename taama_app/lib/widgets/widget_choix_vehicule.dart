@@ -25,14 +25,16 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
       : services.where((s) =>
           (s.typeVehicule == 'MOTO') == (typePreselectionne == 'Moto')).toList();
 
-  final disponibles = base.where((s) => s.disponible).toList()
-    ..sort((a, b) => (a.prix ?? 0).compareTo(b.prix ?? 0));
-  final indisponibles = base.where((s) => !s.disponible).toList();
-  final servicesTries = [...disponibles, ...indisponibles];
-  // Le moins cher disponible pilote l'en-tête (temps estimé, majoration,
+  int parPrix(ServiceCourse a, ServiceCourse b) => (a.prix ?? 0).compareTo(b.prix ?? 0);
+  final disponibles = base.where((s) => s.disponible && s.devisId != null).toList()..sort(parPrix);
+  final sansChauffeur = base.where((s) => !s.disponible && s.devisId != null).toList()..sort(parPrix);
+  final nonCommandables = base.where((s) => s.devisId == null).toList();
+  final servicesTries = [...disponibles, ...sansChauffeur, ...nonCommandables];
+  // Le premier commandable pilote l'en-tête (temps estimé, majoration,
   // détail de prix) — les autres services partagent le même trajet/la même
   // majoration horaire, seule leur tarification propre diffère.
-  final ServiceCourse? reference = disponibles.isEmpty ? null : disponibles.first;
+  final ServiceCourse? reference =
+      disponibles.isNotEmpty ? disponibles.first : (sansChauffeur.isNotEmpty ? sansChauffeur.first : null);
   final majoration = reference?.detail?['raison_majoration'] as String?;
 
   return showModalBottomSheet<Map<String, dynamic>>(
@@ -136,33 +138,34 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
                 ),
               )
             else ...[
-              // Une carte par ServiceCourse (disponibles triés par prix
-              // croissant en premier, indisponibles grisés ensuite — voir
+              // Une carte par ServiceCourse (avec chauffeur proche d'abord,
+              // puis sans chauffeur, puis non commandables grisés — voir
               // servicesTries plus haut).
               for (final service in servicesTries) ...[
                 _CarteService(
                   service: service,
                   onTap: () {
-                    if (service.disponible) {
+                    if (service.devisId != null) {
                       Navigator.pop(context, {
                         'type_service': service.id,
                         'devis_id': service.devisId,
                         'prix_estime': service.prix,
                         'temps_minutes': service.etaMinutes,
+                        'disponible': service.disponible,
                       });
                       return;
                     }
 
-                    // Indisponible : propose un repli plutôt que de laisser
+                    // Non commandable : propose un repli plutôt que de laisser
                     // le client face à une carte grisée sans issue.
                     final repli = trouverStandardDeRepli(servicesTries);
                     if (repli != null) {
                       showDialog(
                         context: context,
                         builder: (dialogContext) => AlertDialog(
-                          title: Text('Pas de ${service.nom} disponible'),
+                          title: Text('${service.nom} indisponible'),
                           content: Text(
-                            'Aucun ${service.nom} près de vous pour l\'instant.\n\n'
+                            'Le service ${service.nom} n\'est pas encore proposé.\n\n'
                             'Commander ${repli.nom} à ${repli.prix} FCFA à la place ?',
                           ),
                           actions: [
@@ -183,6 +186,7 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
                                   'devis_id': repli.devisId,
                                   'prix_estime': repli.prix,
                                   'temps_minutes': repli.etaMinutes,
+                                  'disponible': repli.disponible,
                                 });
                               },
                               style: ElevatedButton.styleFrom(
@@ -200,7 +204,7 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
                         builder: (dialogContext) => AlertDialog(
                           title: const Text('Indisponible'),
                           content: const Text(
-                            'Aucune voiture disponible près de vous pour l\'instant.',
+                            'Ce service n\'est pas encore proposé.',
                           ),
                           actions: [
                             TextButton(
@@ -463,6 +467,11 @@ class _CarteService extends StatelessWidget {
                           ),
                         ),
                       ],
+                    )
+                  else if (service.devisId != null)
+                    Text(
+                      'Recherche à la commande',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
                     ),
                 ],
               ),
@@ -470,7 +479,7 @@ class _CarteService extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (service.disponible && service.prix != null)
+                if (service.devisId != null && service.prix != null)
                   Text(
                     '${service.prix} FCFA',
                     style: TextStyle(
@@ -498,7 +507,7 @@ class _CarteService extends StatelessWidget {
                       ),
                     ),
                   ),
-                if (service.disponible)
+                if (service.devisId != null)
                   const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
               ],
             ),
@@ -507,8 +516,8 @@ class _CarteService extends StatelessWidget {
       ),
     );
 
-    // Indisponible : opacité réduite, mais PAS IgnorePointer/AbsorbPointer —
+    // Non commandable : opacité réduite, mais PAS IgnorePointer/AbsorbPointer —
     // la carte doit rester tappable (déclenche le repli).
-    return service.disponible ? carte : Opacity(opacity: 0.5, child: carte);
+    return service.devisId != null ? carte : Opacity(opacity: 0.5, child: carte);
   }
 }

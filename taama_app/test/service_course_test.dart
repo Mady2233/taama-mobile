@@ -34,12 +34,12 @@ void main() {
       ];
       expect(prixAPartirDe(services), 1400);
     });
-    test('un service disponible a priorité sur un moins cher sans chauffeur', () {
+    test('le moins cher, même sans chauffeur : tous sont commandables', () {
       final services = [
         _service(id: 1, disponible: true, prix: 2100),
-        _service(id: 2, disponible: false, devisId: null, prix: 1400, typeVehicule: 'MOTO'),
+        _service(id: 2, disponible: false, prix: 1400, typeVehicule: 'MOTO'),
       ];
-      expect(prixAPartirDe(services), 2100);
+      expect(prixAPartirDe(services), 1400);
     });
     test('respecte le choix Voiture/Moto', () {
       final services = [
@@ -55,19 +55,34 @@ void main() {
     });
   });
 
-  group('chauffeurDisponible', () {
-    test('faux sans service disponible, même avec des prix', () {
-      expect(chauffeurDisponible([_service(disponible: false, devisId: null)]), isFalse);
-      expect(chauffeurDisponible(const []), isFalse);
+  group('peutCommander', () {
+    test('un devis suffit, sans chauffeur', () {
+      expect(peutCommander([_service(disponible: false)]), isTrue);
     });
-    test('vrai seulement avec un devis à reposter', () {
-      expect(chauffeurDisponible([_service()]), isTrue);
-      expect(chauffeurDisponible([_service(devisId: null)]), isFalse);
+    test('sans devis (4x4, Tricycle, ancien serveur) : non', () {
+      expect(peutCommander([_service(devisId: null)]), isFalse);
+      expect(peutCommander(const []), isFalse);
+    });
+    test('respecte le choix Voiture/Moto', () {
+      final services = [
+        _service(id: 1),
+        _service(id: 2, devisId: null, typeVehicule: 'MOTO'),
+      ];
+      expect(peutCommander(services, typePreselectionne: 'Moto'), isFalse);
+      expect(peutCommander(services, typePreselectionne: 'Voiture'), isTrue);
+    });
+  });
+
+  group('chauffeurDisponible (informatif)', () {
+    test('indépendant du devis', () {
+      expect(chauffeurDisponible([_service(disponible: false)]), isFalse);
+      expect(chauffeurDisponible([_service(devisId: null)]), isTrue);
+      expect(chauffeurDisponible(const []), isFalse);
     });
     test('un chauffeur Berline ne rend pas disponible un trajet Moto', () {
       final services = [
         _service(id: 1),
-        _service(id: 2, disponible: false, devisId: null, typeVehicule: 'MOTO'),
+        _service(id: 2, disponible: false, typeVehicule: 'MOTO'),
       ];
       expect(chauffeurDisponible(services, typePreselectionne: 'Moto'), isFalse);
       expect(chauffeurDisponible(services, typePreselectionne: 'Voiture'), isTrue);
@@ -101,9 +116,9 @@ void main() {
       expect(repli!.id, 2);
     });
 
-    test('ignore les indisponibles même non-climatisés', () {
+    test('ignore les non commandables même non-climatisés', () {
       final services = [
-        _service(id: 1, nom: 'Pas cher mais indispo', disponible: false, prix: 500),
+        _service(id: 1, nom: 'Pas cher mais indispo', devisId: null, prix: 500),
         _service(id: 2, nom: 'Disponible', disponible: true, prix: 1000),
       ];
 
@@ -128,7 +143,7 @@ void main() {
     test('retourne null si aucun candidat valide', () {
       final services = [
         _service(id: 1, necessiteClimatisation: true, prix: 500),
-        _service(id: 2, disponible: false, prix: 600),
+        _service(id: 2, devisId: null, prix: 600),
         _service(id: 3, disponible: true, prix: null),
       ];
 

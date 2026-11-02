@@ -81,32 +81,37 @@ List<ServiceCourse> filtrerServices(
       .toList();
 }
 
-/// Prix « À partir de » : le moins cher parmi les services disponibles, sinon
-/// parmi tous les services chiffrés par le serveur (prix sans chauffeur).
+/// Prix « À partir de » : le moins cher des services chiffrés par le serveur,
+/// tous commandables, avec ou sans chauffeur.
 /// Null si le serveur n'a chiffré aucun service : jamais de prix inventé.
 int? prixAPartirDe(List<ServiceCourse> services, {String? typePreselectionne}) {
-  final chiffres = filtrerServices(services, typePreselectionne: typePreselectionne)
-      .where((s) => s.prix != null);
-  final disponibles = chiffres.where((s) => s.disponible);
-  final retenus = disponibles.isNotEmpty ? disponibles : chiffres;
-  if (retenus.isEmpty) return null;
-  return retenus.map((s) => s.prix!).reduce((a, b) => a < b ? a : b);
+  final prix = filtrerServices(services, typePreselectionne: typePreselectionne)
+      .where((s) => s.prix != null)
+      .map((s) => s.prix!);
+  return prix.isEmpty ? null : prix.reduce((a, b) => a < b ? a : b);
 }
 
-/// Un chauffeur peut-il prendre ce trajet maintenant ? Il faut alors un devis :
-/// c'est lui, pas le prix affiché, qui permet de commander.
+/// Commander exige un devis figé par le serveur, pas un chauffeur en ligne :
+/// sans chauffeur, la demande part en recherche.
+bool peutCommander(List<ServiceCourse> services, {String? typePreselectionne}) {
+  return filtrerServices(services, typePreselectionne: typePreselectionne)
+      .any((s) => s.devisId != null);
+}
+
+/// Information pour le client : un chauffeur est-il proche maintenant ?
+/// Ne conditionne pas la commande (voir peutCommander).
 bool chauffeurDisponible(List<ServiceCourse> services, {String? typePreselectionne}) {
   return filtrerServices(services, typePreselectionne: typePreselectionne)
-      .any((s) => s.disponible && s.devisId != null);
+      .any((s) => s.disponible);
 }
 
-/// Le service DISPONIBLE, non climatisé, au prix le plus bas — utilisé pour
-/// proposer un repli quand le service choisi par le client est indisponible.
+/// Le service COMMANDABLE, non climatisé, au prix le plus bas — utilisé pour
+/// proposer un repli quand le service choisi n'est pas commandable (4x4, Tricycle).
 /// Fonction pure, sans dépendance UI : testable isolément (voir
 /// test/service_course_test.dart).
 ServiceCourse? trouverStandardDeRepli(List<ServiceCourse> services) {
   final candidats = services.where(
-    (s) => s.disponible && !s.necessiteClimatisation && s.prix != null,
+    (s) => s.devisId != null && !s.necessiteClimatisation && s.prix != null,
   );
   if (candidats.isEmpty) return null;
 

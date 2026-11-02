@@ -1260,7 +1260,7 @@ class _EnAttente extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         const Text(
-          'Nous prévenons les chauffeurs les plus proches de vous.',
+          'Vous pouvez quitter l’application : vous serez prévenu dès qu’un chauffeur accepte.',
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 13, color: TaamaColors.onNightMuted),
         ),
