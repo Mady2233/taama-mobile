@@ -690,20 +690,48 @@ class _EcranDemandeInstantaneeState
                                   valeur:
                                       '${_distanceKm!.toStringAsFixed(1)} km',
                                 ),
-                                _StatPrix(
-                                  label: '💰 À partir de',
-                                  valeur: _prixReference != null
-                                      ? '$_prixReference FCFA'
-                                      : 'Indisponible',
-                                  accent: true,
-                                ),
+                                if (_prixReference != null)
+                                  _StatPrix(
+                                    label: '💰 À partir de',
+                                    valeur: '$_prixReference FCFA',
+                                    accent: true,
+                                  ),
                               ],
                             ),
+                            if (_prixReference == null) ...[
+                              // Réponse valide mais aucun service disponible :
+                              // le serveur ne chiffre que les services avec un
+                              // chauffeur en ligne à proximité (estimer_course).
+                              // On le dit plutôt qu'un « Indisponible » qui
+                              // fait croire à une panne — et jamais de prix
+                              // inventé.
+                              const SizedBox(height: 10),
+                              const Icon(Icons.person_search_rounded,
+                                  size: 22, color: Colors.white70),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'Aucun chauffeur à proximité pour le moment',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700),
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Le prix s’affiche dès qu’un chauffeur est disponible près de vous.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: Colors.white70, fontSize: 12),
+                              ),
+                            ],
                             const SizedBox(height: 8),
                             GestureDetector(
                               onTap: _calculerDistanceAuto,
                               child: Text(
-                                '🔄 Recalculer',
+                                _prixReference == null
+                                    ? '🔄 Réessayer'
+                                    : '🔄 Recalculer',
                                 style: TextStyle(
                                     color:
                                         Colors.white.withValues(alpha: 0.6),
