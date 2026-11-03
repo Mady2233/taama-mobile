@@ -11,6 +11,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../services/recherche_lieux.dart';
 import '../theme/taama_theme.dart';
 import 'courier_screen.dart';
 import 'recherche_screen.dart';
@@ -26,7 +27,7 @@ class EcranServices extends StatelessWidget {
     BuildContext context,
     String? typePreselectionne,
   ) async {
-    final resultat = await Navigator.push(
+    final resultat = await Navigator.push<DestinationChoisie>(
       context,
       MaterialPageRoute(builder: (_) => const EcranRecherche()),
     );
@@ -35,8 +36,10 @@ class EcranServices extends StatelessWidget {
         context,
         MaterialPageRoute(
           builder: (_) => EcranDemandeInstantanee(
-            destination: resultat.toString(),
+            destination: resultat.nom,
             typePreselectionne: typePreselectionne,
+            destinationLat: resultat.lat,
+            destinationLng: resultat.lng,
           ),
         ),
       );

@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import '../config/app_config.dart';
 import '../models/service_course.dart';
 import '../services/api_service.dart';
+import '../services/recherche_lieux.dart';
 import '../services/routing_service.dart';
 import '../theme/taama_theme.dart';
 import '../widgets/couche_carte_taama.dart';
@@ -28,10 +29,17 @@ class EcranDemandeInstantanee extends StatefulWidget {
   final String destination;
   final String? typePreselectionne;
 
+  /// Connues quand le client a choisi un lieu dans les suggestions : Nominatim
+  /// n'est alors pas appelé. Null pour une saisie libre, à géocoder.
+  final double? destinationLat;
+  final double? destinationLng;
+
   const EcranDemandeInstantanee({
     super.key,
     required this.destination,
     this.typePreselectionne,
+    this.destinationLat,
+    this.destinationLng,
   });
 
   @override
@@ -155,8 +163,12 @@ class _EcranDemandeInstantaneeState
         ),
       );
 
-      // 2. Géocode la destination (Nominatim OSM - gratuit)
-      final destGeocodee = await _geocoder(widget.destination);
+      // 2. Destination : coordonnées du lieu choisi, sinon géocodage (Nominatim).
+      final latConnue = widget.destinationLat;
+      final lngConnue = widget.destinationLng;
+      final destGeocodee = latConnue != null && lngConnue != null
+          ? LatLng(latConnue, lngConnue)
+          : await _geocoder(widget.destination);
       if (!mounted) return;
 
       setState(() {
@@ -194,10 +206,7 @@ class _EcranDemandeInstantaneeState
   /// introuvable ou en cas d'erreur réseau, jamais d'exception.
   Future<LatLng?> _geocoder(String texte) async {
     try {
-      final q = Uri.encodeComponent('$texte, Bamako, Mali');
-      final url = Uri.parse(
-          'https://nominatim.openstreetmap.org/search?q=$q&format=json&limit=1');
-      final reponse = await http.get(url, headers: {
+      final reponse = await http.get(uriGeocodage(texte), headers: {
         'User-Agent': AppConfig.userAgentHttp,
       }).timeout(const Duration(seconds: 10));
       if (reponse.statusCode == 200) {
@@ -259,26 +268,30 @@ class _EcranDemandeInstantaneeState
 
   Future<void> _ajouterArret() async {
     if (_arrets.length >= _maxArrets) return;
-    final resultat = await Navigator.push<String>(
+    final resultat = await Navigator.push<DestinationChoisie>(
       context,
       MaterialPageRoute(builder: (context) => const EcranRecherche()),
     );
-    if (resultat == null || resultat.trim().isEmpty || !mounted) return;
+    if (resultat == null || resultat.nom.trim().isEmpty || !mounted) return;
 
     setState(() => _recalculEnCours = true);
     try {
-      final point = await _geocoder(resultat);
+      final latConnue = resultat.lat;
+      final lngConnue = resultat.lng;
+      final point = latConnue != null && lngConnue != null
+          ? LatLng(latConnue, lngConnue)
+          : await _geocoder(resultat.nom);
       if (!mounted) return;
       if (point == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Adresse introuvable : $resultat')),
+          SnackBar(content: Text('Adresse introuvable : ${resultat.nom}')),
         );
         return;
       }
 
       setState(() {
         _arrets.add({
-          'adresse': resultat,
+          'adresse': resultat.nom,
           'latitude': point.latitude,
           'longitude': point.longitude,
         });

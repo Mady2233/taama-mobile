@@ -2,9 +2,9 @@
 //
 // Sélecteur de destination (v4). Le passager tape ou choisit une
 // destination, renvoyée à l'écran appelant via Navigator.pop(context,
-// <destination>) pour lancer une demande instantanée. Pur sélecteur : pas de
-// géocodage, pas de distance, pas de choix sur la carte (le backend ne les
-// fournit pas) — on n'affiche donc rien de tel.
+// DestinationChoisie) pour lancer une demande instantanée. Suggestions locales
+// pendant la saisie (lib/services/recherche_lieux.dart), sans réseau : un lieu
+// choisi part avec ses coordonnées.
 //
 // Style v4 (TaamaColors / TaamaText), cohérent avec l'accueil. Comportement
 // et appels API identiques à la version précédente :
@@ -21,6 +21,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/api_service.dart';
+import '../services/recherche_lieux.dart';
 import '../theme/taama_theme.dart';
 
 const int _longueurMaxAdresse = 120;
@@ -48,6 +49,7 @@ class EcranRecherche extends StatefulWidget {
 class _EcranRechercheState extends State<EcranRecherche> {
   final TextEditingController _ctrl = TextEditingController();
   final FocusNode _focus = FocusNode();
+  List<LieuTrouve> _suggestions = const [];
 
   static const List<_LieuPopulaire> _populaires = [
     _LieuPopulaire('Aéroport Modibo Keïta', 'Sénou', Icons.flight_rounded),
@@ -128,7 +130,12 @@ class _EcranRechercheState extends State<EcranRecherche> {
   void _valider(String destination) {
     final d = destination.trim();
     if (d.isEmpty) return;
-    Navigator.pop(context, d);
+    final lieu = lieuExact(d);
+    Navigator.pop(context, DestinationChoisie(d, lat: lieu?.lat, lng: lieu?.lng));
+  }
+
+  void _choisirLieu(LieuTrouve lieu) {
+    Navigator.pop(context, DestinationChoisie(lieu.adresse, lat: lieu.lat, lng: lieu.lng));
   }
 
   Future<void> _onTapEmplacementFavori(String libelle) async {
@@ -226,7 +233,11 @@ class _EcranRechercheState extends State<EcranRecherche> {
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-              children: [
+              // Le clavier reste ouvert : la liste doit pouvoir défiler dessous.
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              children: _ctrl.text.trim().length >= 2
+                  ? _contenuSuggestions(_ctrl.text.trim())
+                  : [
                 _sectionFavoris(),
                 if (_recentes.isNotEmpty) ...[
                   const SizedBox(height: 22),
@@ -259,6 +270,35 @@ class _EcranRechercheState extends State<EcranRecherche> {
     );
   }
 
+  List<Widget> _contenuSuggestions(String saisie) {
+    return [
+      if (_suggestions.isEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Text(
+            'Aucun lieu connu pour « $saisie ». Vous pouvez quand même l’utiliser.',
+            style: TaamaText.body.copyWith(fontSize: 13, color: TaamaColors.textSecondary),
+          ),
+        ),
+      for (final lieu in _suggestions)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: _LigneLieu(
+            icone: Icons.place_rounded,
+            titre: lieu.nom,
+            sousTitre: lieu.detail,
+            onTap: () => _choisirLieu(lieu),
+          ),
+        ),
+      _LigneLieu(
+        icone: Icons.edit_location_alt_rounded,
+        titre: 'Utiliser « $saisie »',
+        couleurIcone: TaamaColors.textSecondary,
+        onTap: () => _valider(saisie),
+      ),
+    ];
+  }
+
   Widget _champRecherche() {
     return Material(
       color: TaamaColors.surface,
@@ -271,7 +311,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
         textInputAction: TextInputAction.search,
         textCapitalization: TextCapitalization.sentences,
         inputFormatters: [LengthLimitingTextInputFormatter(_longueurMaxAdresse)],
-        onChanged: (_) => setState(() {}),
+        onChanged: (texte) => setState(() => _suggestions = rechercherLieux(texte)),
         onSubmitted: _valider,
         style: TaamaText.body.copyWith(fontSize: 15, fontWeight: FontWeight.w700),
         cursorColor: TaamaColors.primary,
@@ -290,7 +330,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
                   color: TaamaColors.textSecondary,
                   onPressed: () {
                     _ctrl.clear();
-                    setState(() {});
+                    setState(() => _suggestions = const []);
                   },
                 ),
           filled: true,

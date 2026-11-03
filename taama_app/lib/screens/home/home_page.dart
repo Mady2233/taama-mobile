@@ -32,6 +32,7 @@ import '../course/suivi_course_page.dart';
 import '../portefeuille_screen.dart';
 import '../profil_screen.dart';
 import '../recherche_screen.dart';
+import '../../services/recherche_lieux.dart';
 import '../resultats_recherche_screen.dart';
 import 'home_screen.dart';
 
@@ -409,21 +410,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // ─── Navigation ───
 
   Future<void> _ouvrirRecherche({String? typePreselectionne}) async {
-    final resultat = await Navigator.push<String>(
+    final resultat = await Navigator.push<DestinationChoisie>(
       context,
       MaterialPageRoute(builder: (_) => const EcranRecherche()),
     );
     if (resultat == null || !mounted) return;
-    _ouvrirDemandeInstantanee(resultat, typePreselectionne: typePreselectionne);
+    _ouvrirDemandeInstantanee(
+      resultat.nom,
+      typePreselectionne: typePreselectionne,
+      destinationLat: resultat.lat,
+      destinationLng: resultat.lng,
+    );
   }
 
-  void _ouvrirDemandeInstantanee(String destination, {String? typePreselectionne}) {
+  void _ouvrirDemandeInstantanee(
+    String destination, {
+    String? typePreselectionne,
+    double? destinationLat,
+    double? destinationLng,
+  }) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => EcranDemandeInstantanee(
           destination: destination,
           typePreselectionne: typePreselectionne,
+          destinationLat: destinationLat,
+          destinationLng: destinationLng,
         ),
       ),
     );

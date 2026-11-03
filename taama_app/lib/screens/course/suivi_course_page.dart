@@ -491,7 +491,11 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
     if (reessayer == true) {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(
-          builder: (_) => EcranDemandeInstantanee(destination: widget.destination),
+          builder: (_) => EcranDemandeInstantanee(
+            destination: widget.destination,
+            destinationLat: _positionDestination?.latitude,
+            destinationLng: _positionDestination?.longitude,
+          ),
         ),
       );
     } else {
