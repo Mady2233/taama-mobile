@@ -35,6 +35,8 @@ class TaamaColors {
   static const Color routeHaloNight = Color(0x406C5CE7);
   static const Color routeHaloDay = Color(0xFFFFFFFF);
   static const Color accentMint = Color(0xFF5DCAA5); // statut en direct
+  static const Color onAccentMint = Color(0xFF04342C); // icône posée sur accentMint
+  static const Color ombreMarqueur = Color(0x401B1A3A); // ombre des marqueurs de carte
   static const Color dangerNight = Color(0xFFF0997B);
   static const Color dangerNightBg = Color(0xFF4A1B0C);
 

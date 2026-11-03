@@ -1192,7 +1192,7 @@ class _CarteApercuItineraireState extends State<_CarteApercuItineraire> {
                         shape: BoxShape.circle,
                         border: Border.all(color: Colors.white, width: 3),
                         boxShadow: const [
-                          BoxShadow(color: Color(0x401B1A3A), blurRadius: 6),
+                          BoxShadow(color: TaamaColors.ombreMarqueur, blurRadius: 6),
                         ],
                       ),
                       child: const Icon(Icons.trip_origin, color: Colors.white, size: 14),
@@ -1218,7 +1218,7 @@ class _CarteApercuItineraireState extends State<_CarteApercuItineraire> {
                         shape: BoxShape.circle,
                         border: Border.all(color: Colors.white, width: 2),
                         boxShadow: const [
-                          BoxShadow(color: Color(0x401B1A3A), blurRadius: 4),
+                          BoxShadow(color: TaamaColors.ombreMarqueur, blurRadius: 4),
                         ],
                       ),
                       child: Center(

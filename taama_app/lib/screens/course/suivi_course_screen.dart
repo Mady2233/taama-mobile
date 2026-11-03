@@ -563,7 +563,7 @@ class _Feuille extends StatelessWidget {
               borderRadius: BorderRadius.circular(TaamaRadius.md),
             ),
             child: const Icon(Icons.check_rounded,
-                size: 26, color: Color(0xFF04342C)),
+                size: 26, color: TaamaColors.onAccentMint),
           ),
           const SizedBox(width: TaamaSpacing.md),
           const Expanded(
