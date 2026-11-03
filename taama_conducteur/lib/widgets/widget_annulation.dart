@@ -1,16 +1,38 @@
 import 'package:flutter/material.dart';
 import '../theme/couleurs_taama.dart';
 
+/// Conditions affichées, lues sur le serveur : ni délai ni montant calculés ici.
+/// [secondesGratuites] : null tant que la course n'est pas acceptée.
+({bool gratuite, String texte}) conditionsAnnulationChauffeur({
+  required int? secondesGratuites,
+  required int penaliteTardive,
+}) {
+  if (secondesGratuites == null) {
+    return (gratuite: true, texte: 'Annulation gratuite\n(course pas encore acceptée)');
+  }
+  if (secondesGratuites > 0) {
+    final minutes = (secondesGratuites / 60).ceil();
+    return (gratuite: true, texte: 'Annulation gratuite\n(encore $minutes min)');
+  }
+  if (penaliteTardive > 0) {
+    return (gratuite: false, texte: 'Pénalité de $penaliteTardive FCFA\n(délai gratuit dépassé)');
+  }
+  return (gratuite: false, texte: 'Annulation tardive\n(comptée en cas d’annulations répétées)');
+}
+
 /// Dialogue d'annulation avec choix du motif et affichage
 /// de la pénalité éventuelle selon la politique Taama.
 Future<Map<String, dynamic>?> afficherDialogueAnnulation(
   BuildContext context, {
-  required DateTime dateCreation,
+  required int? secondesGratuites,
+  required int penaliteTardive,
   required bool estChauffeur,
 }) async {
-  final minutes = DateTime.now().difference(dateCreation).inSeconds / 60;
-  final estGratuit = minutes < 2;
-  final penalite = estChauffeur ? 500 : 200;
+  final conditions = conditionsAnnulationChauffeur(
+    secondesGratuites: secondesGratuites,
+    penaliteTardive: penaliteTardive,
+  );
+  final estGratuit = conditions.gratuite;
 
   String? motifChoisi;
 
@@ -49,10 +71,7 @@ Future<Map<String, dynamic>?> afficherDialogueAnnulation(
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      estGratuit
-                          ? 'Annulation gratuite\n(moins de 2 minutes)'
-                          : 'Pénalité de $penalite FCFA\n'
-                            '(${minutes.toStringAsFixed(1)} min écoulées)',
+                      conditions.texte,
                       style: TextStyle(
                         color: estGratuit ? Colors.green : Colors.red,
                         fontWeight: FontWeight.bold,

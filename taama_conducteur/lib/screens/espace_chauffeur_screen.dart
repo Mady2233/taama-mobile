@@ -18,6 +18,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../carte/fond_carte.dart';
+import '../services/annulations_course.dart';
 import '../services/api_service.dart';
 import '../services/config_app.dart';
 import '../services/demande_entrante_navigator.dart';
@@ -285,11 +286,24 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     await _resynchroniserDisponibilite();
   }
 
+  /// Une course en route qui disparaît de la liste a été annulée par le client :
+  /// secours si le push n'est pas arrivé. L'écran de navigation fait le tri avec
+  /// une fin de course lancée par le chauffeur lui-même.
+  void _signalerCoursesDisparues(List<dynamic> demandes) {
+    final presentes = demandes.map((d) => d['id']).toSet();
+    for (final ancienne in _demandesAssignees) {
+      if (ancienne['statut'] == 'en_route' && !presentes.contains(ancienne['id'])) {
+        AnnulationsCourse.signaler(ancienne['id'] as int);
+      }
+    }
+  }
+
   Future<void> _rafraichirDemandesAssignees() async {
     try {
       final demandes = await ApiService.mesDemandesAssignees();
       if (!mounted) return;
       _detecterNouvelleDemande(demandes);
+      _signalerCoursesDisparues(demandes);
       setState(() {
         _demandesAssignees = demandes;
         _erreurDemandes = null;
@@ -482,10 +496,15 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _annulerCourse(int demandeId, DateTime dateCreation) async {
+  Future<void> _annulerCourse(Map<String, dynamic> demande) async {
+    final demandeId = demande['id'] as int;
+    // Sans information du serveur sur une course acceptée (ancien backend) : pas
+    // de « gratuite » annoncée. Le serveur reste seul à décider.
     final resultat = await afficherDialogueAnnulation(
       context,
-      dateCreation: dateCreation,
+      secondesGratuites: (demande['annulation_gratuite_secondes'] as num?)?.toInt() ??
+          (demande['statut'] == 'en_route' ? 0 : null),
+      penaliteTardive: (demande['penalite_annulation_tardive'] as num?)?.toInt() ?? 0,
       estChauffeur: true,
     );
     if (resultat == null) return;
@@ -932,11 +951,6 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
                     ..._demandesAssignees.map((demande) {
                       final enAttente = demande['statut'] == 'chauffeur_trouve';
                       final demandeId = demande['id'] as int;
-                      final dateCreation =
-                          DateTime.tryParse(
-                            demande['cree_le']?.toString() ?? '',
-                          ) ??
-                          DateTime.now();
                       // Clé incluant enAttente (pas juste l'id) : force un
                       // remontage complet du sous-arbre quand le statut
                       // bascule 'chauffeur_trouve' -> 'en_route' (la Row
@@ -962,8 +976,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
                             roomName: 'demande_${demande['id']}',
                             titre: 'Client - ${demande['destination']}',
                           ),
-                          onAnnuler: () =>
-                              _annulerCourse(demandeId, dateCreation),
+                          onAnnuler: () => _annulerCourse(demande as Map<String, dynamic>),
                         ),
                       );
                     }),

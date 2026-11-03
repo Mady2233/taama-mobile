@@ -1,6 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/foundation.dart';
+import 'annulations_course.dart';
 import 'api_service.dart';
 import 'demande_entrante_navigator.dart';
 
@@ -165,6 +166,11 @@ class NotificationService {
     Map<String, dynamic> donnees, {
     bool sonner = true,
   }) {
+    if (donnees['type'] == 'demande_annulee') {
+      final id = int.tryParse(donnees['demande_id']?.toString() ?? '');
+      if (id != null) AnnulationsCourse.signaler(id);
+      return;
+    }
     if (!_estNouvelleDemande(donnees)) return;
     final demandeId = int.tryParse(donnees['demande_id']?.toString() ?? '');
     if (demandeId == null) return;

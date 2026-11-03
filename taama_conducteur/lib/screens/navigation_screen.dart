@@ -34,6 +34,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/app_config.dart';
 import '../theme/couleurs_taama.dart';
+import '../services/annulations_course.dart';
 import '../services/location_service.dart';
 import '../services/api_service.dart';
 import '../widgets/couche_carte_taama.dart';
@@ -145,6 +146,9 @@ class _EcranNavigationState extends State<EcranNavigation> {
   // 1re jambe : suggestion seulement, sans effet sur la course ni sur le serveur.
   bool _procheDuClient = false;
   bool _suggestionAnnoncee = false;
+  StreamSubscription<int>? _abonnementAnnulation;
+  bool _annulationAffichee = false;
+  bool _terminaisonEnCours = false;
   // false = 1re jambe (vers le point de départ du client) ; true = 2e jambe
   // (client à bord, vers sa destination).
   bool _jambeVersDestination = false;
@@ -171,8 +175,39 @@ class _EcranNavigationState extends State<EcranNavigation> {
   void initState() {
     super.initState();
     _jambeVersDestination = widget.clientDejaABord;
+    _abonnementAnnulation = AnnulationsCourse.flux.listen(_surAnnulationClient);
     _initialiserTts();
     _initialiser();
+  }
+
+  /// Le client a annulé : on arrête le guidage et l'envoi de position, et on
+  /// revient à l'accueil. Le chauffeur ne doit pas continuer vers ce client.
+  void _surAnnulationClient(int demandeId) {
+    if (demandeId != widget.demandeId ||
+        _terminaisonEnCours ||
+        _annulationAffichee ||
+        !mounted) {
+      return;
+    }
+    _annulationAffichee = true;
+    _positionStream?.cancel();
+    _positionStream = null;
+    _locationService.arreter();
+    _tts.stop();
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogue) => AlertDialog(
+        title: const Text('Course annulée'),
+        content: const Text('Le client a annulé cette course.'),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.of(dialogue).popUntil((route) => route.isFirst),
+            child: const Text('Retour à l’accueil'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _initialiserTts() async {
@@ -183,6 +218,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
 
   @override
   void dispose() {
+    _abonnementAnnulation?.cancel();
     _positionStream?.cancel();
     _locationService.arreter();
     _tts.stop();
@@ -583,7 +619,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
       texte: 'Le guidage passera vers sa destination : ${widget.destination}.',
       action: 'Oui, démarrer le trajet',
     );
-    if (ok != true || !mounted) return;
+    if (ok != true || !mounted || _annulationAffichee) return;
     setState(() => _actionEnCours = true);
     try {
       await _demarrerJambeVersDestination();
@@ -647,6 +683,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
 
   Future<void> _terminerCourse(BuildContext dialogContext) async {
     Navigator.pop(dialogContext);
+    _terminaisonEnCours = true;
     try {
       await ApiService.terminerCourse(widget.demandeId);
       if (!mounted) return;
@@ -657,6 +694,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
       _positionStream?.cancel();
       Navigator.pop(context);
     } catch (e) {
+      _terminaisonEnCours = false;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erreur : ${e.toString().replaceAll("Exception: ", "")}')),
