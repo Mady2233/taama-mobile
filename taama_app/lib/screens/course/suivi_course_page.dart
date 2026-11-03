@@ -17,6 +17,7 @@ import '../../services/config_app.dart';
 import '../../services/location_service.dart';
 import '../../services/routing_service.dart';
 import '../../utils/format.dart';
+import '../../widgets/dialogue_annulation_course.dart';
 import '../../widgets/widget_sos.dart';
 import '../chat_screen.dart';
 import '../resultats_recherche_screen.dart';
@@ -67,6 +68,10 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
 
   String _statutBrut = 'en_recherche';
   bool _aucunChauffeurAffiche = false;
+  bool _annulationEnCours = false;
+  // Conditions d'annulation envoyées par le serveur à chaque rafraîchissement.
+  int? _annulationGratuiteSecondes;
+  int _penaliteAnnulationTardive = 0;
   Map<String, dynamic>? _chauffeurBrut;
   int? _prixEstime;
   int _soldeFcfa = 0;
@@ -212,6 +217,8 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
         _positionDepart = depart;
         _positionDestination = destination;
         _paye = demande['paye'] as bool? ?? false;
+        _annulationGratuiteSecondes = (demande['annulation_gratuite_secondes'] as num?)?.toInt();
+        _penaliteAnnulationTardive = (demande['penalite_annulation_tardive'] as num?)?.toInt() ?? 0;
         _dejaNote = demande['deja_note'] as bool? ?? false;
       });
 
@@ -388,8 +395,20 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
   // ─── Actions ────────────────────────────────────────────────────────────
 
   Future<void> _annuler() async {
+    if (_annulationEnCours) return;
+    // Sans information du serveur sur une course acceptée (ancien backend) : pas
+    // de « gratuite » annoncée. Le serveur reste seul à décider.
+    final motif = await afficherDialogueAnnulationCourse(
+      context,
+      secondesGratuites:
+          _annulationGratuiteSecondes ?? (_statutBrut == 'en_route' ? 0 : null),
+      penaliteTardive: _penaliteAnnulationTardive,
+    );
+    if (motif == null || !mounted) return;
+
+    _annulationEnCours = true;
     try {
-      final reponse = await ApiService.annulerDemande(widget.demandeId);
+      final reponse = await ApiService.annulerDemande(widget.demandeId, motif: motif);
       _timerPolling?.cancel();
       if (!mounted) return;
       final penalite = reponse['penalite'] as int? ?? 0;
@@ -408,6 +427,8 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
       );
+    } finally {
+      _annulationEnCours = false;
     }
   }
 

@@ -462,7 +462,7 @@ class ApiService {
       Uri.parse('$_baseUrl/trajets/demandes/$demandeId/annuler/'),
       headers: _headers,
       body: jsonEncode({'motif': motif}),
-    );
+    ).timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
