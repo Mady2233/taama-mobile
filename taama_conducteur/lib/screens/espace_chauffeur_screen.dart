@@ -837,6 +837,22 @@ class _CarteProfil extends StatelessWidget {
                     _badgeVerification(context),
                   ],
                 ),
+                // Le serveur ne propose aucune course à un compte non vérifié.
+                if (profil['verifie'] != true) ...[
+                  const SizedBox(height: 6),
+                  InkWell(
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const EcranVerificationConducteur(),
+                      ),
+                    ),
+                    child: const Text(
+                      'Vous recevrez des courses une fois votre compte vérifié.',
+                      style: TextStyle(fontSize: 12, color: CouleursTaama.grisTexte),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
