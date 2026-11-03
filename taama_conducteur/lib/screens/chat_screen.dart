@@ -66,7 +66,7 @@ class _EcranChatState extends State<EcranChat> {
 
     try {
       _channel = WebSocketChannel.connect(uri);
-      debugPrint('WebSocket connecté sur : $uri');
+      debugPrint('WebSocket connecté (salon ${widget.roomName})');
       setState(() {
         _connecte = true;
         _erreur = false;

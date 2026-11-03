@@ -11,6 +11,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 
+import '../config/app_config.dart';
 import '../config/carte_config.dart';
 import '../widgets/couche_carte_taama.dart' show FondCarteIndisponible;
 
@@ -86,7 +87,9 @@ TileLayer coucheTuilesTaama({
 }) =>
     TileLayer(
       urlTemplate: url,
-      userAgentPackageName: 'com.taama',
+      // En-tête envoyé : « flutter_map (<applicationId>) », exigé par les
+      // politiques d'usage des serveurs de tuiles.
+      userAgentPackageName: AppConfig.applicationId,
       tileProvider: fournisseurTuiles(client: client, cache: cache),
       maxNativeZoom: 19,
       panBuffer: apercu ? 0 : 1,
