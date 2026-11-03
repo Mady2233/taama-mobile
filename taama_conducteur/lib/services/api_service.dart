@@ -404,7 +404,9 @@ class ApiService {
   }
 
   static Future<List<dynamic>> mesDemandesAssignees() async {
-    final reponse = await http.get(Uri.parse('$_baseUrl/trajets/demandes/mes-demandes-assignees/'), headers: _headers);
+    final reponse = await http
+        .get(Uri.parse('$_baseUrl/trajets/demandes/mes-demandes-assignees/'), headers: _headers)
+        .timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse) as List<dynamic>;
   }
 
@@ -432,7 +434,9 @@ class ApiService {
   /// Signale que le conducteur a récupéré le client au point de départ —
   /// démarre la 2e jambe (vers la destination) côté backend.
   static Future<Map<String, dynamic>> marquerClientABord(int demandeId) async {
-    final reponse = await http.post(Uri.parse('$_baseUrl/trajets/demandes/$demandeId/client-a-bord/'), headers: _headers);
+    final reponse = await http
+        .post(Uri.parse('$_baseUrl/trajets/demandes/$demandeId/client-a-bord/'), headers: _headers)
+        .timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 

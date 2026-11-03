@@ -14,7 +14,8 @@
 // - suivi automatique de la carte, suspendu quand le chauffeur la déplace,
 //   avec bouton « Recentrer » ;
 // - boutons explicites « Client à bord » et « Terminer la course » (avec
-//   confirmation), en plus de la détection automatique à 100 m ;
+//   confirmation). À 100 m du client, simple suggestion : seul le chauffeur
+//   peut déclarer le client à bord ;
 // - « Quitter » ne prétend plus terminer la course ;
 // - « Ouvrir dans Google Maps » ;
 // - si la position du client est introuvable : message clair, jamais de
@@ -67,6 +68,12 @@ class _EtapeNavigation {
 /// Hauteur réservée en bas pour le panneau d'actions (attribution et badges
 /// se placent au-dessus).
 const double _hauteurPanneau = 186;
+
+/// Le chauffeur est-il assez près du client pour lui suggérer « Client à bord » ?
+/// Une fois proche, il le reste jusqu'à 150 m : la position GPS varie à l'arrêt,
+/// la suggestion ne doit pas clignoter autour de 100 m.
+bool procheDuPointDePriseEnCharge({required double distanceM, required bool dejaProche}) =>
+    distanceM <= 100 || (dejaProche && distanceM <= 150);
 
 /// Écran de navigation GPS pour le conducteur.
 /// Affiche l'itinéraire entre sa position actuelle et le client,
@@ -135,6 +142,9 @@ class _EcranNavigationState extends State<EcranNavigation> {
   bool _chargement = true;
   bool _navigationDemarree = false;
   bool _arriveeDetectee = false;
+  // 1re jambe : suggestion seulement, sans effet sur la course ni sur le serveur.
+  bool _procheDuClient = false;
+  bool _suggestionAnnoncee = false;
   // false = 1re jambe (vers le point de départ du client) ; true = 2e jambe
   // (client à bord, vers sa destination).
   bool _jambeVersDestination = false;
@@ -479,19 +489,28 @@ class _EcranNavigationState extends State<EcranNavigation> {
   /// Détecte automatiquement l'arrivée au point suivi (< 100m). Sur la 1re
   /// jambe (vers le client), bascule vers la 2e jambe si une destination
   /// réelle est connue ; sinon (ou sur la 2e jambe), propose de terminer.
+  /// Être proche ne prouve pas que le client est monté : un chauffeur qui passe
+  /// à moins de 100 m ne doit jamais couper le suivi du client ni le priver de
+  /// l'annulation. Le passage en « Course » n'a qu'un chemin : _clientABordManuel.
   Future<void> _verifierArrivee() async {
-    if (_arriveeDetectee || _positionConducteur == null || _positionClient == null) return;
+    if (_positionConducteur == null || _positionClient == null) return;
 
     const Distance distance = Distance();
     final d = distance(_positionConducteur!, _positionClient!);
 
+    if (!_jambeVersDestination && _positionDestinationReelle != null) {
+      final proche = procheDuPointDePriseEnCharge(distanceM: d, dejaProche: _procheDuClient);
+      if (proche != _procheDuClient && mounted) setState(() => _procheDuClient = proche);
+      if (proche && !_suggestionAnnoncee) {
+        _suggestionAnnoncee = true;
+        await _tts.speak('Vous êtes près du client. Appuyez sur Client à bord quand il est monté.');
+      }
+      return;
+    }
+
+    if (_arriveeDetectee) return;
     if (d <= 100) {
       _arriveeDetectee = true;
-
-      if (!_jambeVersDestination && _positionDestinationReelle != null) {
-        await _demarrerJambeVersDestination();
-        return;
-      }
 
       await _tts.speak('Vous êtes arrivé à destination');
       if (!mounted) return;
@@ -509,6 +528,16 @@ class _EcranNavigationState extends State<EcranNavigation> {
       await ApiService.marquerClientABord(widget.demandeId);
     } catch (e) {
       debugPrint('[Navigation] Erreur marquer client à bord : $e');
+      // Réponse perdue alors que le serveur a bien enregistré : on relit le
+      // statut. Sinon on reste en « Prise en charge » : jamais un écran en
+      // « Course » pendant que le serveur et le client en sont encore à l'approche.
+      if (!await _clientDejaABordCoteServeur()) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Impossible de confirmer. Vérifie ta connexion et réessaie.'),
+        ));
+        return;
+      }
     }
 
     final texteArrets = widget.arrets.isNotEmpty
@@ -520,6 +549,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
 
     setState(() {
       _jambeVersDestination = true;
+      _procheDuClient = false;
       _positionClient = _positionDestinationReelle;
       _arriveeDetectee = false;
       _etapes = [];
@@ -532,8 +562,20 @@ class _EcranNavigationState extends State<EcranNavigation> {
     _centrerCarte();
   }
 
-  /// Bouton « Client à bord » : même effet que la détection à 100 m, pour
-  /// quand le GPS dérive ou que le client attend un peu plus loin.
+  Future<bool> _clientDejaABordCoteServeur() async {
+    try {
+      final demandes = await ApiService.mesDemandesAssignees();
+      return demandes.any(
+        (d) => d is Map && d['id'] == widget.demandeId && d['statut'] == 'client_a_bord',
+      );
+    } catch (e) {
+      debugPrint('[Navigation] Erreur relecture du statut : $e');
+      return false;
+    }
+  }
+
+  /// Bouton « Client à bord » : le seul chemin vers la 2e jambe, avec confirmation
+  /// (le serveur ne permet aucun retour en arrière).
   Future<void> _clientABordManuel() async {
     if (_jambeVersDestination || _actionEnCours) return;
     final ok = await _confirmer(
@@ -543,7 +585,6 @@ class _EcranNavigationState extends State<EcranNavigation> {
     );
     if (ok != true || !mounted) return;
     setState(() => _actionEnCours = true);
-    _arriveeDetectee = true;
     try {
       await _demarrerJambeVersDestination();
     } finally {
@@ -1152,30 +1193,36 @@ class _EcranNavigationState extends State<EcranNavigation> {
                 ),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  _Chiffre(
-                    valeur: _dureeMinutes != null ? '$_dureeMinutes' : '—',
-                    unite: 'min',
-                    couleur: CouleursTaama.terreCuite,
-                    secondaire: secondaire,
-                  ),
-                  _separateur(secondaire),
-                  _Chiffre(
-                    valeur: _distanceKm != null ? _distanceKm!.toStringAsFixed(1) : '—',
-                    unite: 'km',
-                    couleur: texte,
-                    secondaire: secondaire,
-                  ),
-                  _separateur(secondaire),
-                  _Chiffre(
-                    valeur: _heureArrivee,
-                    unite: 'arrivée',
-                    couleur: texte,
-                    secondaire: secondaire,
-                  ),
-                ],
-              ),
+              // À l'arrivée, durée et distance n'apprennent plus rien : la
+              // suggestion prend leur place, sans changer la hauteur du panneau
+              // (la carte et l'attribution se placent d'après elle).
+              if (_navigationDemarree && _procheDuClient && !_jambeVersDestination)
+                _SuggestionClientABord(couleurTexte: texte)
+              else
+                Row(
+                  children: [
+                    _Chiffre(
+                      valeur: _dureeMinutes != null ? '$_dureeMinutes' : '—',
+                      unite: 'min',
+                      couleur: CouleursTaama.terreCuite,
+                      secondaire: secondaire,
+                    ),
+                    _separateur(secondaire),
+                    _Chiffre(
+                      valeur: _distanceKm != null ? _distanceKm!.toStringAsFixed(1) : '—',
+                      unite: 'km',
+                      couleur: texte,
+                      secondaire: secondaire,
+                    ),
+                    _separateur(secondaire),
+                    _Chiffre(
+                      valeur: _heureArrivee,
+                      unite: 'arrivée',
+                      couleur: texte,
+                      secondaire: secondaire,
+                    ),
+                  ],
+                ),
               const SizedBox(height: 14),
               AnimatedSwitcher(
                 duration: duree,
@@ -1269,6 +1316,32 @@ class _EcranNavigationState extends State<EcranNavigation> {
 }
 
 // ─── Widgets ───
+
+class _SuggestionClientABord extends StatelessWidget {
+  const _SuggestionClientABord({required this.couleurTexte});
+  final Color couleurTexte;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        children: [
+          const Icon(Icons.place_rounded, color: CouleursTaama.terreCuite, size: 28),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Vous êtes près du client. Appuyez sur « Client à bord » quand il est monté.',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: couleurTexte, fontSize: 14, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _Chiffre extends StatelessWidget {
   const _Chiffre({
