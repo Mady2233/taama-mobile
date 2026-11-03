@@ -164,9 +164,10 @@ class SuiviCourseScreen extends StatelessWidget {
     final hauteur = MediaQuery.sizeOf(context).height;
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
+      // Carte claire : icônes de la barre d'état foncées, sinon invisibles.
+      value: SystemUiOverlayStyle.dark,
       child: Scaffold(
-        backgroundColor: TaamaColors.night,
+        backgroundColor: TaamaColors.mapPlaceholder,
         body: Stack(
           children: [
             Positioned.fill(
@@ -185,7 +186,7 @@ class SuiviCourseScreen extends StatelessWidget {
                     ),
                 ],
                 itineraire: itineraire,
-                themeNuit: true,
+                themeNuit: false,
                 margeCadrage: const EdgeInsets.fromLTRB(56, 110, 56, 320),
                 // Le panneau du bas couvre le coin inférieur : l'attribution
                 // passe sous la barre haute (boutons de 44 px à haut + 12).

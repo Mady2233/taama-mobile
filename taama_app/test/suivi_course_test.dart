@@ -2,6 +2,7 @@
 // bandeau quand le suivi temps réel décroche, glissement du marqueur, et
 // lecture d'une réponse OSRM en un seul appel.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:taama_app/screens/course/suivi_course_page.dart';
@@ -43,6 +44,17 @@ Future<void> _suivi(
 }
 
 void main() {
+  testWidgets('carte du suivi claire, icônes de la barre d’état foncées', (t) async {
+    await _suivi(t);
+    expect(t.widget<TaamaMap>(find.byType(TaamaMap)).themeNuit, isFalse);
+    final region = t.widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+      find.byWidgetPredicate(
+        (w) => w is AnnotatedRegion<SystemUiOverlayStyle> && w.value == SystemUiOverlayStyle.dark,
+      ),
+    );
+    expect(region.value, SystemUiOverlayStyle.dark);
+  });
+
   group('temps d\'arrivée', () {
     testWidgets('inconnu : aucun « min » affiché (plus jamais « 0 min »)', (t) async {
       await _suivi(t);
