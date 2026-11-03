@@ -1,11 +1,43 @@
-import 'package:flutter/material.dart';
-import '../services/api_service.dart';
-import '../theme/couleurs_taama.dart';
+// lib/screens/recherche_screen.dart
+//
+// Sélecteur de destination (v4). Le passager tape ou choisit une
+// destination, renvoyée à l'écran appelant via Navigator.pop(context,
+// <destination>) pour lancer une demande instantanée. Pur sélecteur : pas de
+// géocodage, pas de distance, pas de choix sur la carte (le backend ne les
+// fournit pas) — on n'affiche donc rien de tel.
+//
+// Style v4 (TaamaColors / TaamaText), cohérent avec l'accueil. Comportement
+// et appels API identiques à la version précédente :
+//  - favoris Domicile/Travail + libellés libres (ajout / suppression) ;
+//  - destinations récentes dérivées de l'historique (max 5) ;
+//  - destinations populaires de Bamako (liste fixe) ;
+//  - saisie libre validée à la soumission.
+//
+// Corrigé vs v3 : contrôleur du dialogue d'ajout libéré, longueurs de saisie
+// limitées, lecture défensive des favoris, logs en debug uniquement.
 
-/// Sélecteur de destination texte : le passager tape ou choisit une
-/// destination populaire, qui est renvoyée (Navigator.pop) à l'écran
-/// appelant pour lancer une demande instantanée. Ne recherche plus d'offres
-/// publiées (dispatch pur) — c'est un simple sélecteur de destination.
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../services/api_service.dart';
+import '../theme/taama_theme.dart';
+
+const int _longueurMaxAdresse = 120;
+
+void _journal(String message) {
+  if (kDebugMode) debugPrint('[Recherche] $message');
+}
+
+/// Destination populaire : libellé, quartier et icône (plus d'emoji, pour
+/// rester cohérent avec le reste de l'app v4).
+class _LieuPopulaire {
+  const _LieuPopulaire(this.nom, this.quartier, this.icone);
+  final String nom;
+  final String quartier;
+  final IconData icone;
+}
+
 class EcranRecherche extends StatefulWidget {
   const EcranRecherche({super.key});
 
@@ -17,48 +49,70 @@ class _EcranRechercheState extends State<EcranRecherche> {
   final TextEditingController _ctrl = TextEditingController();
   final FocusNode _focus = FocusNode();
 
-  // Destinations populaires à Bamako
-  final List<Map<String, String>> _populaires = [
-    {'nom': 'Aéroport Modibo Keïta', 'quartier': 'Sénou', 'emoji': '✈️'},
-    {'nom': 'Grand Marché', 'quartier': 'Centre-ville', 'emoji': '🛒'},
-    {'nom': 'ACI 2000', 'quartier': 'Hamdallaye', 'emoji': '🏢'},
-    {'nom': 'Hippodrome', 'quartier': 'Badalabougou', 'emoji': '🏟️'},
-    {'nom': 'Kalaban Coro', 'quartier': 'Banlieue Sud', 'emoji': '🏘️'},
-    {'nom': 'Magnambougou', 'quartier': 'Rive Droite', 'emoji': '🌉'},
-    {'nom': 'Sotuba', 'quartier': 'Zone Industrielle', 'emoji': '🏭'},
-    {'nom': 'Commune VI', 'quartier': 'Yirimadjo', 'emoji': '🏙️'},
+  static const List<_LieuPopulaire> _populaires = [
+    _LieuPopulaire('Aéroport Modibo Keïta', 'Sénou', Icons.flight_rounded),
+    _LieuPopulaire('Grand Marché', 'Centre-ville', Icons.storefront_rounded),
+    _LieuPopulaire('ACI 2000', 'Hamdallaye', Icons.apartment_rounded),
+    _LieuPopulaire('Hippodrome', 'Badalabougou', Icons.stadium_rounded),
+    _LieuPopulaire('Kalaban Coro', 'Banlieue Sud', Icons.home_work_rounded),
+    _LieuPopulaire('Magnambougou', 'Rive Droite', Icons.route_rounded),
+    _LieuPopulaire('Sotuba', 'Zone Industrielle', Icons.factory_rounded),
+    _LieuPopulaire('Commune VI', 'Yirimadjo', Icons.location_city_rounded),
   ];
 
-  // Destinations récentes du passager, dérivées de son historique de
-  // demandes (aucun modèle backend dédié — on réutilise mesDemandesClient()
-  // plutôt que d'ajouter un nouvel endpoint pour une simple liste d'affichage).
-  List<String> _recentes = [];
+  // Destinations récentes dérivées de l'historique (réutilise
+  // mesDemandesClient() plutôt qu'un endpoint dédié), dédoublonnées, max 5.
+  List<String> _recentes = const [];
 
-  // Adresses favorites du passager (Domicile/Travail + éventuels libellés
-  // personnalisés) — chargées depuis le backend, gérées entièrement sur cet
-  // écran (ajout via les deux emplacements fixes, suppression par appui long).
-  List<Map<String, dynamic>> _favoris = [];
+  // Favoris (Domicile/Travail + libellés libres), chargés du backend.
+  List<Map<String, dynamic>> _favoris = const [];
 
   @override
   void initState() {
     super.initState();
-    // Auto-focus au démarrage
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focus.requestFocus();
+      if (mounted) _focus.requestFocus();
     });
     _chargerDestinationsRecentes();
     _chargerFavoris();
   }
 
-  /// Même échec silencieux volontaire que _chargerDestinationsRecentes.
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  // ─── Données ───
+
+  /// Échec silencieux volontaire : affichage de confort, pas critique.
   Future<void> _chargerFavoris() async {
     try {
       final favoris = await ApiService.mesAdressesFavorites();
-      if (mounted) {
-        setState(() => _favoris = favoris.cast<Map<String, dynamic>>());
-      }
+      if (!mounted) return;
+      setState(() => _favoris = favoris.whereType<Map<String, dynamic>>().toList());
     } catch (e) {
-      debugPrint('Erreur chargement favoris : $e');
+      _journal('Erreur chargement favoris : $e');
+    }
+  }
+
+  Future<void> _chargerDestinationsRecentes() async {
+    try {
+      final demandes = await ApiService.mesDemandesClient();
+      final vues = <String>{};
+      final recentes = <String>[];
+      for (final d in demandes) {
+        if (d is! Map) continue;
+        final destination = d['destination']?.toString();
+        if (destination == null || destination.isEmpty) continue;
+        if (vues.add(destination) && recentes.length < 5) {
+          recentes.add(destination);
+        }
+      }
+      if (mounted) setState(() => _recentes = recentes);
+    } catch (e) {
+      _journal('Erreur chargement destinations récentes : $e');
     }
   }
 
@@ -69,43 +123,28 @@ class _EcranRechercheState extends State<EcranRecherche> {
     return null;
   }
 
-  /// Emplacement fixe (Domicile/Travail) : sélectionne l'adresse déjà
-  /// enregistrée, ou propose de la définir si ce n'est pas encore fait.
+  // ─── Actions ───
+
+  void _valider(String destination) {
+    final d = destination.trim();
+    if (d.isEmpty) return;
+    Navigator.pop(context, d);
+  }
+
   Future<void> _onTapEmplacementFavori(String libelle) async {
     final favori = _favori(libelle);
-    if (favori != null) {
-      _valider(favori['adresse'] as String);
+    final adresse = favori?['adresse']?.toString();
+    if (adresse != null && adresse.isNotEmpty) {
+      _valider(adresse);
       return;
     }
     await _ouvrirDialogueAjoutFavori(libelle);
   }
 
   Future<void> _ouvrirDialogueAjoutFavori(String libelle) async {
-    final ctrl = TextEditingController();
     final adresse = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Adresse "$libelle"'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: 'Ex : Hippodrome, Bamako'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Annuler'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: CouleursTaama.terreCuite,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Enregistrer'),
-          ),
-        ],
-      ),
+      builder: (_) => _DialogueAdresseFavori(libelle: libelle),
     );
     if (adresse == null || adresse.isEmpty || !mounted) return;
 
@@ -115,6 +154,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
         adresse: adresse,
       );
       if (!mounted) return;
+      // enregistrerAdresseFavorite renvoie toujours un Map<String, dynamic>.
       setState(() {
         _favoris = [
           ..._favoris.where((f) => f['libelle'] != libelle),
@@ -123,10 +163,11 @@ class _EcranRechercheState extends State<EcranRecherche> {
       });
       _valider(adresse);
     } catch (e) {
+      _journal('Erreur enregistrement favori : $e');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content:
-              Text('Erreur : ${e.toString().replaceAll('Exception: ', '')}')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Impossible d'enregistrer l'adresse. Réessayez.")),
+      );
     }
   }
 
@@ -134,7 +175,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
     final confirme = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Supprimer "${favori['libelle']}" ?'),
+        title: Text('Supprimer « ${favori['libelle']} » ?'),
         content: Text(favori['adresse']?.toString() ?? ''),
         actions: [
           TextButton(
@@ -143,423 +184,73 @@ class _EcranRechercheState extends State<EcranRecherche> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Supprimer', style: TextStyle(color: Colors.red)),
+            style: TextButton.styleFrom(foregroundColor: TaamaColors.danger),
+            child: const Text('Supprimer'),
           ),
         ],
       ),
     );
     if (confirme != true) return;
 
+    final id = favori['id'];
+    if (id is! int) return;
     try {
-      await ApiService.supprimerAdresseFavorite(favori['id'] as int);
-      if (mounted) {
-        setState(() => _favoris.removeWhere((f) => f['id'] == favori['id']));
-      }
+      await ApiService.supprimerAdresseFavorite(id);
+      if (mounted) setState(() => _favoris = _favoris.where((f) => f['id'] != id).toList());
     } catch (e) {
-      debugPrint('Erreur suppression favori : $e');
+      _journal('Erreur suppression favori : $e');
     }
   }
 
-  /// Échec silencieux volontaire : les destinations récentes sont un
-  /// confort d'affichage, pas une donnée critique — un historique vide en
-  /// cas d'erreur réseau laisse simplement la section masquée.
-  Future<void> _chargerDestinationsRecentes() async {
-    try {
-      final demandes = await ApiService.mesDemandesClient();
-      // Plus récent d'abord (l'API renvoie déjà les demandes triées par
-      // date de création décroissante), dédoublonné, limité à 5 pour ne
-      // pas repousser les destinations populaires hors écran.
-      final vues = <String>{};
-      final recentes = <String>[];
-      for (final d in demandes) {
-        final destination = (d as Map<String, dynamic>)['destination']?.toString();
-        if (destination == null || destination.isEmpty) continue;
-        if (vues.add(destination) && recentes.length < 5) {
-          recentes.add(destination);
-        }
-      }
-      if (mounted) setState(() => _recentes = recentes);
-    } catch (e) {
-      debugPrint('Erreur chargement destinations récentes : $e');
-    }
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    _focus.dispose();
-    super.dispose();
-  }
-
-  void _valider(String destination) {
-    Navigator.pop(context, destination);
-  }
+  // ─── Construction ───
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: TaamaColors.background,
       body: Column(
         children: [
-          // ─── Header gradient ───
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF1C2B4A), Color(0xFF3D2B6B)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Barre retour + champ recherche
-                    Row(
-                      children: [
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            width: 40, height: 40,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(Icons.arrow_back,
-                                color: Colors.white, size: 20),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(14),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.1),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: TextField(
-                              controller: _ctrl,
-                              focusNode: _focus,
-                              onChanged: (_) => setState(() {}),
-                              onSubmitted: (v) {
-                                if (v.trim().isNotEmpty) _valider(v.trim());
-                              },
-                              style: const TextStyle(
-                                fontSize: 15,
-                                color: CouleursTaama.indigo,
-                                fontWeight: FontWeight.w500,
-                              ),
-                              decoration: InputDecoration(
-                                hintText: 'Où allez-vous ?',
-                                hintStyle: TextStyle(
-                                    color: Colors.grey.shade400,
-                                    fontWeight: FontWeight.normal),
-                                prefixIcon: const Icon(Icons.search,
-                                    color: CouleursTaama.indigo, size: 20),
-                                suffixIcon: _ctrl.text.isNotEmpty
-                                    ? GestureDetector(
-                                        onTap: () {
-                                          _ctrl.clear();
-                                          setState(() {});
-                                        },
-                                        child: const Icon(Icons.close,
-                                            color: Colors.grey, size: 18),
-                                      )
-                                    : null,
-                                border: InputBorder.none,
-                                contentPadding: const EdgeInsets.symmetric(
-                                    vertical: 14),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // ─── Contenu ───
-          Expanded(
-            child: _buildSuggestionsEtPopulaires(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ─── Suggestions populaires ───
-  Widget _buildSuggestionsEtPopulaires() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Section "Favoris" — toujours visible (contrairement aux
-          // récentes/populaires) : les deux emplacements Domicile/Travail
-          // servent aussi de point d'entrée pour les enregistrer.
-          _buildSectionFavoris(),
-          const SizedBox(height: 20),
-
-          // Section "Destinations récentes" — masquée tant qu'aucun
-          // historique n'est chargé (premier trajet, ou erreur réseau
-          // silencieuse, voir _chargerDestinationsRecentes).
-          if (_recentes.isNotEmpty) ...[
-            Row(
-              children: [
-                const Icon(Icons.history,
-                    color: CouleursTaama.indigo, size: 18),
-                const SizedBox(width: 6),
-                const Expanded(
-                  child: Text(
-                    'Destinations récentes',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      color: CouleursTaama.indigo,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            for (final destination in _recentes) ...[
-              GestureDetector(
-                onTap: () => _valider(destination),
-                child: Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 32, height: 32,
-                        decoration: BoxDecoration(
-                          color: CouleursTaama.indigo.withValues(alpha: 0.08),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.history,
-                            color: CouleursTaama.indigo, size: 16),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          destination,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
-                            color: CouleursTaama.indigo,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      Icon(Icons.north_west,
-                          color: Colors.grey.shade400, size: 16),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 20),
-          ],
-
-          // Section "Destinations populaires"
-          Row(
-            children: [
-              const Icon(Icons.local_fire_department,
-                  color: CouleursTaama.terreCuite, size: 18),
-              const SizedBox(width: 6),
-              const Expanded(
-                child: Text(
-                  'Destinations populaires à Bamako',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                    color: CouleursTaama.indigo,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          // Grille de destinations
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 2.5,
-            children: _populaires.map((lieu) {
-              return GestureDetector(
-                onTap: () => _valider(lieu['nom']!),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: CouleursTaama.sable,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: Colors.grey.shade200),
-                  ),
-                  child: Row(
-                    children: [
-                      Text(lieu['emoji']!,
-                          style: const TextStyle(fontSize: 18)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                          mainAxisAlignment:
-                              MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              lieu['nom']!,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 11,
-                                color: CouleursTaama.indigo,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            Text(
-                              lieu['quartier']!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 9,
-                                color: Colors.grey.shade500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-
-          const SizedBox(height: 20),
-
-          // Section "Saisie libre"
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  CouleursTaama.indigo.withValues(alpha: 0.05),
-                  CouleursTaama.terreCuite.withValues(alpha: 0.05),
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+              child: Row(
+                children: [
+                  _BoutonRetour(onTap: () => Navigator.pop(context)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _champRecherche()),
                 ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
               ),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                  color: CouleursTaama.indigo.withValues(alpha: 0.15)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 40, height: 40,
-                  decoration: BoxDecoration(
-                    color: CouleursTaama.indigo,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.edit_location_alt,
-                      color: Colors.white, size: 20),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Autre destination ?',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: CouleursTaama.indigo,
-                          fontSize: 13,
-                        ),
-                      ),
-                      Text(
-                        'Tape le nom du quartier dans la barre ci-dessus',
-                        style: TextStyle(
-                            color: Colors.grey.shade500,
-                            fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.keyboard_arrow_up,
-                    color: CouleursTaama.terreCuite),
-              ],
             ),
           ),
-
-          const SizedBox(height: 16),
-
-          // Tip demande instantanée
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: CouleursTaama.terreCuite.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: CouleursTaama.terreCuite.withValues(alpha: 0.2),
-              ),
-            ),
-            child: Row(
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
               children: [
-                const Text('⚡', style: TextStyle(fontSize: 24)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Pas de trajet disponible ?',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: CouleursTaama.terreCuite,
-                          fontSize: 13,
-                        ),
+                _sectionFavoris(),
+                if (_recentes.isNotEmpty) ...[
+                  const SizedBox(height: 22),
+                  const _TitreSection(icone: Icons.schedule_rounded, texte: 'Récents'),
+                  const SizedBox(height: 10),
+                  for (final destination in _recentes)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _LigneLieu(
+                        icone: Icons.schedule_rounded,
+                        titre: destination,
+                        onTap: () => _valider(destination),
                       ),
-                      Text(
-                        'Fais une demande instantanée — un conducteur'
-                        ' viendra te chercher.',
-                        style: TextStyle(
-                            color: Colors.grey.shade600,
-                            fontSize: 11),
-                      ),
-                    ],
-                  ),
+                    ),
+                ],
+                const SizedBox(height: 22),
+                const _TitreSection(
+                  icone: Icons.place_rounded,
+                  texte: 'Destinations populaires',
                 ),
+                const SizedBox(height: 10),
+                _grillePopulaires(),
+                const SizedBox(height: 22),
+                _carteSaisieLibre(),
               ],
             ),
           ),
@@ -568,8 +259,53 @@ class _EcranRechercheState extends State<EcranRecherche> {
     );
   }
 
-  // ─── Section Favoris ───
-  Widget _buildSectionFavoris() {
+  Widget _champRecherche() {
+    return Material(
+      color: TaamaColors.surface,
+      borderRadius: BorderRadius.circular(TaamaRadius.lg),
+      elevation: 3,
+      shadowColor: TaamaColors.textPrimary.withValues(alpha: 0.12),
+      child: TextField(
+        controller: _ctrl,
+        focusNode: _focus,
+        textInputAction: TextInputAction.search,
+        textCapitalization: TextCapitalization.sentences,
+        inputFormatters: [LengthLimitingTextInputFormatter(_longueurMaxAdresse)],
+        onChanged: (_) => setState(() {}),
+        onSubmitted: _valider,
+        style: TaamaText.body.copyWith(fontSize: 15, fontWeight: FontWeight.w700),
+        cursorColor: TaamaColors.primary,
+        decoration: InputDecoration(
+          hintText: 'Où allez-vous ?',
+          hintStyle: TaamaText.body.copyWith(
+            color: TaamaColors.textSecondary,
+            fontWeight: FontWeight.w500,
+          ),
+          prefixIcon: const Icon(Icons.search_rounded, color: TaamaColors.primary),
+          suffixIcon: _ctrl.text.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: 'Effacer',
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  color: TaamaColors.textSecondary,
+                  onPressed: () {
+                    _ctrl.clear();
+                    setState(() {});
+                  },
+                ),
+          filled: true,
+          fillColor: TaamaColors.surface,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(TaamaRadius.lg),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding: const EdgeInsets.symmetric(vertical: 15),
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionFavoris() {
     final domicile = _favori('Domicile');
     final travail = _favori('Travail');
     final autres = _favoris
@@ -579,20 +315,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Icon(Icons.star_rounded, color: CouleursTaama.or, size: 18),
-            const SizedBox(width: 6),
-            const Text(
-              'Favoris',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-                color: CouleursTaama.indigo,
-              ),
-            ),
-          ],
-        ),
+        const _TitreSection(icone: Icons.star_rounded, texte: 'Favoris'),
         const SizedBox(height: 12),
         Row(
           children: [
@@ -602,9 +325,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
                 libelle: 'Domicile',
                 adresse: domicile?['adresse']?.toString(),
                 onTap: () => _onTapEmplacementFavori('Domicile'),
-                onLongPress: domicile != null
-                    ? () => _confirmerSuppressionFavori(domicile)
-                    : null,
+                onLongPress: domicile == null ? null : () => _confirmerSuppressionFavori(domicile),
               ),
             ),
             const SizedBox(width: 10),
@@ -614,77 +335,278 @@ class _EcranRechercheState extends State<EcranRecherche> {
                 libelle: 'Travail',
                 adresse: travail?['adresse']?.toString(),
                 onTap: () => _onTapEmplacementFavori('Travail'),
-                onLongPress: travail != null
-                    ? () => _confirmerSuppressionFavori(travail)
-                    : null,
+                onLongPress: travail == null ? null : () => _confirmerSuppressionFavori(travail),
               ),
             ),
           ],
         ),
-        for (final f in autres) ...[
-          const SizedBox(height: 8),
-          GestureDetector(
-            onTap: () => _valider(f['adresse'] as String),
-            onLongPress: () => _confirmerSuppressionFavori(f),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 32, height: 32,
-                    decoration: BoxDecoration(
-                      color: CouleursTaama.or.withValues(alpha: 0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.star_rounded,
-                        color: CouleursTaama.or, size: 16),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(f['libelle']?.toString() ?? '',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                                color: CouleursTaama.indigo)),
-                        Text(
-                          f['adresse']?.toString() ?? '',
-                          style: TextStyle(
-                              fontSize: 11, color: Colors.grey.shade500),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+        for (final f in autres)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: _LigneLieu(
+              icone: Icons.star_rounded,
+              couleurIcone: TaamaColors.star,
+              titre: f['libelle']?.toString() ?? '',
+              sousTitre: f['adresse']?.toString(),
+              onTap: () => _valider(f['adresse']?.toString() ?? ''),
+              onLongPress: () => _confirmerSuppressionFavori(f),
             ),
           ),
+      ],
+    );
+  }
+
+  Widget _grillePopulaires() {
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisSpacing: 10,
+      mainAxisSpacing: 10,
+      childAspectRatio: 2.6,
+      children: [
+        for (final lieu in _populaires)
+          _TuilePopulaire(lieu: lieu, onTap: () => _valider(lieu.nom)),
+      ],
+    );
+  }
+
+  Widget _carteSaisieLibre() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: TaamaColors.primarySoft,
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: TaamaColors.primary,
+              borderRadius: BorderRadius.circular(TaamaRadius.md),
+            ),
+            child: const Icon(Icons.edit_location_alt_rounded, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Autre destination ?',
+                    style: TaamaText.body.copyWith(fontWeight: FontWeight.w800, fontSize: 13)),
+                const SizedBox(height: 2),
+                Text(
+                  'Tapez le nom du lieu ou du quartier dans la barre en haut.',
+                  style: TaamaText.body.copyWith(
+                    color: TaamaColors.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.keyboard_arrow_up_rounded, color: TaamaColors.primary),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Widgets privés ───
+
+class _BoutonRetour extends StatelessWidget {
+  const _BoutonRetour({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: TaamaColors.surfaceMuted,
+      borderRadius: BorderRadius.circular(TaamaRadius.md),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(TaamaRadius.md),
+        onTap: onTap,
+        child: const SizedBox(
+          width: 44,
+          height: 44,
+          child: Icon(Icons.arrow_back_rounded, color: TaamaColors.textPrimary, size: 22),
+        ),
+      ),
+    );
+  }
+}
+
+class _TitreSection extends StatelessWidget {
+  const _TitreSection({required this.icone, required this.texte});
+  final IconData icone;
+  final String texte;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icone, size: 18, color: TaamaColors.primary),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            texte,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TaamaText.body.copyWith(fontSize: 14, fontWeight: FontWeight.w800),
+          ),
+        ),
       ],
     );
   }
 }
 
-/// Emplacement fixe de favori (Domicile/Travail) : affiche l'adresse
-/// enregistrée si elle existe, sinon une invitation à l'ajouter. L'appui
-/// long ne fait rien tant qu'aucune adresse n'est enregistrée (onLongPress
-/// null) — rien à supprimer dans ce cas.
-class _ChipFavori extends StatelessWidget {
+/// Ligne de lieu (récent, favori libre) : icône ronde + titre (+ sous-titre).
+class _LigneLieu extends StatelessWidget {
+  const _LigneLieu({
+    required this.icone,
+    required this.titre,
+    required this.onTap,
+    this.sousTitre,
+    this.onLongPress,
+    this.couleurIcone = TaamaColors.primary,
+  });
+
   final IconData icone;
-  final String libelle;
-  final String? adresse;
+  final String titre;
+  final String? sousTitre;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
+  final Color couleurIcone;
 
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: TaamaColors.surface,
+      borderRadius: BorderRadius.circular(TaamaRadius.md),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(TaamaRadius.md),
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(TaamaRadius.md),
+            border: Border.all(color: TaamaColors.border),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: couleurIcone.withValues(alpha: 0.10),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icone, color: couleurIcone, size: 16),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      titre,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TaamaText.body.copyWith(fontSize: 13, fontWeight: FontWeight.w700),
+                    ),
+                    if (sousTitre != null && sousTitre!.isNotEmpty)
+                      Text(
+                        sousTitre!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TaamaText.body.copyWith(
+                          fontSize: 11,
+                          color: TaamaColors.textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.north_west_rounded, color: TaamaColors.textSecondary, size: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TuilePopulaire extends StatelessWidget {
+  const _TuilePopulaire({required this.lieu, required this.onTap});
+  final _LieuPopulaire lieu;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: TaamaColors.surface,
+      borderRadius: BorderRadius.circular(TaamaRadius.md),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(TaamaRadius.md),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(TaamaRadius.md),
+            border: Border.all(color: TaamaColors.border),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: TaamaColors.primarySoft,
+                  borderRadius: BorderRadius.circular(TaamaRadius.sm),
+                ),
+                child: Icon(lieu.icone, color: TaamaColors.primary, size: 18),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      lieu.nom,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TaamaText.body.copyWith(fontSize: 11.5, fontWeight: FontWeight.w800),
+                    ),
+                    Text(
+                      lieu.quartier,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TaamaText.body.copyWith(
+                        fontSize: 9.5,
+                        color: TaamaColors.textSecondary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Emplacement fixe Domicile/Travail. Affiche l'adresse si définie, sinon
+/// « Ajouter ». Appui long : supprimer (désactivé si rien à supprimer).
+class _ChipFavori extends StatelessWidget {
   const _ChipFavori({
     required this.icone,
     required this.libelle,
@@ -693,59 +615,113 @@ class _ChipFavori extends StatelessWidget {
     required this.onLongPress,
   });
 
+  final IconData icone;
+  final String libelle;
+  final String? adresse;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
   @override
   Widget build(BuildContext context) {
-    final estDefini = adresse != null && adresse!.isNotEmpty;
-    return GestureDetector(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(
-          color: estDefini
-              ? CouleursTaama.indigo.withValues(alpha: 0.05)
-              : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: estDefini
-                ? CouleursTaama.indigo.withValues(alpha: 0.2)
-                : Colors.grey.shade200,
+    final defini = adresse != null && adresse!.isNotEmpty;
+    return Material(
+      color: defini ? TaamaColors.primarySoft : TaamaColors.surfaceMuted,
+      borderRadius: BorderRadius.circular(TaamaRadius.md),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(TaamaRadius.md),
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(TaamaRadius.md),
+            border: Border.all(
+              color: defini ? TaamaColors.primary.withValues(alpha: 0.25) : TaamaColors.border,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icone, size: 16, color: defini ? TaamaColors.primary : TaamaColors.textSecondary),
+                  const SizedBox(width: 6),
+                  Text(
+                    libelle,
+                    style: TaamaText.body.copyWith(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: defini ? TaamaColors.primary : TaamaColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                defini ? adresse! : 'Ajouter',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TaamaText.body.copyWith(
+                  fontSize: 11,
+                  color: defini ? TaamaColors.textSecondary : TaamaColors.primary,
+                  fontWeight: defini ? FontWeight.w500 : FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icone,
-                    size: 16,
-                    color: estDefini
-                        ? CouleursTaama.indigo
-                        : Colors.grey.shade400),
-                const SizedBox(width: 6),
-                Text(libelle,
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                        color: estDefini
-                            ? CouleursTaama.indigo
-                            : Colors.grey.shade500)),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              estDefini ? adresse! : 'Ajouter',
-              style: TextStyle(
-                fontSize: 11,
-                color: estDefini ? Colors.grey.shade600 : CouleursTaama.terreCuite,
-                fontWeight: estDefini ? FontWeight.normal : FontWeight.w600,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
       ),
+    );
+  }
+}
+
+/// Dialogue d'ajout d'adresse favorite : possède son contrôleur (libéré avec
+/// le dialogue), longueur limitée, validation du champ vide.
+class _DialogueAdresseFavori extends StatefulWidget {
+  const _DialogueAdresseFavori({required this.libelle});
+  final String libelle;
+
+  @override
+  State<_DialogueAdresseFavori> createState() => _DialogueAdresseFavoriState();
+}
+
+class _DialogueAdresseFavoriState extends State<_DialogueAdresseFavori> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _valider() {
+    final adresse = _ctrl.text.trim();
+    if (adresse.isEmpty) return;
+    Navigator.pop(context, adresse);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Adresse « ${widget.libelle} »'),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        textCapitalization: TextCapitalization.sentences,
+        inputFormatters: [LengthLimitingTextInputFormatter(_longueurMaxAdresse)],
+        onSubmitted: (_) => _valider(),
+        decoration: const InputDecoration(hintText: 'Ex : Hippodrome, Bamako'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler'),
+        ),
+        FilledButton(
+          onPressed: _valider,
+          child: const Text('Enregistrer'),
+        ),
+      ],
     );
   }
 }

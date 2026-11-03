@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+
 import '../services/api_service.dart';
 import '../services/config_app.dart';
-import '../theme/couleurs_taama.dart';
-import 'profil_screen.dart';
-import 'portefeuille_screen.dart';
-import 'mes_reservations_screen.dart';
-import 'mes_conversations_client_screen.dart';
-import 'avis_app_screen.dart';
-import 'connexion_screen.dart';
 import '../theme/taama_theme.dart';
 import '../widgets/dialogue_suppression_compte.dart';
+import '../widgets/photo_avatar.dart';
+import 'avis_app_screen.dart';
+import 'connexion_screen.dart';
+import 'mes_conversations_client_screen.dart';
+import 'mes_reservations_screen.dart';
+import 'portefeuille_screen.dart';
+import 'profil_screen.dart';
 
+/// Écran Compte (v4). Logique inchangée (profil, déconnexion, suppression de
+/// compte, portefeuille en mode payant) ; habillage TaamaColors/TaamaText,
+/// avatar PhotoAvatar (initiales) au lieu du cercle « ? ».
 class EcranCompte extends StatefulWidget {
   const EcranCompte({super.key});
 
@@ -33,11 +37,6 @@ class _EcranCompteState extends State<EcranCompte> {
       final profil = await ApiService.monProfil();
       if (mounted) setState(() => _profil = profil);
     } catch (_) {}
-  }
-
-  String _premierChiffre(String telephone) {
-    final chiffres = telephone.replaceAll(RegExp(r'[^0-9]'), '');
-    return chiffres.isNotEmpty ? chiffres[0] : '?';
   }
 
   Future<void> _deconnecter() async {
@@ -84,133 +83,78 @@ class _EcranCompteState extends State<EcranCompte> {
     messager.showSnackBar(SnackBar(content: Text(messageFinal)));
   }
 
+  String get _nomComplet {
+    final prenom = _profil?['first_name']?.toString() ?? '';
+    final nom = _profil?['last_name']?.toString() ?? '';
+    return '$prenom $nom'.trim();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final nom = '${_profil?['first_name'] ?? ''} ${_profil?['last_name'] ?? ''}'.trim();
     final tel = _profil?['telephone']?.toString() ?? '';
-    final initiales = nom.isNotEmpty
-        ? nom.split(' ').take(2).map((e) => e[0].toUpperCase()).join()
-        : _premierChiffre(tel);
 
     return Scaffold(
-      backgroundColor: CouleursTaama.sable,
+      backgroundColor: TaamaColors.background,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
             children: [
-              // Header profil
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: CouleursTaama.indigo,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 32,
-                      backgroundColor: CouleursTaama.terreCuite,
-                      child: Text(initiales,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            nom.isEmpty ? 'Mon compte' : nom,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18),
-                          ),
-                          Text(tel,
-                              style: const TextStyle(
-                                  color: Colors.white70, fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.white70),
-                      onPressed: () async {
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const EcranProfil()),
-                        );
-                        _charger();
-                      },
-                    ),
-                  ],
-                ),
-              ),
+              _enTete(tel),
               const SizedBox(height: 20),
-
-              // Menu items
-              // Mode gratuit (lu sur le serveur) : pas de portefeuille.
               ValueListenableBuilder<bool>(
                 valueListenable: ConfigApp.paiementActif,
-                builder: (context, paiementActif, _) => _buildSection('Mon compte', [
-                if (paiementActif)
-                  _buildItem(Icons.account_balance_wallet, 'Mon portefeuille',
-                      CouleursTaama.or, () => Navigator.push(context,
-                          MaterialPageRoute(builder: (_) =>
-                              const EcranPortefeuille(estChauffeur: false)))),
-                _buildItem(Icons.event_seat, 'Mes réservations',
-                    CouleursTaama.indigo, () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) =>
-                            const EcranMesReservations()))),
-                _buildItem(Icons.chat_bubble, 'Mes messages',
-                    Colors.green, () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) =>
-                            const MesConversationsClientScreen()))),
-              ]),
+                builder: (context, paiementActif, _) => _section('Mon compte', [
+                  // Mode gratuit (lu sur le serveur) : pas de portefeuille.
+                  if (paiementActif)
+                    _item(Icons.account_balance_wallet_rounded, 'Mon portefeuille',
+                        () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) =>
+                                      const EcranPortefeuille(estChauffeur: false)),
+                            )),
+                  _item(Icons.event_seat_rounded, 'Mes réservations',
+                      () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const EcranMesReservations()),
+                          )),
+                  _item(Icons.chat_bubble_rounded, 'Mes messages',
+                      () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const MesConversationsClientScreen()),
+                          )),
+                ]),
               ),
               const SizedBox(height: 16),
-              _buildSection('Taama', [
-                _buildItem(Icons.star_rate, 'Donner mon avis',
-                    CouleursTaama.or, () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) =>
-                            const EcranAvisApp()))),
-                _buildItem(Icons.help_outline, 'Aide & Support',
-                    Colors.blue, () {}),
-                _buildItem(Icons.privacy_tip_outlined,
-                    'Politique de confidentialité',
-                    Colors.grey, () {}),
+              _section('Taama', [
+                _item(Icons.star_rounded, 'Donner mon avis',
+                    () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const EcranAvisApp()),
+                        ),
+                    couleur: TaamaColors.star),
+                _item(Icons.help_outline_rounded, 'Aide & Support', () {}),
+                _item(Icons.privacy_tip_outlined, 'Politique de confidentialité',
+                    () {}),
               ]),
               const SizedBox(height: 16),
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: Color(0xFFFFEEEE),
-                    child: Icon(Icons.logout, color: Colors.red),
-                  ),
-                  title: const Text('Se déconnecter',
-                      style: TextStyle(
-                          color: Colors.red, fontWeight: FontWeight.bold)),
-                  onTap: _deconnecter,
-                ),
-              ),
+              _carteDeconnexion(),
               const SizedBox(height: 24),
-              // Volontairement discret et séparé de « Se déconnecter » :
-              // action irréversible, protégée par une saisie de confirmation.
+              // Volontairement discret et séparé de « Se déconnecter » : action
+              // irréversible, protégée par une saisie de confirmation.
               TextButton.icon(
                 onPressed: _suppressionEnCours ? null : _supprimerCompte,
-                style: TextButton.styleFrom(
-                    foregroundColor: TaamaColors.danger),
+                style: TextButton.styleFrom(foregroundColor: TaamaColors.danger),
                 icon: _suppressionEnCours
                     ? const SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2))
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: TaamaColors.danger),
+                      )
                     : const Icon(Icons.delete_forever_outlined),
                 label: const Text('Supprimer mon compte'),
               ),
@@ -221,22 +165,93 @@ class _EcranCompteState extends State<EcranCompte> {
     );
   }
 
-  Widget _buildSection(String titre, List<Widget> items) {
+  Widget _enTete(String tel) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: TaamaColors.navy,
+        borderRadius: BorderRadius.circular(TaamaRadius.xl),
+      ),
+      child: Row(
+        children: [
+          PhotoAvatar(
+            nom: _nomComplet,
+            diametre: 60,
+            couleurFond: TaamaColors.primary,
+            couleurTexte: Colors.white,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _nomComplet.isEmpty ? 'Mon compte' : _nomComplet,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TaamaText.title.copyWith(color: Colors.white, fontSize: 18),
+                ),
+                if (tel.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(tel,
+                      style: TaamaText.body.copyWith(
+                          color: TaamaColors.onNavyMuted, fontSize: 13)),
+                ],
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Modifier mon profil',
+            icon: const Icon(Icons.edit_rounded, color: Colors.white),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const EcranProfil()),
+              );
+              _charger();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _carteDeconnexion() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: TaamaColors.surface,
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        boxShadow: TaamaShadows.card,
+      ),
+      child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(TaamaRadius.lg)),
+        leading: CircleAvatar(
+          backgroundColor: TaamaColors.danger.withValues(alpha: 0.12),
+          child: const Icon(Icons.logout_rounded, color: TaamaColors.danger),
+        ),
+        title: Text('Se déconnecter',
+            style: TaamaText.body.copyWith(
+                color: TaamaColors.danger, fontWeight: FontWeight.w800)),
+        onTap: _deconnecter,
+      ),
+    );
+  }
+
+  Widget _section(String titre, List<Widget> items) {
+    return Container(
+      decoration: BoxDecoration(
+        color: TaamaColors.surface,
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        boxShadow: TaamaShadows.card,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-            child: Text(titre,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                    fontSize: 12)),
+            child: Text(titre.toUpperCase(),
+                style: TaamaText.muted.copyWith(
+                    fontSize: 11, letterSpacing: 0.6)),
           ),
           ...items,
         ],
@@ -244,15 +259,15 @@ class _EcranCompteState extends State<EcranCompte> {
     );
   }
 
-  Widget _buildItem(IconData icone, String label, Color couleur,
-      VoidCallback onTap) {
+  Widget _item(IconData icone, String label, VoidCallback onTap, {Color? couleur}) {
+    final c = couleur ?? TaamaColors.primary;
     return ListTile(
       leading: CircleAvatar(
-        backgroundColor: couleur.withValues(alpha: 0.12),
-        child: Icon(icone, color: couleur, size: 20),
+        backgroundColor: c.withValues(alpha: 0.12),
+        child: Icon(icone, color: c, size: 20),
       ),
-      title: Text(label),
-      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+      title: Text(label, style: TaamaText.body.copyWith(fontWeight: FontWeight.w700)),
+      trailing: const Icon(Icons.chevron_right_rounded, color: TaamaColors.textSecondary),
       onTap: onTap,
     );
   }

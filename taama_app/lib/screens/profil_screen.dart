@@ -1,9 +1,15 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
-import '../services/api_service.dart';
+import 'package:flutter/services.dart';
 
-/// Écran de profil : affiche le téléphone (lecture seule), permet de
-/// modifier le nom, et montre l'historique combiné des réservations et
-/// des demandes instantanées, trié du plus récent au plus ancien.
+import '../services/api_service.dart';
+import '../theme/taama_theme.dart';
+import '../widgets/photo_avatar.dart';
+
+/// Écran de profil (v4) : téléphone en lecture seule, modification du nom, et
+/// historique combiné réservations + demandes instantanées, du plus récent au
+/// plus ancien. Logique inchangée ; habillage TaamaColors/TaamaText, lecture
+/// défensive de l'historique, longueurs de saisie limitées, logs en debug.
 class EcranProfil extends StatefulWidget {
   const EcranProfil({super.key});
 
@@ -12,9 +18,11 @@ class EcranProfil extends StatefulWidget {
 }
 
 class _EcranProfilState extends State<EcranProfil> {
+  static const int _longueurMaxNom = 50;
+
   bool _chargement = true;
   Map<String, dynamic>? _profil;
-  List<Map<String, dynamic>> _historique = [];
+  List<Map<String, dynamic>> _historique = const [];
 
   final TextEditingController _prenomController = TextEditingController();
   final TextEditingController _nomController = TextEditingController();
@@ -41,15 +49,18 @@ class _EcranProfilState extends State<EcranProfil> {
       final reservations = await ApiService.mesReservations();
       final demandes = await ApiService.mesDemandesClient();
 
-      // Je fusionne les deux historiques en ajoutant un champ "type" pour
-      // savoir comment afficher chaque entrée, puis je trie par date
+      // Fusion défensive des deux historiques, avec un champ "_type" pour
+      // savoir comment afficher chaque entrée. Une entrée mal formée est
+      // ignorée plutôt que de faire planter l'écran.
       final combine = <Map<String, dynamic>>[
-        ...reservations.map((r) => {...r as Map<String, dynamic>, '_type': 'reservation'}),
-        ...demandes.map((d) => {...d as Map<String, dynamic>, '_type': 'demande'}),
+        for (final r in reservations)
+          if (r is Map<String, dynamic>) {...r, '_type': 'reservation'},
+        for (final d in demandes)
+          if (d is Map<String, dynamic>) {...d, '_type': 'demande'},
       ];
       combine.sort((a, b) {
-        final dateA = DateTime.tryParse(a['cree_le'] ?? '') ?? DateTime(2000);
-        final dateB = DateTime.tryParse(b['cree_le'] ?? '') ?? DateTime(2000);
+        final dateA = DateTime.tryParse(a['cree_le']?.toString() ?? '') ?? DateTime(2000);
+        final dateB = DateTime.tryParse(b['cree_le']?.toString() ?? '') ?? DateTime(2000);
         return dateB.compareTo(dateA);
       });
 
@@ -57,11 +68,11 @@ class _EcranProfilState extends State<EcranProfil> {
       setState(() {
         _profil = profil;
         _historique = combine;
-        _prenomController.text = profil['first_name'] ?? '';
-        _nomController.text = profil['last_name'] ?? '';
+        _prenomController.text = profil['first_name']?.toString() ?? '';
+        _nomController.text = profil['last_name']?.toString() ?? '';
       });
     } catch (e) {
-      debugPrint('Erreur chargement profil : $e');
+      if (kDebugMode) debugPrint('[Profil] Erreur chargement : $e');
     } finally {
       if (mounted) setState(() => _chargement = false);
     }
@@ -92,35 +103,44 @@ class _EcranProfilState extends State<EcranProfil> {
     }
   }
 
-  /// Construit le texte et l'icône d'affichage pour une entrée d'historique
+  String get _nomComplet {
+    final prenom = _profil?['first_name']?.toString() ?? '';
+    final nom = _profil?['last_name']?.toString() ?? '';
+    return '$prenom $nom'.trim();
+  }
+
+  /// Icône, titre, sous-titre et couleur d'une entrée d'historique.
   (IconData, String, String, Color) _infosEntree(Map<String, dynamic> entree) {
     if (entree['_type'] == 'reservation') {
       final trajet = entree['trajet_propose'];
-      final statut = entree['statut'] as String? ?? '';
+      final statut = entree['statut']?.toString() ?? '';
       final couleur = switch (statut) {
-        'confirmee' => Colors.green,
-        'refusee' => Colors.red,
-        'annulee' => Colors.grey,
-        _ => Colors.orange,
+        'confirmee' => TaamaColors.success,
+        'refusee' => TaamaColors.danger,
+        'annulee' => TaamaColors.textSecondary,
+        _ => TaamaColors.star,
       };
-      return (
-        Icons.event_seat,
-        '${trajet['depart']} → ${trajet['arrivee']}',
-        'Réservation • ${trajet['prix_par_place']} FCFA',
-        couleur,
-      );
+      if (trajet is Map) {
+        return (
+          Icons.event_seat_rounded,
+          '${trajet['depart'] ?? '?'} → ${trajet['arrivee'] ?? '?'}',
+          'Réservation • ${trajet['prix_par_place'] ?? '—'} FCFA',
+          couleur,
+        );
+      }
+      return (Icons.event_seat_rounded, 'Réservation', 'Réservation', couleur);
     } else {
-      final statut = entree['statut'] as String? ?? '';
+      final statut = entree['statut']?.toString() ?? '';
       final couleur = switch (statut) {
-        'termine' => Colors.green,
-        'annule' => Colors.grey,
-        'en_route' => Colors.blue,
-        _ => Colors.orange,
+        'termine' => TaamaColors.success,
+        'annule' => TaamaColors.textSecondary,
+        'en_route' => TaamaColors.primary,
+        _ => TaamaColors.star,
       };
       return (
-        Icons.flash_on,
-        entree['destination'] as String? ?? 'Destination inconnue',
-        'Demande instantanée • ${entree['prix_estime']} FCFA',
+        Icons.local_taxi_rounded,
+        entree['destination']?.toString() ?? 'Destination inconnue',
+        'Course • ${entree['prix_estime'] ?? '—'} FCFA',
         couleur,
       );
     }
@@ -129,145 +149,176 @@ class _EcranProfilState extends State<EcranProfil> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey.shade50,
+      backgroundColor: TaamaColors.background,
       appBar: AppBar(
         title: const Text('Mon profil'),
-        backgroundColor: Colors.transparent,
+        backgroundColor: TaamaColors.background,
+        foregroundColor: TaamaColors.textPrimary,
         elevation: 0,
+        scrolledUnderElevation: 0,
       ),
       body: _chargement
-          ? const Center(child: CircularProgressIndicator(color: Colors.amber))
+          ? const Center(child: CircularProgressIndicator(color: TaamaColors.primary))
           : RefreshIndicator(
+              color: TaamaColors.primary,
               onRefresh: _charger,
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  // Carte d'identité
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8)],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          children: [
-                            const CircleAvatar(
-                              radius: 32,
-                              backgroundColor: Colors.amber,
-                              child: Icon(Icons.person, color: Colors.black, size: 32),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _profil?['telephone'] ?? '',
-                                    style: const TextStyle(fontSize: 14, color: Colors.grey),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    (_profil?['first_name']?.toString().isNotEmpty == true ||
-                                            _profil?['last_name']?.toString().isNotEmpty == true)
-                                        ? '${_profil?['first_name'] ?? ''} ${_profil?['last_name'] ?? ''}'.trim()
-                                        : 'Nom non renseigné',
-                                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              icon: Icon(_modeEdition ? Icons.close : Icons.edit, color: Colors.grey.shade700),
-                              onPressed: () => setState(() => _modeEdition = !_modeEdition),
-                            ),
-                          ],
-                        ),
-                        if (_modeEdition) ...[
-                          const SizedBox(height: 20),
-                          TextField(
-                            controller: _prenomController,
-                            decoration: const InputDecoration(
-                              labelText: 'Prénom',
-                              border: OutlineInputBorder(),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: _nomController,
-                            decoration: const InputDecoration(
-                              labelText: 'Nom',
-                              border: OutlineInputBorder(),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          ElevatedButton(
-                            onPressed: _enregistrement ? null : _enregistrerProfil,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.amber,
-                              foregroundColor: Colors.black,
-                            ),
-                            child: _enregistrement
-                                ? const SizedBox(
-                                    width: 18, height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
-                                  )
-                                : const Text('Enregistrer'),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                  _carteIdentite(),
                   const SizedBox(height: 24),
-
-                  const Text('Historique', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                  Text('Historique', style: TaamaText.title.copyWith(fontSize: 17)),
                   const SizedBox(height: 12),
-
                   if (_historique.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 20),
-                      child: Text(
-                        'Aucun trajet pour l\'instant.',
-                        style: TextStyle(color: Colors.grey.shade500),
-                      ),
-                    )
+                    _etatVide()
                   else
-                    ..._historique.map((entree) {
-                      final (icone, titre, sousTitre, couleur) = _infosEntree(entree);
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: Row(
-                          children: [
-                            CircleAvatar(
-                              backgroundColor: couleur.withValues(alpha: 0.15),
-                              child: Icon(icone, color: couleur, size: 20),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(titre, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                                  Text(sousTitre, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
+                    for (final entree in _historique) _ligneHistorique(entree),
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _carteIdentite() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: TaamaColors.surface,
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        boxShadow: TaamaShadows.card,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              PhotoAvatar(nom: _nomComplet, diametre: 64),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _profil?['telephone']?.toString() ?? '',
+                      style: TaamaText.muted.copyWith(fontSize: 13),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _nomComplet.isEmpty ? 'Nom non renseigné' : _nomComplet,
+                      style: TaamaText.title.copyWith(fontSize: 18),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: _modeEdition ? 'Fermer' : 'Modifier',
+                icon: Icon(
+                  _modeEdition ? Icons.close_rounded : Icons.edit_rounded,
+                  color: TaamaColors.textSecondary,
+                ),
+                onPressed: () => setState(() => _modeEdition = !_modeEdition),
+              ),
+            ],
+          ),
+          if (_modeEdition) ...[
+            const SizedBox(height: 20),
+            TextField(
+              controller: _prenomController,
+              textCapitalization: TextCapitalization.words,
+              inputFormatters: [LengthLimitingTextInputFormatter(_longueurMaxNom)],
+              decoration: const InputDecoration(labelText: 'Prénom'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _nomController,
+              textCapitalization: TextCapitalization.words,
+              inputFormatters: [LengthLimitingTextInputFormatter(_longueurMaxNom)],
+              decoration: const InputDecoration(labelText: 'Nom'),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _enregistrement ? null : _enregistrerProfil,
+                child: _enregistrement
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text('Enregistrer'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _etatVide() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+      decoration: BoxDecoration(
+        color: TaamaColors.surface,
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        border: Border.all(color: TaamaColors.border),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.history_rounded, size: 32, color: TaamaColors.textSecondary),
+          const SizedBox(height: 10),
+          Text(
+            'Aucun trajet pour l’instant',
+            style: TaamaText.body.copyWith(color: TaamaColors.textSecondary, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ligneHistorique(Map<String, dynamic> entree) {
+    final (icone, titre, sousTitre, couleur) = _infosEntree(entree);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: TaamaColors.surface,
+        borderRadius: BorderRadius.circular(TaamaRadius.md),
+        border: Border.all(color: TaamaColors.border),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            backgroundColor: couleur.withValues(alpha: 0.15),
+            child: Icon(icone, color: couleur, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  titre,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TaamaText.body.copyWith(fontSize: 14, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  sousTitre,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TaamaText.body.copyWith(
+                    fontSize: 12,
+                    color: TaamaColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

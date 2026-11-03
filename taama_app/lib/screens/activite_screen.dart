@@ -1,7 +1,13 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
-import '../services/api_service.dart';
-import '../theme/couleurs_taama.dart';
 
+import '../services/api_service.dart';
+import '../theme/taama_theme.dart';
+import '../utils/format.dart';
+
+/// Activité du client (v4) : deux onglets, Réservations et Demandes.
+/// Logique inchangée (chargement parallèle, mêmes appels API) ; habillage
+/// TaamaColors/TaamaText, états vides soignés, lecture défensive.
 class EcranActivite extends StatefulWidget {
   const EcranActivite({super.key});
 
@@ -11,10 +17,10 @@ class EcranActivite extends StatefulWidget {
 
 class _EcranActiviteState extends State<EcranActivite>
     with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+  late final TabController _tabController;
   bool _chargement = true;
-  List<dynamic> _reservations = [];
-  List<dynamic> _demandes = [];
+  List<Map<String, dynamic>> _reservations = const [];
+  List<Map<String, dynamic>> _demandes = const [];
 
   @override
   void initState() {
@@ -38,11 +44,11 @@ class _EcranActiviteState extends State<EcranActivite>
       ]);
       if (!mounted) return;
       setState(() {
-        _reservations = res[0];
-        _demandes = res[1];
+        _reservations = res[0].whereType<Map<String, dynamic>>().toList();
+        _demandes = res[1].whereType<Map<String, dynamic>>().toList();
       });
     } catch (e) {
-      debugPrint('Erreur activite : $e');
+      if (kDebugMode) debugPrint('[Activite] Erreur : $e');
     } finally {
       if (mounted) setState(() => _chargement = false);
     }
@@ -51,17 +57,21 @@ class _EcranActiviteState extends State<EcranActivite>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CouleursTaama.sable,
+      backgroundColor: TaamaColors.background,
       appBar: AppBar(
-        title: const Text('Activité',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.transparent,
+        title: const Text('Activité'),
+        backgroundColor: TaamaColors.background,
+        foregroundColor: TaamaColors.textPrimary,
         elevation: 0,
+        scrolledUnderElevation: 0,
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: CouleursTaama.terreCuite,
-          labelColor: CouleursTaama.indigo,
-          unselectedLabelColor: Colors.grey,
+          indicatorColor: TaamaColors.primary,
+          indicatorWeight: 3,
+          labelColor: TaamaColors.primary,
+          unselectedLabelColor: TaamaColors.textSecondary,
+          labelStyle: TaamaText.body.copyWith(fontWeight: FontWeight.w800),
+          unselectedLabelStyle: TaamaText.body.copyWith(fontWeight: FontWeight.w700),
           tabs: const [
             Tab(text: 'Réservations'),
             Tab(text: 'Demandes'),
@@ -69,36 +79,39 @@ class _EcranActiviteState extends State<EcranActivite>
         ),
       ),
       body: _chargement
-          ? const Center(child: CircularProgressIndicator(
-              color: CouleursTaama.terreCuite))
+          ? const Center(child: CircularProgressIndicator(color: TaamaColors.primary))
           : RefreshIndicator(
+              color: TaamaColors.primary,
               onRefresh: _charger,
               child: TabBarView(
                 controller: _tabController,
                 children: [
-                  _buildListeReservations(),
-                  _buildListeDemandes(),
+                  _listeReservations(),
+                  _listeDemandes(),
                 ],
               ),
             ),
     );
   }
 
-  Widget _buildListeReservations() {
+  Widget _listeReservations() {
     if (_reservations.isEmpty) {
-      return const Center(child: Text('Aucune réservation'));
+      return _etatVide(Icons.event_seat_rounded, 'Aucune réservation');
     }
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: _reservations.length,
       itemBuilder: (context, index) {
-        final r = _reservations[index] as Map<String, dynamic>;
-        final trajet = r['trajet_propose'] as Map<String, dynamic>? ?? {};
+        final r = _reservations[index];
+        final trajet = r['trajet_propose'];
+        final depart = trajet is Map ? trajet['depart']?.toString() ?? '' : '';
+        final arrivee = trajet is Map ? trajet['arrivee']?.toString() ?? '' : '';
+        final prix = trajet is Map ? (trajet['prix_par_place'] as num?)?.toInt() : null;
         final statut = r['statut']?.toString() ?? '';
         return _CarteActivite(
-          icone: Icons.event_seat,
-          titre: '${trajet['depart'] ?? ''} → ${trajet['arrivee'] ?? ''}',
-          sousTitre: '${trajet['prix_par_place'] ?? 0} FCFA',
+          icone: Icons.event_seat_rounded,
+          titre: [depart, arrivee].where((s) => s.isNotEmpty).join(' → '),
+          sousTitre: prix == null ? 'Réservation' : formaterFcfa(prix),
           statut: _labelStatut(statut),
           couleurStatut: _couleurStatut(statut),
         );
@@ -106,20 +119,21 @@ class _EcranActiviteState extends State<EcranActivite>
     );
   }
 
-  Widget _buildListeDemandes() {
+  Widget _listeDemandes() {
     if (_demandes.isEmpty) {
-      return const Center(child: Text('Aucune demande'));
+      return _etatVide(Icons.local_taxi_rounded, 'Aucune course');
     }
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: _demandes.length,
       itemBuilder: (context, index) {
-        final d = _demandes[index] as Map<String, dynamic>;
+        final d = _demandes[index];
         final statut = d['statut']?.toString() ?? '';
+        final prix = (d['prix_estime'] as num?)?.toInt();
         return _CarteActivite(
-          icone: Icons.flash_on,
-          titre: d['destination']?.toString() ?? '',
-          sousTitre: '${d['prix_estime'] ?? 0} FCFA',
+          icone: Icons.local_taxi_rounded,
+          titre: d['destination']?.toString() ?? 'Course',
+          sousTitre: prix == null ? 'Course' : formaterFcfa(prix),
           statut: _labelStatut(statut),
           couleurStatut: _couleurStatut(statut),
         );
@@ -127,60 +141,83 @@ class _EcranActiviteState extends State<EcranActivite>
     );
   }
 
-  String _labelStatut(String statut) {
-    return switch (statut) {
-      'en_attente' => 'En attente',
-      'confirmee' => 'Confirmée ✓',
-      'annulee' => 'Annulée',
-      'refusee' => 'Refusée',
-      'en_route' => 'En route 🚗',
-      'client_a_bord' => 'Vers destination 🚗',
-      'termine' => 'Terminée ✓',
-      'chauffeur_trouve' => 'Conducteur trouvé',
-      'en_recherche' => 'En recherche...',
-      'planifiee' => 'Planifiée 📅',
-      _ => statut,
-    };
+  /// État vide scrollable, pour que le tirer-pour-rafraîchir fonctionne.
+  Widget _etatVide(IconData icone, String texte) {
+    return LayoutBuilder(
+      builder: (context, contraintes) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: contraintes.maxHeight),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icone, size: 36, color: TaamaColors.textSecondary),
+                const SizedBox(height: 12),
+                Text(texte,
+                    style: TaamaText.body.copyWith(
+                        color: TaamaColors.textSecondary, fontSize: 14)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
-  Color _couleurStatut(String statut) {
-    return switch (statut) {
-      'confirmee' || 'termine' => Colors.green,
-      'refusee' || 'annulee' => Colors.red,
-      'en_route' || 'chauffeur_trouve' || 'client_a_bord' => Colors.blue,
-      'en_recherche' || 'en_attente' => Colors.orange,
-      'planifiee' => Colors.purple,
-      _ => Colors.grey,
-    };
-  }
+  String _labelStatut(String statut) => switch (statut) {
+        'en_attente' => 'En attente',
+        'confirmee' => 'Confirmée',
+        'annulee' => 'Annulée',
+        'refusee' => 'Refusée',
+        'en_route' => 'En route',
+        'client_a_bord' => 'Vers destination',
+        'termine' => 'Terminée',
+        'chauffeur_trouve' => 'Conducteur trouvé',
+        'en_recherche' => 'Recherche…',
+        'planifiee' => 'Planifiée',
+        _ => statut,
+      };
+
+  Color _couleurStatut(String statut) => switch (statut) {
+        'confirmee' || 'termine' => TaamaColors.success,
+        'refusee' || 'annulee' => TaamaColors.danger,
+        'en_route' || 'chauffeur_trouve' || 'client_a_bord' => TaamaColors.primary,
+        'en_recherche' || 'en_attente' => TaamaColors.star,
+        'planifiee' => TaamaColors.navy,
+        _ => TaamaColors.textSecondary,
+      };
 }
 
 class _CarteActivite extends StatelessWidget {
+  const _CarteActivite({
+    required this.icone,
+    required this.titre,
+    required this.sousTitre,
+    required this.statut,
+    required this.couleurStatut,
+  });
+
   final IconData icone;
   final String titre;
   final String sousTitre;
   final String statut;
   final Color couleurStatut;
 
-  const _CarteActivite({
-    required this.icone, required this.titre, required this.sousTitre,
-    required this.statut, required this.couleurStatut,
-  });
-
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border(left: BorderSide(color: couleurStatut, width: 4)),
+        color: TaamaColors.surface,
+        borderRadius: BorderRadius.circular(TaamaRadius.md),
+        boxShadow: TaamaShadows.card,
       ),
       child: Row(
         children: [
           CircleAvatar(
-            backgroundColor: couleurStatut.withValues(alpha: 0.12),
+            backgroundColor: couleurStatut.withValues(alpha: 0.14),
             child: Icon(icone, color: couleurStatut, size: 20),
           ),
           const SizedBox(width: 12),
@@ -188,25 +225,38 @@ class _CarteActivite extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(titre,
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                Text(sousTitre,
-                    style: TextStyle(
-                        color: Colors.grey.shade600, fontSize: 12)),
+                Text(
+                  titre.isEmpty ? '—' : titre,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TaamaText.body.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  sousTitre,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TaamaText.body.copyWith(
+                      color: TaamaColors.textSecondary, fontSize: 12),
+                ),
               ],
             ),
           ),
+          const SizedBox(width: 8),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: couleurStatut.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
+              color: couleurStatut.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(TaamaRadius.pill),
             ),
-            child: Text(statut,
-                style: TextStyle(
-                    color: couleurStatut,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold)),
+            child: Text(
+              statut,
+              style: TextStyle(
+                color: couleurStatut,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
         ],
       ),
