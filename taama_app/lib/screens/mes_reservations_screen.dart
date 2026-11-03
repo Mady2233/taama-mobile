@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/config_app.dart';
 import '../theme/couleurs_taama.dart';
+import '../utils/format.dart';
 import '../widgets/widget_notation.dart';
 import '../widgets/widget_sos.dart';
 import '../widgets/widget_annulation.dart';
@@ -62,7 +63,7 @@ class _EcranMesReservationsState extends State<EcranMesReservations> {
       if (penalite > 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Réservation annulée. Pénalité : $penalite FCFA'),
+            content: Text('Réservation annulée. Pénalité : ${formaterFcfa(penalite)}'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -158,6 +159,7 @@ class _EcranMesReservationsState extends State<EcranMesReservations> {
                         final reservation = _reservations[index];
                         final trajet = reservation['trajet_propose'];
                         final conducteur = trajet['conducteur'];
+                        final prixPlace = formaterFcfaApi(trajet['prix_par_place']);
                         final statut = reservation['statut']?.toString() ?? '';
                         final paye = reservation['paye'] as bool? ?? false;
                         final (couleur, libelle) = _infosStatut(statut);
@@ -217,7 +219,7 @@ class _EcranMesReservationsState extends State<EcranMesReservations> {
                                   const SizedBox(width: 8),
                                   Flexible(
                                     child: Text(
-                                      '${trajet['prix_par_place']} FCFA',
+                                      prixPlace ?? '',
                                       style: const TextStyle(fontWeight: FontWeight.bold),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
@@ -278,7 +280,7 @@ class _EcranMesReservationsState extends State<EcranMesReservations> {
                                             width: 18, height: 18,
                                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                           )
-                                        : Text('Payer ${trajet['prix_par_place']} FCFA'),
+                                        : Text(prixPlace == null ? 'Payer' : 'Payer $prixPlace'),
                                   ),
                                 ),
                               ],

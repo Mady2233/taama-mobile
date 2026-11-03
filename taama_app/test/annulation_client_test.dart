@@ -48,13 +48,13 @@ void main() {
       expect(texte(secondes: 1), 'Annulation gratuite encore 1 min.');
     });
     test('délai dépassé : le montant du serveur', () {
-      expect(texte(), contains('200 F'));
-      expect(texte(penalite: 350), contains('350 F'));
+      expect(texte(), contains('200\u202fF'));
+      expect(texte(penalite: 350), contains('350\u202fF'));
     });
     test('délai dépassé, chauffeur en cause : gratuite', () {
       expect(texte(motif: 'CONDUCTEUR_NE_VIENT_PAS'), contains('gratuite'));
       expect(texte(motif: 'CONDUCTEUR_INJOIGNABLE'), contains('gratuite'));
-      expect(texte(motif: 'PLUS_BESOIN'), contains('200 F'));
+      expect(texte(motif: 'PLUS_BESOIN'), contains('200\u202fF'));
     });
     test('mode gratuit : aucune pénalité annoncée', () {
       expect(texte(penalite: 0), isNull);
@@ -98,10 +98,10 @@ void main() {
 
     testWidgets('le texte suit le motif choisi', (t) async {
       await _ouvrir(t);
-      expect(find.textContaining('200 F'), findsOneWidget);
+      expect(find.textContaining('200\u202fF'), findsOneWidget);
       await t.tap(find.text('Le chauffeur ne vient pas'));
       await t.pump();
-      expect(find.textContaining('200 F'), findsNothing);
+      expect(find.textContaining('200\u202fF'), findsNothing);
       expect(find.textContaining('le chauffeur est en cause'), findsOneWidget);
     });
 

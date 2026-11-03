@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/couleurs_taama.dart';
+import '../utils/format.dart';
 
 /// Dialogue d'annulation avec choix du motif et affichage
 /// de la pénalité éventuelle selon la politique Taama.
@@ -51,7 +52,7 @@ Future<Map<String, dynamic>?> afficherDialogueAnnulation(
                     child: Text(
                       estGratuit
                           ? 'Annulation gratuite\n(moins de 2 minutes)'
-                          : 'Pénalité de $penalite FCFA\n'
+                          : 'Pénalité de ${formaterFcfa(penalite)}\n'
                             '(${minutes.toStringAsFixed(1)} min écoulées)',
                       style: TextStyle(
                         color: estGratuit ? Colors.green : Colors.red,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../theme/couleurs_taama.dart';
+import '../utils/format.dart';
 
 /// Permet de recharger le solde Taama via Orange Money ou Moov Money
 /// (via PayDunya). Le flux est :
@@ -45,7 +46,7 @@ class _EcranRechargeState extends State<EcranRecharge> {
     final montant = int.tryParse(_montantController.text);
     if (_operateurSelectionne == null || montant == null || montant < 100) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Choisis un opérateur et un montant valide (min 100 FCFA)')),
+        SnackBar(content: Text('Choisis un opérateur et un montant valide (min ${formaterFcfa(100)})')),
       );
       return;
     }
@@ -217,13 +218,13 @@ class _EcranRechargeState extends State<EcranRecharge> {
             );
           }),
           const SizedBox(height: 20),
-          const Text('Montant (FCFA)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Text('Montant (F)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           TextField(
             controller: _montantController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              suffixText: 'FCFA',
+              suffixText: 'F',
               filled: true,
               fillColor: Colors.white,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
@@ -238,7 +239,7 @@ class _EcranRechargeState extends State<EcranRecharge> {
             spacing: 8,
             children: _montantsRapides.map((montant) {
               return ActionChip(
-                label: Text('$montant'),
+                label: Text(formaterFcfa(montant)),
                 backgroundColor: Colors.white,
                 onPressed: () => _montantController.text = montant.toString(),
               );

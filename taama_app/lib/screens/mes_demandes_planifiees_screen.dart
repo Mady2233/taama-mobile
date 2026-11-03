@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../theme/couleurs_taama.dart';
+import '../utils/format.dart';
 
 /// Liste les demandes instantanées planifiées à l'avance par le client,
 /// avec la possibilité de les annuler avant leur activation automatique.
@@ -94,7 +95,7 @@ class _MesDemandesPlanifieesScreenState extends State<MesDemandesPlanifieesScree
                           : int.tryParse(demande['id'].toString()) ?? 0;
                       final destination = demande['destination']?.toString() ?? '';
                       final typeTransport = demande['type_transport']?.toString() ?? 'Voiture';
-                      final prixEstime = demande['prix_estime']?.toString() ?? '';
+                      final prixEstime = formaterFcfaApi(demande['prix_estime']);
                       final dateHeure = _formaterDateHeure(demande['date_heure_planifiee']?.toString());
                       final estVoiture = typeTransport == 'Voiture';
 
@@ -136,9 +137,9 @@ class _MesDemandesPlanifieesScreenState extends State<MesDemandesPlanifieesScree
                                     ],
                                   ),
                                 ),
-                                if (prixEstime.isNotEmpty)
+                                if (prixEstime != null)
                                   Text(
-                                    '$prixEstime FCFA',
+                                    prixEstime,
                                     style: const TextStyle(fontWeight: FontWeight.bold),
                                   ),
                               ],

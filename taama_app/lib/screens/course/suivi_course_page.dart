@@ -416,7 +416,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
         SnackBar(
           content: Text(
             penalite > 0
-                ? 'Course annulée. Pénalité : $penalite FCFA'
+                ? 'Course annulée. Pénalité : ${formaterFcfa(penalite)}'
                 : 'Course annulée.',
           ),
         ),

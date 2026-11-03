@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/service_course.dart';
 import '../theme/couleurs_taama.dart';
+import '../utils/format.dart';
 
 /// Bottom sheet style DiDi : affiche les services disponibles (catalogue
 /// TypeService) avec leur devis figé côté serveur, AVANT que le client
@@ -166,7 +167,7 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
                           title: Text('${service.nom} indisponible'),
                           content: Text(
                             'Le service ${service.nom} n\'est pas encore proposé.\n\n'
-                            'Commander ${repli.nom} à ${repli.prix} FCFA à la place ?',
+                            'Commander ${repli.nom} à ${formaterFcfaApi(repli.prix) ?? '—'} à la place ?',
                           ),
                           actions: [
                             TextButton(
@@ -284,7 +285,7 @@ void _afficherDetailPrix(BuildContext context, Map<String, dynamic> detail) {
             const Divider(),
             _LignePrix(
               'TOTAL',
-              '${detail['prix_final']} FCFA',
+              formaterFcfaApi(detail['prix_final']) ?? '—',
               gras: true,
               couleur: CouleursTaama.terreCuite,
             ),
@@ -481,7 +482,7 @@ class _CarteService extends StatelessWidget {
               children: [
                 if (service.devisId != null && service.prix != null)
                   Text(
-                    '${service.prix} FCFA',
+                    formaterFcfa(service.prix!),
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 18,

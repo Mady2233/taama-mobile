@@ -11,6 +11,7 @@ import '../services/api_service.dart';
 import '../services/recherche_lieux.dart';
 import '../services/routing_service.dart';
 import '../theme/taama_theme.dart';
+import '../utils/format.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../carte/fond_carte.dart';
 import '../widgets/widget_choix_vehicule.dart';
@@ -408,8 +409,8 @@ class _EcranDemandeInstantaneeState
           title: const Text('Le prix a changé'),
           content: Text(
             prixAffiche != null
-                ? 'Le prix est maintenant de ${e.nouveauPrix} FCFA (au lieu de $prixAffiche FCFA). Confirmer à ce nouveau prix ?'
-                : 'Le prix est maintenant de ${e.nouveauPrix} FCFA. Confirmer ?',
+                ? 'Le prix est maintenant de ${formaterFcfa(e.nouveauPrix)} (au lieu de ${formaterFcfa(prixAffiche)}). Confirmer à ce nouveau prix ?'
+                : 'Le prix est maintenant de ${formaterFcfa(e.nouveauPrix)}. Confirmer ?',
           ),
           actions: [
             TextButton(
@@ -716,7 +717,7 @@ class _EcranDemandeInstantaneeState
                           _StatPrix(
                             icone: Icons.payments_outlined,
                             label: 'À partir de',
-                            valeur: '$_prixReference FCFA',
+                            valeur: formaterFcfa(_prixReference!),
                             accent: true,
                           ),
                       ],
@@ -855,7 +856,7 @@ class _EcranDemandeInstantaneeState
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Code valide — réduction estimée de $_reductionCodePromo FCFA',
+                    'Code valide — réduction estimée de ${formaterFcfaApi(_reductionCodePromo) ?? '—'}',
                     style: const TextStyle(
                         color: TaamaColors.success, fontSize: 12, fontWeight: FontWeight.w600),
                   ),

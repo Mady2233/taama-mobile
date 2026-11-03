@@ -5,7 +5,7 @@
 
 import 'package:flutter/material.dart';
 
-/// « 12 500 F » — espace fine insécable, sans dépendance intl.
+/// « 12 500 F » — espaces fines insécables, sans dépendance intl.
 String formaterFcfa(int montant) {
   final negatif = montant < 0;
   final chiffres = montant.abs().toString();
@@ -13,9 +13,17 @@ String formaterFcfa(int montant) {
   for (var i = 0; i < chiffres.length; i++) {
     final restant = chiffres.length - i;
     buffer.write(chiffres[i]);
-    if (restant > 1 && restant % 3 == 1) buffer.write(' ');
+    if (restant > 1 && restant % 3 == 1) buffer.write('\u202f');
   }
-  return '${negatif ? '-' : ''}$buffer F';
+  return '${negatif ? '-' : ''}$buffer\u202fF';
+}
+
+/// Montant lu dans une réponse de l'API (entier, décimal ou texte). Null si
+/// absent ou illisible : l'écran masque le segment, jamais « null ».
+String? formaterFcfaApi(Object? valeur) {
+  final montant = valeur is num ? valeur : num.tryParse('$valeur');
+  if (montant == null || !montant.isFinite) return null;
+  return formaterFcfa(montant.round());
 }
 
 /// « 4,9 » — virgule décimale française.

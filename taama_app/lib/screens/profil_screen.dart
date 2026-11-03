@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../services/api_service.dart';
 import '../theme/taama_theme.dart';
+import '../utils/format.dart';
 import '../widgets/photo_avatar.dart';
 
 /// Écran de profil (v4) : téléphone en lecture seule, modification du nom, et
@@ -121,10 +122,11 @@ class _EcranProfilState extends State<EcranProfil> {
         _ => TaamaColors.star,
       };
       if (trajet is Map) {
+        final prix = formaterFcfaApi(trajet['prix_par_place']);
         return (
           Icons.event_seat_rounded,
           '${trajet['depart'] ?? '?'} → ${trajet['arrivee'] ?? '?'}',
-          'Réservation • ${trajet['prix_par_place'] ?? '—'} FCFA',
+          prix == null ? 'Réservation' : 'Réservation • $prix',
           couleur,
         );
       }
@@ -137,10 +139,11 @@ class _EcranProfilState extends State<EcranProfil> {
         'en_route' => TaamaColors.primary,
         _ => TaamaColors.star,
       };
+      final prix = formaterFcfaApi(entree['prix_estime']);
       return (
         Icons.local_taxi_rounded,
         entree['destination']?.toString() ?? 'Destination inconnue',
-        'Course • ${entree['prix_estime'] ?? '—'} FCFA',
+        prix == null ? 'Course' : 'Course • $prix',
         couleur,
       );
     }

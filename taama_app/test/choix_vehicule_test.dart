@@ -74,7 +74,7 @@ void main() {
     await t.tap(find.text('ouvrir'));
     await t.pumpAndSettle();
 
-    expect(find.text('1400 FCFA'), findsOneWidget);
+    expect(find.text('1\u202f400\u202fF'), findsOneWidget);
     expect(find.text('Recherche à la commande'), findsOneWidget);
     expect(find.text('Indisponible'), findsNothing);
 
@@ -100,7 +100,7 @@ void main() {
     await t.tap(find.text('Tricycle'));
     await t.pumpAndSettle();
     expect(find.textContaining('n\'est pas encore proposé'), findsOneWidget);
-    expect(find.textContaining('Commander Berline à 2100 FCFA'), findsOneWidget);
+    expect(find.textContaining('Commander Berline à 2\u202f100\u202fF'), findsOneWidget);
   });
 
   testWidgets('sans devis et sans repli : message, jamais de commande', (t) async {

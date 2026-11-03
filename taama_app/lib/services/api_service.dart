@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
 import '../models/service_course.dart';
+import '../utils/format.dart';
 
 /// Levée par estimerCourse quand l'estimation n'est pas exploitable (réseau,
 /// timeout, statut HTTP non-200, réponse racine pas une liste) — distincte
@@ -52,7 +53,7 @@ class PrixCourierChangeException implements Exception {
   final double? distanceKm;
   PrixCourierChangeException(this.nouveauPrix, this.distanceKm);
   @override
-  String toString() => 'Le prix de cette livraison est passé à $nouveauPrix FCFA.';
+  String toString() => 'Le prix de cette livraison est passé à ${formaterFcfa(nouveauPrix)}.';
 }
 
 /// Levée quand le serveur ne reconnaît plus le token (401). Sur

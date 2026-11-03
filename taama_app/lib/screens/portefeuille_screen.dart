@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../utils/format.dart';
 import 'recharge_screen.dart';
 
 /// Écran de portefeuille, utilisable aussi bien côté client que conducteur.
@@ -71,7 +72,7 @@ class _EcranPortefeuilleState extends State<EcranPortefeuille> {
       final libelles = {'orange': 'Orange Money', 'moov': 'Moov Money', 'wave': 'Wave'};
       return (
         Icons.add_circle,
-        '+${entree['montant']} FCFA',
+        '+${formaterFcfaApi(entree['montant']) ?? '—'}',
         'Recharge • ${libelles[entree['operateur']] ?? entree['operateur']}',
         Colors.blue,
       );
@@ -80,14 +81,14 @@ class _EcranPortefeuilleState extends State<EcranPortefeuille> {
       if (widget.estChauffeur) {
         return (
           Icons.check_circle,
-          '+${entree['montant_chauffeur']} FCFA',
-          'Course • Total ${entree['montant_total']} FCFA (commission ${entree['commission']} FCFA)',
+          '+${formaterFcfaApi(entree['montant_chauffeur']) ?? '—'}',
+          'Course • Total ${formaterFcfaApi(entree['montant_total']) ?? '—'} (commission ${formaterFcfaApi(entree['commission']) ?? '—'})',
           Colors.green,
         );
       } else {
         return (
           Icons.remove_circle,
-          '-${entree['montant_total']} FCFA',
+          '-${formaterFcfaApi(entree['montant_total']) ?? '—'}',
           'Paiement de course',
           Colors.red,
         );
@@ -124,7 +125,7 @@ class _EcranPortefeuilleState extends State<EcranPortefeuille> {
                         const Text('Solde Taama', style: TextStyle(color: Colors.white70, fontSize: 14)),
                         const SizedBox(height: 8),
                         Text(
-                          '$_solde FCFA',
+                          formaterFcfa(_solde),
                           style: const TextStyle(color: Colors.amber, fontSize: 32, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 16),
