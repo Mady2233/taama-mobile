@@ -32,12 +32,12 @@ void main() {
     test('délai dépassé : le montant du serveur', () {
       final c = conditionsAnnulationChauffeur(secondesGratuites: 0, penaliteTardive: 500);
       expect(c.gratuite, isFalse);
-      expect(c.texte, contains('500 FCFA'));
+      expect(c.texte, contains('500\u202fF'));
     });
     test('mode gratuit : aucun montant, mais elle compte toujours', () {
       final c = conditionsAnnulationChauffeur(secondesGratuites: 0, penaliteTardive: 0);
       expect(c.gratuite, isFalse);
-      expect(c.texte, isNot(contains('FCFA')));
+      expect(c.texte, isNot(contains('Pénalité')));
       expect(c.texte, contains('répétées'));
     });
   });

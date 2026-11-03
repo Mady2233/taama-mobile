@@ -30,6 +30,7 @@ import '../services/api_service.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/sonnerie_service.dart';
 import '../theme/couleurs_taama.dart';
+import '../utils/format.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../carte/fond_carte.dart';
 import 'navigation_screen.dart';
@@ -636,10 +637,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                 children: [
                   Expanded(
                     child: prix == null
-                        ? Text(
-                            '${demande['prix_estime'] ?? '—'} FCFA',
-                            style: _stylePrix,
-                          )
+                        ? const Text('—', style: _stylePrix)
                         : TweenAnimationBuilder<double>(
                             tween: Tween(begin: reduit ? prix.toDouble() : 0, end: prix.toDouble()),
                             duration: const Duration(milliseconds: 900),
@@ -647,7 +645,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                             builder: (context, v, _) => FittedBox(
                               fit: BoxFit.scaleDown,
                               alignment: Alignment.centerLeft,
-                              child: Text('${_formaterFcfa(v.round())} FCFA', style: _stylePrix),
+                              child: Text(formaterFcfa(v.round()), style: _stylePrix),
                             ),
                           ),
                   ),
@@ -829,17 +827,6 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       ],
     );
   }
-}
-
-/// 12500 → « 12 500 ».
-String _formaterFcfa(int valeur) {
-  final s = valeur.abs().toString();
-  final b = StringBuffer(valeur < 0 ? '-' : '');
-  for (var i = 0; i < s.length; i++) {
-    if (i > 0 && (s.length - i) % 3 == 0) b.write(' ');
-    b.write(s[i]);
-  }
-  return b.toString();
 }
 
 // ─── Widgets ───

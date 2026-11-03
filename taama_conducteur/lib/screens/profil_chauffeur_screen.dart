@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+import '../utils/format.dart';
 import '../widgets/dialogue_suppression_compte.dart';
 import '../widgets/widget_avatar_conducteur.dart';
 import 'connexion_screen.dart';
@@ -340,10 +341,11 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
         'annulee' => Colors.grey,
         _ => Colors.orange,
       };
+      final prix = formaterFcfaApi(trajet['prix_par_place']);
       return (
         Icons.event_seat,
         '${trajet['depart']} → ${trajet['arrivee']}',
-        'Réservation reçue • ${trajet['prix_par_place']} FCFA',
+        prix == null ? 'Réservation reçue' : 'Réservation reçue • $prix',
         couleur,
       );
     } else {
@@ -354,10 +356,11 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
         'en_route' || 'client_a_bord' => Colors.blue,
         _ => Colors.orange,
       };
+      final prix = formaterFcfaApi(entree['prix_estime']);
       return (
         Icons.flash_on,
         entree['destination']?.toString() ?? '',
-        'Demande instantanée • ${entree['prix_estime']} FCFA',
+        prix == null ? 'Demande instantanée' : 'Demande instantanée • $prix',
         couleur,
       );
     }

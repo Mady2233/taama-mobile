@@ -30,6 +30,7 @@ import '../services/api_service.dart';
 import '../services/config_app.dart';
 import '../services/location_service.dart';
 import '../theme/couleurs_taama.dart';
+import '../utils/format.dart';
 import 'chat_screen.dart';
 
 const Set<String> _statutsActifs = {'livreur_assigne', 'en_collecte', 'en_livraison'};
@@ -577,7 +578,7 @@ class _EcranCourierLivreurState extends State<EcranCourierLivreur>
                 children: [
                   Expanded(
                     child: Text(
-                      prix == null ? '— FCFA' : '${_formaterFcfa(prix.round())} FCFA',
+                      prix == null ? '—' : formaterFcfa(prix.round()),
                       style: const TextStyle(
                         fontSize: 26,
                         fontWeight: FontWeight.w900,
@@ -611,16 +612,6 @@ class _EcranCourierLivreurState extends State<EcranCourierLivreur>
       ),
     );
   }
-}
-
-String _formaterFcfa(int valeur) {
-  final s = valeur.abs().toString();
-  final b = StringBuffer(valeur < 0 ? '-' : '');
-  for (var i = 0; i < s.length; i++) {
-    if (i > 0 && (s.length - i) % 3 == 0) b.write(' ');
-    b.write(s[i]);
-  }
-  return b.toString();
 }
 
 // ─── Widgets ───

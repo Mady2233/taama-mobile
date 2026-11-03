@@ -26,6 +26,7 @@ import '../services/location_service.dart';
 import '../services/polling_premier_plan.dart';
 import '../services/sonnerie_service.dart';
 import '../theme/couleurs_taama.dart';
+import '../utils/format.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../widgets/widget_avatar_conducteur.dart';
 import 'connexion_screen.dart';
@@ -543,7 +544,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
       } else if (penalite > 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Course annulée. Pénalité : $penalite FCFA'),
+            content: Text('Course annulée. Pénalité : ${formaterFcfa(penalite)}'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -900,8 +901,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
                             child: _CarteStat(
                               icone: Icons.account_balance_wallet_rounded,
                               couleur: CouleursTaama.indigo,
-                              valeur: _solde != null ? '$_solde' : '...',
-                              libelle: 'Solde (FCFA)',
+                              valeur: _solde != null ? formaterFcfa(_solde!) : '...',
+                              libelle: 'Solde',
                             ),
                           ),
                         ],
@@ -1512,7 +1513,10 @@ class _ValeurAnimee extends StatelessWidget {
   Widget build(BuildContext context) {
     final entier = int.tryParse(valeur);
     final decimal = entier == null ? double.tryParse(valeur) : null;
-    if (entier == null && decimal == null) return Text(valeur, style: _style);
+    if (entier == null && decimal == null) {
+      // Un montant ne se coupe pas : il rétrécit pour tenir dans sa carte.
+      return FittedBox(fit: BoxFit.scaleDown, child: Text(valeur, style: _style));
+    }
 
     final cible = (entier ?? decimal)!.toDouble();
     final duree = MediaQuery.disableAnimationsOf(context)
@@ -1869,7 +1873,7 @@ class _CarteDemande extends StatelessWidget {
                 ),
               ),
               Text(
-                '${demande['prix_estime']} F',
+                formaterFcfaApi(demande['prix_estime']) ?? '',
                 style: const TextStyle(
                   color: CouleursTaama.terreCuite,
                   fontWeight: FontWeight.w800,
@@ -2117,7 +2121,7 @@ class _CarteLivraisonCourier extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '${livraison['prix'] ?? 0} FCFA',
+                        formaterFcfaApi(livraison['prix']) ?? '',
                         style: const TextStyle(
                           color: CouleursTaama.terreCuite,
                           fontWeight: FontWeight.w800,

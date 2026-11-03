@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/couleurs_taama.dart';
+import '../utils/format.dart';
 
 /// Conditions affichées, lues sur le serveur : ni délai ni montant calculés ici.
 /// [secondesGratuites] : null tant que la course n'est pas acceptée.
@@ -15,7 +16,7 @@ import '../theme/couleurs_taama.dart';
     return (gratuite: true, texte: 'Annulation gratuite\n(encore $minutes min)');
   }
   if (penaliteTardive > 0) {
-    return (gratuite: false, texte: 'Pénalité de $penaliteTardive FCFA\n(délai gratuit dépassé)');
+    return (gratuite: false, texte: 'Pénalité de ${formaterFcfa(penaliteTardive)}\n(délai gratuit dépassé)');
   }
   return (gratuite: false, texte: 'Annulation tardive\n(comptée en cas d’annulations répétées)');
 }
