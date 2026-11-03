@@ -5,10 +5,11 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import '../config/app_config.dart';
 import '../models/service_course.dart';
 import '../services/api_service.dart';
 import '../services/routing_service.dart';
-import '../theme/couleurs_taama.dart';
+import '../theme/taama_theme.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../carte/fond_carte.dart';
 import '../widgets/widget_choix_vehicule.dart';
@@ -18,6 +19,11 @@ import 'recherche_screen.dart';
 /// Écran de demande instantanée : la distance est calculée automatiquement
 /// (GPS + géocodage Nominatim + Haversine), puis le passager choisit son
 /// véhicule et l'app cherche un conducteur disponible.
+///
+/// Style v4 (TaamaColors / TaamaText) : carte en haut, feuille arrondie en
+/// dessous, cohérent avec l'accueil et la recherche. La LOGIQUE est inchangée
+/// — prix exclusivement serveur, gestion du devis expiré, code promo validé
+/// côté serveur.
 class EcranDemandeInstantanee extends StatefulWidget {
   final String destination;
   final String? typePreselectionne;
@@ -197,7 +203,7 @@ class _EcranDemandeInstantaneeState
       final url = Uri.parse(
           'https://nominatim.openstreetmap.org/search?q=$q&format=json&limit=1');
       final reponse = await http.get(url, headers: {
-        'User-Agent': 'TaamaApp/1.0',
+        'User-Agent': AppConfig.userAgentHttp,
       }).timeout(const Duration(seconds: 10));
       if (reponse.statusCode == 200) {
         final res = jsonDecode(reponse.body) as List;
@@ -468,557 +474,593 @@ class _EcranDemandeInstantaneeState
     super.dispose();
   }
 
+  // ─── Construction (v4) ───
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CouleursTaama.sable,
-      appBar: AppBar(
-        title: const Text('Course instantanée',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: CouleursTaama.indigo,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      body: Column(
-        children: [
-          // Carte fixe en haut : itinéraire départ → destination, tracé
-          // réel via OSRM (RoutingService) une fois les deux points connus.
-          SizedBox(
-            height: MediaQuery.of(context).size.height * 0.32,
-            child: _CarteApercuItineraire(
-              depart: (_departLat != null && _departLng != null)
-                  ? LatLng(_departLat!, _departLng!)
-                  : null,
-              destination: (_destinationLat != null && _destinationLng != null)
-                  ? LatLng(_destinationLat!, _destinationLng!)
-                  : null,
-              arrets: _arrets
-                  .map((a) =>
-                      LatLng(a['latitude'] as double, a['longitude'] as double))
-                  .toList(),
-              enCalcul: _calcul,
-            ),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Destination
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: const [BoxShadow(
-                    color: Colors.black12, blurRadius: 8)],
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 44, height: 44,
-                    decoration: BoxDecoration(
-                      color: CouleursTaama.terreCuite
-                          .withValues(alpha: 0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.location_on,
-                        color: CouleursTaama.terreCuite, size: 22),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Destination',
-                            style: TextStyle(
-                                color: Colors.grey, fontSize: 11)),
-                        Text(
-                          widget.destination,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                            color: CouleursTaama.indigo,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Arrêts intermédiaires
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: const [
-                  BoxShadow(color: Colors.black12, blurRadius: 8),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (var i = 0; i < _arrets.length; i++) ...[
-                    Row(
-                      children: [
-                        Container(
-                          width: 32, height: 32,
-                          decoration: BoxDecoration(
-                            color: CouleursTaama.indigo.withValues(alpha: 0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Center(
-                            child: Text('${i + 1}',
-                                style: const TextStyle(
-                                    color: CouleursTaama.indigo,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12)),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            _arrets[i]['adresse']?.toString() ?? '',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 13),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: _recalculEnCours
-                              ? null
-                              : () => _supprimerArret(i),
-                          child: Icon(Icons.close,
-                              size: 18, color: Colors.grey.shade400),
-                        ),
-                      ],
-                    ),
-                    if (i < _arrets.length - 1)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 6),
-                        child: SizedBox(width: 32, child: Divider()),
-                      ),
-                  ],
-                  if (_arrets.isNotEmpty) const SizedBox(height: 12),
-                  if (_arrets.length < _maxArrets)
-                    GestureDetector(
-                      onTap: _recalculEnCours ? null : _ajouterArret,
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 32, height: 32,
-                            decoration: BoxDecoration(
-                              color: CouleursTaama.terreCuite.withValues(alpha: 0.1),
-                              shape: BoxShape.circle,
-                            ),
-                            child: _recalculEnCours
-                                ? const Padding(
-                                    padding: EdgeInsets.all(8),
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: CouleursTaama.terreCuite),
-                                  )
-                                : const Icon(Icons.add,
-                                    color: CouleursTaama.terreCuite, size: 18),
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Ajouter un arrêt',
-                            style: TextStyle(
-                                color: CouleursTaama.terreCuite,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Distance + Prix calculés automatiquement
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    CouleursTaama.indigo,
-                    const Color(0xFF3D2B6B),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+      backgroundColor: TaamaColors.background,
+      body: LayoutBuilder(
+        builder: (context, contraintes) {
+          final hauteurCarte = contraintes.maxHeight * 0.34;
+          return Stack(
+            children: [
+              // Carte : s'arrête au bord de la feuille (le fond neutre remplit
+              // les coins arrondis, pas d'étiquette qui dépasse).
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: hauteurCarte,
+                child: _CarteApercuItineraire(
+                  depart: (_departLat != null && _departLng != null)
+                      ? LatLng(_departLat!, _departLng!)
+                      : null,
+                  destination: (_destinationLat != null && _destinationLng != null)
+                      ? LatLng(_destinationLat!, _destinationLng!)
+                      : null,
+                  arrets: _arrets
+                      .map((a) =>
+                          LatLng(a['latitude'] as double, a['longitude'] as double))
+                      .toList(),
+                  enCalcul: _calcul,
                 ),
-                borderRadius: BorderRadius.circular(16),
               ),
-              child: _calcul
-                  ? const Column(
-                      children: [
-                        CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2),
-                        SizedBox(height: 10),
-                        Text('Calcul de la distance...',
-                            style: TextStyle(
-                                color: Colors.white70, fontSize: 13)),
-                      ],
-                    )
-                  : _distanceKm == null
-                      // Jamais de distance/prix fabriqués (voir catch de
-                      // _calculerDistanceAuto) : un état d'erreur explicite
-                      // avec un vrai bouton pour relancer, plutôt qu'une
-                      // estimation qui ne reposerait sur rien.
-                      ? Column(
-                          children: [
-                            const Icon(Icons.location_off_rounded,
-                                color: Colors.white70, size: 22),
-                            const SizedBox(height: 6),
-                            Text(
-                              _erreur ??
-                                  'Impossible de vous localiser — réessayez',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 13),
-                            ),
-                            const SizedBox(height: 10),
-                            OutlinedButton.icon(
-                              onPressed: _calculerDistanceAuto,
-                              icon: const Icon(Icons.refresh,
-                                  size: 16, color: Colors.white),
-                              label: const Text('Réessayer',
-                                  style: TextStyle(color: Colors.white)),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(color: Colors.white70),
-                              ),
-                            ),
-                          ],
-                        )
-                      : Column(
-                          children: [
-                            Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.spaceAround,
-                              children: [
-                                _StatPrix(
-                                  label: '📏 Distance',
-                                  valeur:
-                                      '${_distanceKm!.toStringAsFixed(1)} km',
-                                ),
-                                if (_prixReference != null)
-                                  _StatPrix(
-                                    label: '💰 À partir de',
-                                    valeur: '$_prixReference FCFA',
-                                    accent: true,
-                                  ),
-                              ],
-                            ),
-                            // Disponibilité : ligne distincte du prix. Pas de
-                            // nombre de chauffeurs : une berline climatisée
-                            // compte à la fois dans Berline et Confort, le
-                            // total serait faux.
-                            const SizedBox(height: 10),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  _chauffeurDisponible
-                                      ? Icons.check_circle_rounded
-                                      : Icons.person_search_rounded,
-                                  size: 16,
-                                  color: _chauffeurDisponible
-                                      ? CouleursTaama.or
-                                      : Colors.white70,
-                                ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    _chauffeurDisponible
-                                        ? 'Chauffeurs à proximité'
-                                        : 'Aucun chauffeur à proximité · nous en cherchons un pour vous',
-                                    textAlign: TextAlign.center,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            // Prix figé par le devis, avec ou sans chauffeur.
-                            if (_peutCommander) ...[
-                              const SizedBox(height: 4),
-                              const Text(
-                                'Prix fixé à l’avance',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 11.5),
-                              ),
-                            ],
-                            const SizedBox(height: 8),
-                            GestureDetector(
-                              onTap: _calculerDistanceAuto,
-                              child: Text(
-                                _chauffeurDisponible
-                                    ? '🔄 Recalculer'
-                                    : '🔄 Réessayer',
-                                style: TextStyle(
-                                    color:
-                                        Colors.white.withValues(alpha: 0.6),
-                                    fontSize: 11),
-                              ),
-                            ),
-                          ],
-                        ),
-            ),
-            const SizedBox(height: 16),
-
-            // Planification
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.schedule,
-                          color: CouleursTaama.indigo, size: 20),
-                      const SizedBox(width: 10),
-                      const Expanded(
-                        child: Text('Planifier à l\'avance',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                      ),
-                      Switch(
-                        value: _planifier,
-                        onChanged: (v) =>
-                            setState(() => _planifier = v),
-                        activeThumbColor: CouleursTaama.terreCuite,
-                      ),
-                    ],
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: _BoutonRetourRond(onTap: () => Navigator.pop(context)),
                   ),
-                  if (_planifier) ...[
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () async {
-                              final d = await showDatePicker(
-                                context: context,
-                                initialDate: DateTime.now()
-                                    .add(const Duration(hours: 1)),
-                                firstDate: DateTime.now(),
-                                lastDate: DateTime.now()
-                                    .add(const Duration(days: 30)),
-                              );
-                              if (d != null) {
-                                setState(() => _datePlanifiee = d);
-                              }
-                            },
-                            icon: const Icon(Icons.calendar_today,
-                                size: 16),
-                            label: Text(_datePlanifiee == null
-                                ? 'Date'
-                                : '${_datePlanifiee!.day}/${_datePlanifiee!.month}'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: CouleursTaama.indigo,
-                              side: const BorderSide(
-                                  color: CouleursTaama.indigo),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () async {
-                              final h = await showTimePicker(
-                                context: context,
-                                initialTime: TimeOfDay.now(),
-                              );
-                              if (h != null) {
-                                setState(() => _heurePlanifiee = h);
-                              }
-                            },
-                            icon: const Icon(Icons.access_time,
-                                size: 16),
-                            label: Text(_heurePlanifiee == null
-                                ? 'Heure'
-                                : _heurePlanifiee!.format(context)),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: CouleursTaama.indigo,
-                              side: const BorderSide(
-                                  color: CouleursTaama.indigo),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
+              Positioned(
+                left: 0,
+                right: 0,
+                top: hauteurCarte,
+                bottom: 0,
+                child: _feuille(),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 
-            // Code promo
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.local_offer_outlined,
-                          color: CouleursTaama.indigo, size: 20),
-                      SizedBox(width: 10),
-                      Text('Code promo',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _codePromoCtrl,
-                          textCapitalization: TextCapitalization.characters,
-                          onChanged: (_) {
-                            // Un changement invalide l'aperçu précédent :
-                            // évite d'afficher une réduction qui ne
-                            // correspond plus au texte actuellement saisi.
-                            if (_codePromoValide != null) {
-                              setState(() {
-                                _codePromoValide = null;
-                                _erreurCodePromo = null;
-                              });
-                            }
-                          },
-                          decoration: InputDecoration(
-                            hintText: 'Ex : BIENVENUE',
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 12),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: BorderSide(color: Colors.grey.shade300),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      OutlinedButton(
-                        onPressed: _verificationCodePromoEnCours
-                            ? null
-                            : _verifierCodePromo,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: CouleursTaama.indigo,
-                          side: const BorderSide(color: CouleursTaama.indigo),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                        ),
-                        child: _verificationCodePromoEnCours
-                            ? const SizedBox(
-                                width: 16, height: 16,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: CouleursTaama.indigo),
-                              )
-                            : const Text('Vérifier'),
-                      ),
-                    ],
-                  ),
-                  if (_codePromoValide == true) ...[
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(Icons.check_circle,
-                            color: Colors.green, size: 16),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Code valide — réduction estimée de $_reductionCodePromo FCFA',
-                          style: const TextStyle(
-                              color: Colors.green,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600),
-                        ),
-                      ],
-                    ),
-                  ] else if (_codePromoValide == false) ...[
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(Icons.error_outline,
-                            color: Colors.red, size: 16),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            _erreurCodePromo ?? 'Code invalide',
-                            style: const TextStyle(
-                                color: Colors.red,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
+  Widget _feuille() {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: TaamaColors.background,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: TaamaColors.border,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 14),
+            _carteDestination(),
+            const SizedBox(height: 12),
+            _carteArrets(),
+            const SizedBox(height: 12),
+            _carteDistancePrix(),
+            const SizedBox(height: 12),
+            _cartePlanification(),
+            const SizedBox(height: 12),
+            _carteCodePromo(),
+            const SizedBox(height: 20),
+            _boutonConfirmer(),
+          ],
+        ),
+      ),
+    );
+  }
 
-            // Bouton confirmer
-            ElevatedButton(
-              onPressed: (_calcul || _enChargement || _distanceKm == null ||
-                      !_peutCommander || (_planifier && !_chauffeurDisponible))
-                  ? null
-                  : _confirmer,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: CouleursTaama.terreCuite,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-                elevation: 3,
-                shadowColor:
-                    CouleursTaama.terreCuite.withValues(alpha: 0.4),
-              ),
-              child: _enChargement
-                  ? const SizedBox(
-                      width: 24, height: 24,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.flash_on, size: 20),
-                        const SizedBox(width: 8),
-                        Text(
-                          _planifier
-                              ? 'Planifier la course'
-                              : 'Choisir mon véhicule',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16),
-                        ),
-                      ],
-                    ),
+  Widget _carteDestination() {
+    return _Carte(
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: TaamaColors.primary.withValues(alpha: 0.10),
+              shape: BoxShape.circle,
             ),
-                ],
-              ),
+            child: const Icon(Icons.place_rounded, color: TaamaColors.primary, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Destination', style: TaamaText.muted.copyWith(fontSize: 11)),
+                const SizedBox(height: 2),
+                Text(
+                  widget.destination,
+                  style: TaamaText.body.copyWith(fontSize: 16, fontWeight: FontWeight.w800),
+                ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _carteArrets() {
+    return _Carte(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < _arrets.length; i++) ...[
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: TaamaColors.primary.withValues(alpha: 0.10),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Text('${i + 1}',
+                        style: TaamaText.body.copyWith(
+                            color: TaamaColors.primary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _arrets[i]['adresse']?.toString() ?? '',
+                    style: TaamaText.body.copyWith(fontSize: 13, fontWeight: FontWeight.w700),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Retirer cet arrêt',
+                  onPressed: _recalculEnCours ? null : () => _supprimerArret(i),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  color: TaamaColors.textSecondary,
+                ),
+              ],
+            ),
+            if (i < _arrets.length - 1)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 6),
+                child: SizedBox(width: 32, child: Divider()),
+              ),
+          ],
+          if (_arrets.isNotEmpty) const SizedBox(height: 12),
+          if (_arrets.length < _maxArrets)
+            InkWell(
+              borderRadius: BorderRadius.circular(TaamaRadius.sm),
+              onTap: _recalculEnCours ? null : _ajouterArret,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: TaamaColors.primary.withValues(alpha: 0.10),
+                        shape: BoxShape.circle,
+                      ),
+                      child: _recalculEnCours
+                          ? const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: TaamaColors.primary),
+                            )
+                          : const Icon(Icons.add_rounded,
+                              color: TaamaColors.primary, size: 18),
+                    ),
+                    const SizedBox(width: 10),
+                    Text('Ajouter un arrêt',
+                        style: TaamaText.body.copyWith(
+                            color: TaamaColors.primary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13)),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _carteDistancePrix() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: TaamaColors.navy,
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+      ),
+      child: _calcul
+          ? const Column(
+              children: [
+                CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                SizedBox(height: 10),
+                Text('Calcul de la distance…',
+                    style: TextStyle(color: Colors.white70, fontSize: 13)),
+              ],
+            )
+          : _distanceKm == null
+              // Jamais de distance/prix fabriqués (voir catch de
+              // _calculerDistanceAuto) : état d'erreur explicite + bouton.
+              ? Column(
+                  children: [
+                    const Icon(Icons.location_off_rounded, color: Colors.white70, size: 22),
+                    const SizedBox(height: 6),
+                    Text(
+                      _erreur ?? 'Impossible de vous localiser — réessayez',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _calculerDistanceAuto,
+                      icon: const Icon(Icons.refresh_rounded, size: 16, color: Colors.white),
+                      label: const Text('Réessayer', style: TextStyle(color: Colors.white)),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.white70),
+                      ),
+                    ),
+                  ],
+                )
+              : Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _StatPrix(
+                          icone: Icons.straighten_rounded,
+                          label: 'Distance',
+                          valeur: '${_distanceKm!.toStringAsFixed(1)} km',
+                        ),
+                        if (_prixReference != null)
+                          _StatPrix(
+                            icone: Icons.payments_outlined,
+                            label: 'À partir de',
+                            valeur: '$_prixReference FCFA',
+                            accent: true,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    const Divider(color: Colors.white24, height: 1),
+                    const SizedBox(height: 10),
+                    // Disponibilité : ligne distincte du prix. Pas de nombre
+                    // de chauffeurs : une berline climatisée compte à la fois
+                    // dans Berline et Confort, le total serait faux.
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _chauffeurDisponible
+                              ? Icons.check_circle_rounded
+                              : Icons.person_search_rounded,
+                          size: 16,
+                          color: _chauffeurDisponible ? TaamaColors.accentMint : Colors.white70,
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            _chauffeurDisponible
+                                ? 'Chauffeurs à proximité'
+                                : 'Aucun chauffeur à proximité · nous en cherchons un pour vous',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ),
+                    // Prix figé par le devis, avec ou sans chauffeur.
+                    if (_peutCommander) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.lock_outline_rounded, size: 14, color: Colors.white70),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              'Prix fixé à l’avance · payé en espèces au chauffeur',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.85), fontSize: 11.5),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: _calculerDistanceAuto,
+                      icon: const Icon(Icons.refresh_rounded, size: 15, color: Colors.white70),
+                      label: Text(_chauffeurDisponible ? 'Recalculer' : 'Réessayer',
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.7), fontSize: 12)),
+                    ),
+                  ],
+                ),
+    );
+  }
+
+  Widget _cartePlanification() {
+    return _Carte(
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.schedule_rounded, color: TaamaColors.primary, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Planifier à l’avance',
+                    style: TaamaText.body.copyWith(fontWeight: FontWeight.w800)),
+              ),
+              Switch(
+                value: _planifier,
+                onChanged: (v) => setState(() => _planifier = v),
+                activeThumbColor: TaamaColors.primary,
+              ),
+            ],
+          ),
+          if (_planifier) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final d = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now().add(const Duration(hours: 1)),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 30)),
+                      );
+                      if (d != null) setState(() => _datePlanifiee = d);
+                    },
+                    icon: const Icon(Icons.calendar_today_rounded, size: 16),
+                    label: Text(_datePlanifiee == null
+                        ? 'Date'
+                        : '${_datePlanifiee!.day}/${_datePlanifiee!.month}'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: TaamaColors.primary,
+                      side: const BorderSide(color: TaamaColors.primary),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final h = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.now(),
+                      );
+                      if (h != null) setState(() => _heurePlanifiee = h);
+                    },
+                    icon: const Icon(Icons.access_time_rounded, size: 16),
+                    label: Text(_heurePlanifiee == null
+                        ? 'Heure'
+                        : _heurePlanifiee!.format(context)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: TaamaColors.primary,
+                      side: const BorderSide(color: TaamaColors.primary),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _carteCodePromo() {
+    return _Carte(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.local_offer_outlined, color: TaamaColors.primary, size: 20),
+              const SizedBox(width: 10),
+              Text('Code promo', style: TaamaText.body.copyWith(fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _codePromoCtrl,
+                  textCapitalization: TextCapitalization.characters,
+                  onChanged: (_) {
+                    // Un changement invalide l'aperçu précédent : évite
+                    // d'afficher une réduction qui ne correspond plus au texte.
+                    if (_codePromoValide != null) {
+                      setState(() {
+                        _codePromoValide = null;
+                        _erreurCodePromo = null;
+                      });
+                    }
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Ex : BIENVENUE',
+                    isDense: true,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(TaamaRadius.md),
+                      borderSide: const BorderSide(color: TaamaColors.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(TaamaRadius.md),
+                      borderSide: const BorderSide(color: TaamaColors.border),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton(
+                onPressed: _verificationCodePromoEnCours ? null : _verifierCodePromo,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: TaamaColors.primary,
+                  side: const BorderSide(color: TaamaColors.primary),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(TaamaRadius.md)),
+                ),
+                child: _verificationCodePromoEnCours
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: TaamaColors.primary),
+                      )
+                    : const Text('Vérifier'),
+              ),
+            ],
+          ),
+          if (_codePromoValide == true) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: TaamaColors.success, size: 16),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Code valide — réduction estimée de $_reductionCodePromo FCFA',
+                    style: const TextStyle(
+                        color: TaamaColors.success, fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ] else if (_codePromoValide == false) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.error_outline_rounded, color: TaamaColors.danger, size: 16),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _erreurCodePromo ?? 'Code invalide',
+                    style: const TextStyle(
+                        color: TaamaColors.danger, fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _boutonConfirmer() {
+    final actif = !(_calcul || _enChargement || _distanceKm == null || !_peutCommander ||
+        (_planifier && !_chauffeurDisponible));
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: actif ? _confirmer : null,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: TaamaColors.primary,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: TaamaColors.primary.withValues(alpha: 0.4),
+          disabledForegroundColor: Colors.white70,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(TaamaRadius.lg)),
+          elevation: 3,
+          shadowColor: TaamaColors.primary.withValues(alpha: 0.4),
+        ),
+        child: _enChargement
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(_planifier ? Icons.event_available_rounded : Icons.local_taxi_rounded,
+                      size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    _planifier ? 'Planifier la course' : 'Choisir mon véhicule',
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+/// Carte blanche standard de cet écran (fond, coins, ombre douce).
+class _Carte extends StatelessWidget {
+  const _Carte({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: TaamaColors.surface,
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        boxShadow: TaamaShadows.card,
+      ),
+      child: child,
+    );
+  }
+}
+
+class _BoutonRetourRond extends StatelessWidget {
+  const _BoutonRetourRond({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Material(
+        color: TaamaColors.surface,
+        shape: const CircleBorder(),
+        elevation: 4,
+        shadowColor: TaamaColors.textPrimary.withValues(alpha: 0.25),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: const SizedBox(
+            width: 46,
+            height: 46,
+            child: Icon(Icons.arrow_back_rounded, color: TaamaColors.textPrimary, size: 22),
+          ),
+        ),
       ),
     );
   }
@@ -1086,7 +1128,7 @@ class _CarteApercuItineraireState extends State<_CarteApercuItineraire> {
       _mapController.fitCamera(
         CameraFit.bounds(
           bounds: bounds,
-          padding: const EdgeInsets.fromLTRB(40, 40, 40, 20),
+          padding: const EdgeInsets.fromLTRB(40, 60, 40, 30),
           maxZoom: 16,
         ),
       );
@@ -1111,120 +1153,114 @@ class _CarteApercuItineraireState extends State<_CarteApercuItineraire> {
     final destination = widget.destination;
     final pointsPrets = depart != null && destination != null;
 
-    return ClipRRect(
-      child: Stack(
-        children: [
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: depart ?? _centreParDefaut,
-              initialZoom: 13.0,
+    return Stack(
+      children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: depart ?? _centreParDefaut,
+            initialZoom: 13.0,
+            // Plein nord, comme l'accueil (tuiles raster).
+            interactionOptions: const InteractionOptions(
+              flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
             ),
-            children: [
-              const FondCarteTaama(),
-              const CoucheCarteTaama(),
-              if (_trace != null)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: _trace!,
-                      strokeWidth: 4,
-                      color: CouleursTaama.terreCuite,
-                    ),
-                  ],
-                ),
-              MarkerLayer(
-                markers: [
-                  if (depart != null)
-                    Marker(
-                      point: depart,
-                      width: 34,
-                      height: 34,
-                      alignment: Alignment.center,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: CouleursTaama.indigo,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 3),
-                          boxShadow: [
-                            BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.25),
-                                blurRadius: 6),
-                          ],
-                        ),
-                        child: const Icon(Icons.trip_origin,
-                            color: Colors.white, size: 14),
-                      ),
-                    ),
-                  if (destination != null)
-                    Marker(
-                      point: destination,
-                      width: 40,
-                      height: 40,
-                      alignment: Alignment.topCenter,
-                      child: const Icon(Icons.location_on,
-                          color: CouleursTaama.terreCuite, size: 40),
-                    ),
-                  for (var i = 0; i < widget.arrets.length; i++)
-                    Marker(
-                      point: widget.arrets[i],
-                      width: 26,
-                      height: 26,
-                      alignment: Alignment.center,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: CouleursTaama.or,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2),
-                          boxShadow: [
-                            BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.25),
-                                blurRadius: 4),
-                          ],
-                        ),
-                        child: Center(
-                          child: Text(
-                            '${i + 1}',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 11),
-                          ),
-                        ),
-                      ),
-                    ),
+          ),
+          children: [
+            const FondCarteTaama(),
+            const CoucheCarteTaama(),
+            if (_trace != null)
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: _trace!,
+                    strokeWidth: 4,
+                    color: TaamaColors.primary,
+                  ),
                 ],
               ),
-              const AttributionCarteTaama(),
-            ],
-          ),
-          // Overlay de chargement uniquement pendant un calcul en cours (GPS
-          // ou tracé OSRM) — si le calcul est terminé mais que les
-          // coordonnées restent indisponibles (GPS refusé/échoué, voir le
-          // repli dans _calculerDistanceAuto), on affiche juste la carte
-          // centrée sur Bamako plutôt qu'un spinner bloqué indéfiniment.
-          if (widget.enCalcul || (pointsPrets && _chargementTrace))
-            Container(
-              color: Colors.black.withValues(alpha: 0.15),
-              child: const Center(
-                child: SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 3),
-                ),
+            MarkerLayer(
+              markers: [
+                if (depart != null)
+                  Marker(
+                    point: depart,
+                    width: 34,
+                    height: 34,
+                    alignment: Alignment.center,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: TaamaColors.navy,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 3),
+                        boxShadow: const [
+                          BoxShadow(color: Color(0x401B1A3A), blurRadius: 6),
+                        ],
+                      ),
+                      child: const Icon(Icons.trip_origin, color: Colors.white, size: 14),
+                    ),
+                  ),
+                if (destination != null)
+                  Marker(
+                    point: destination,
+                    width: 40,
+                    height: 40,
+                    alignment: Alignment.topCenter,
+                    child: const Icon(Icons.location_on, color: TaamaColors.primary, size: 40),
+                  ),
+                for (var i = 0; i < widget.arrets.length; i++)
+                  Marker(
+                    point: widget.arrets[i],
+                    width: 26,
+                    height: 26,
+                    alignment: Alignment.center,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: TaamaColors.star,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: const [
+                          BoxShadow(color: Color(0x401B1A3A), blurRadius: 4),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${i + 1}',
+                          style: const TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const AttributionCarteTaama(),
+          ],
+        ),
+        // Overlay de chargement uniquement pendant un calcul en cours (GPS
+        // ou tracé OSRM) — si le calcul est terminé mais que les coordonnées
+        // restent indisponibles (GPS refusé/échoué), on affiche juste la
+        // carte centrée sur Bamako plutôt qu'un spinner bloqué.
+        if (widget.enCalcul || (pointsPrets && _chargementTrace))
+          Container(
+            color: Colors.black.withValues(alpha: 0.15),
+            child: const Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }
 
 class _StatPrix extends StatelessWidget {
+  final IconData icone;
   final String label, valeur;
   final bool accent;
   const _StatPrix({
+    required this.icone,
     required this.label,
     required this.valeur,
     this.accent = false,
@@ -1234,17 +1270,22 @@ class _StatPrix extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Text(label,
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.7),
-                fontSize: 11)),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icone, size: 14, color: Colors.white.withValues(alpha: 0.7)),
+            const SizedBox(width: 5),
+            Text(label,
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 11)),
+          ],
+        ),
         const SizedBox(height: 4),
         Text(
           valeur,
           style: TextStyle(
-            color: accent ? CouleursTaama.or : Colors.white,
+            color: accent ? TaamaColors.accentMint : Colors.white,
             fontWeight: FontWeight.bold,
-            fontSize: accent ? 15 : 18,
+            fontSize: accent ? 16 : 18,
           ),
         ),
       ],
