@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
 import '../services/config_app.dart';
+import '../services/politique_confidentialite.dart';
 import '../theme/taama_theme.dart';
 import '../widgets/dialogue_suppression_compte.dart';
 import '../widgets/photo_avatar.dart';
@@ -136,9 +137,8 @@ class _EcranCompteState extends State<EcranCompte> {
                           MaterialPageRoute(builder: (_) => const EcranAvisApp()),
                         ),
                     couleur: TaamaColors.star),
-                _item(Icons.help_outline_rounded, 'Aide & Support', () {}),
                 _item(Icons.privacy_tip_outlined, 'Politique de confidentialité',
-                    () {}),
+                    () => ouvrirPolitiqueConfidentialite(context)),
               ]),
               const SizedBox(height: 16),
               _carteDeconnexion(),
