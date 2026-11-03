@@ -730,7 +730,7 @@ class ApiService {
     final reponse = await http.get(
       Uri.parse('$_baseUrl/trajets/courier/$courierId/'),
       headers: _headers,
-    );
+    ).timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
@@ -738,7 +738,7 @@ class ApiService {
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/courier/$courierId/payer/'),
       headers: _headers,
-    );
+    ).timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 

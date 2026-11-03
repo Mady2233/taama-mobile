@@ -1,14 +1,35 @@
-import 'dart:async';
+// DESIGN_V4
+//
+// Envoi d'un colis (côté client) : formulaire.
+//
+// Inchangé : prix calculé UNIQUEMENT par le serveur (estimerCourier), jamais
+// de prix inventé ; contrôle prix_annonce / PrixCourierChangeException avec
+// confirmation explicite du nouveau prix ; creerCourier avec les mêmes
+// champs.
+//
+// Nouveau :
+// - choix des points façon VTC (EcranSelectionPointCourier) : adresse
+//   lisible + repère, au lieu de coordonnées brutes envoyées au livreur ;
+// - frise Collecte → Livraison, aperçu carte cadré sur les deux points ;
+// - catégories en tuiles avec icônes (plus d'emojis) ;
+// - numéro du destinataire validé (format malien, 8 chiffres) ;
+// - longueurs max alignées sur le modèle (description 200) ;
+// - barre du bas fixe : prix qui défile + bouton Commander ;
+// - après commande : écran de suivi dédié (EcranSuiviCourier).
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
-import '../services/api_service.dart';
-import '../services/location_service.dart';
-import '../theme/couleurs_taama.dart';
-import '../widgets/couche_carte_taama.dart';
 import '../carte/fond_carte.dart';
-import 'chat_screen.dart';
+import '../services/api_service.dart';
+import '../theme/taama_theme.dart';
+import '../utils/format.dart';
+import '../widgets/couche_carte_taama.dart';
+import 'courier_selection_point.dart';
+import 'courier_suivi_screen.dart';
+
+const int _longueurMaxDescription = 200;
 
 class EcranCourier extends StatefulWidget {
   const EcranCourier({super.key});
@@ -18,13 +39,10 @@ class EcranCourier extends StatefulWidget {
 }
 
 class _EcranCourierState extends State<EcranCourier> {
-  // Formulaire
-  final _collecteController = TextEditingController();
-  final _livraisonController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _telephoneDestinataireController = TextEditingController();
-  LatLng? _pointCollecte;
-  LatLng? _pointLivraison;
+  PointCourier? _collecte;
+  PointCourier? _livraison;
   String _categorie = 'colis';
 
   // Prix calculé par le SERVEUR (jamais par l'app) dès que les deux points
@@ -33,59 +51,39 @@ class _EcranCourierState extends State<EcranCourier> {
   double? _distanceKm;
   bool _estimationEnCours = false;
   String? _erreurEstimation;
+  bool _enChargement = false;
 
   static const _categories = [
-    ('colis', '📦', 'Colis'),
-    ('repas', '🍽️', 'Repas'),
-    ('document', '📄', 'Document'),
+    ('colis', Icons.inventory_2_rounded, 'Colis'),
+    ('repas', Icons.restaurant_rounded, 'Repas'),
+    ('document', Icons.description_rounded, 'Document'),
   ];
-
-  // Commande
-  bool _enChargement = false;
-  bool _enPaiement = false;
-  Map<String, dynamic>? _commande;
-
-  // Suivi
-  Timer? _timerPolling;
-  LatLng? _positionLivreur;
-  final LocationService _locationService = LocationService();
-  final MapController _mapController = MapController();
 
   @override
   void dispose() {
-    _collecteController.dispose();
-    _livraisonController.dispose();
     _descriptionController.dispose();
     _telephoneDestinataireController.dispose();
-    _timerPolling?.cancel();
-    _locationService.arreter();
     super.dispose();
   }
 
-  // ─── Sélection GPS des adresses ───
+  // ─── Points ───
 
-  Future<void> _selectionnerPoint({required bool estCollecte}) async {
-    final point = await Navigator.push<LatLng>(
+  Future<void> _choisirPoint({required bool estCollecte}) async {
+    final point = await Navigator.push<PointCourier>(
       context,
       MaterialPageRoute(
-        builder: (_) => _EcranSelectionAdresse(
-          titre: estCollecte ? 'Point de collecte' : 'Point de livraison',
+        builder: (_) => EcranSelectionPointCourier(
+          estCollecte: estCollecte,
+          pointInitial: estCollecte ? _collecte : _livraison,
         ),
       ),
     );
     if (point == null || !mounted) return;
-
     setState(() {
       if (estCollecte) {
-        _pointCollecte = point;
-        _collecteController.text =
-            '${point.latitude.toStringAsFixed(4)}, '
-            '${point.longitude.toStringAsFixed(4)}';
+        _collecte = point;
       } else {
-        _pointLivraison = point;
-        _livraisonController.text =
-            '${point.latitude.toStringAsFixed(4)}, '
-            '${point.longitude.toStringAsFixed(4)}';
+        _livraison = point;
       }
       // Un point a changé : l'ancien prix ne vaut plus rien.
       _prix = null;
@@ -96,17 +94,18 @@ class _EcranCourierState extends State<EcranCourier> {
   }
 
   Future<void> _estimer() async {
-    if (_pointCollecte == null || _pointLivraison == null) return;
+    final c = _collecte, l = _livraison;
+    if (c == null || l == null) return;
     setState(() {
       _estimationEnCours = true;
       _erreurEstimation = null;
     });
     try {
       final resultat = await ApiService.estimerCourier(
-        latCollecte: _pointCollecte!.latitude,
-        lngCollecte: _pointCollecte!.longitude,
-        latLivraison: _pointLivraison!.latitude,
-        lngLivraison: _pointLivraison!.longitude,
+        latCollecte: c.position.latitude,
+        lngCollecte: c.position.longitude,
+        latLivraison: l.position.latitude,
+        lngLivraison: l.position.longitude,
       );
       if (!mounted) return;
       setState(() {
@@ -115,11 +114,25 @@ class _EcranCourierState extends State<EcranCourier> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _erreurEstimation =
-          'Impossible de calculer le prix. Vérifie ta connexion.');
+      setState(() => _erreurEstimation = 'Impossible de calculer le prix. Vérifie ta connexion.');
     } finally {
       if (mounted) setState(() => _estimationEnCours = false);
     }
+  }
+
+  // ─── Validation ───
+
+  /// Numéro malien : 8 chiffres, préfixe +223 / 00223 accepté et retiré
+  /// (le backend stocke le format local). Vide = facultatif.
+  String? _telephoneNormalise() {
+    var t = _telephoneDestinataireController.text.replaceAll(RegExp(r'[\s.\-]'), '');
+    if (t.isEmpty) return '';
+    if (t.startsWith('+223')) {
+      t = t.substring(4);
+    } else if (t.startsWith('00223')) {
+      t = t.substring(5);
+    }
+    return RegExp(r'^\d{8}$').hasMatch(t) ? t : null;
   }
 
   Future<bool> _confirmerNouveauPrix(int nouveauPrix) async {
@@ -128,7 +141,7 @@ class _EcranCourierState extends State<EcranCourier> {
       builder: (ctx) => AlertDialog(
         title: const Text('Le prix a changé'),
         content: Text('Le prix de cette livraison est maintenant de '
-            '$nouveauPrix FCFA. Commander à ce prix ?'),
+            '${formaterFcfa(nouveauPrix)}. Commander à ce prix ?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -136,7 +149,7 @@ class _EcranCourierState extends State<EcranCourier> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Commander à $nouveauPrix FCFA'),
+            child: Text('Commander à ${formaterFcfa(nouveauPrix)}'),
           ),
         ],
       ),
@@ -144,37 +157,57 @@ class _EcranCourierState extends State<EcranCourier> {
     return confirme ?? false;
   }
 
+  void _message(String texte) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(texte)));
+  }
+
   // ─── Commande ───
 
   Future<void> _commander() async {
-    if (_collecteController.text.trim().isEmpty ||
-        _livraisonController.text.trim().isEmpty ||
-        _descriptionController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Remplis tous les champs')));
+    final c = _collecte, l = _livraison, prix = _prix;
+    if (c == null || l == null) {
+      _message('Choisis le point de collecte et le point de livraison.');
       return;
     }
-    final prix = _prix;
-    if (_pointCollecte == null || _pointLivraison == null || prix == null) return;
+    if (_descriptionController.text.trim().isEmpty) {
+      _message('Décris le colis en quelques mots.');
+      return;
+    }
+    final telephone = _telephoneNormalise();
+    if (telephone == null) {
+      _message('Numéro du destinataire invalide : 8 chiffres (ex. 70 00 00 00).');
+      return;
+    }
+    if (prix == null) return;
 
     setState(() => _enChargement = true);
     try {
       final resultat = await ApiService.creerCourier(
-        adresseCollecte: _collecteController.text.trim(),
-        adresseLivraison: _livraisonController.text.trim(),
+        adresseCollecte: c.adresse,
+        adresseLivraison: l.adresse,
         descriptionColis: _descriptionController.text.trim(),
         categorie: _categorie,
-        telephoneDestinataire: _telephoneDestinataireController.text.trim(),
+        telephoneDestinataire: telephone,
         prixAnnonce: prix,
-        latCollecte: _pointCollecte!.latitude,
-        lngCollecte: _pointCollecte!.longitude,
-        latLivraison: _pointLivraison!.latitude,
-        lngLivraison: _pointLivraison!.longitude,
+        latCollecte: c.position.latitude,
+        lngCollecte: c.position.longitude,
+        latLivraison: l.position.latitude,
+        lngLivraison: l.position.longitude,
       );
-
       if (!mounted) return;
-      setState(() => _commande = resultat);
-      _demarrerSuivi();
+      HapticFeedback.mediumImpact();
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EcranSuiviCourier(
+            commande: resultat,
+            pointCollecte: c.position,
+            pointLivraison: l.position,
+            adresseCollecte: c.adresse,
+            adresseLivraison: l.adresse,
+          ),
+        ),
+      );
     } on PrixCourierChangeException catch (e) {
       // Rien n'a été commandé : on affiche le nouveau prix et on ne
       // recommande qu'avec l'accord explicite du client.
@@ -190,374 +223,119 @@ class _EcranCourierState extends State<EcranCourier> {
       return;
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(
-            e.toString().replaceAll('Exception: ', ''))));
+      _message(e.toString().replaceAll('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _enChargement = false);
     }
   }
 
-  Future<void> _payer() async {
-    setState(() => _enPaiement = true);
-    try {
-      await ApiService.payerCourier(_commande!['id'] as int);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Paiement effectué depuis ton solde Taama')));
-      final detail = await ApiService.detailCourier(_commande!['id'] as int);
-      if (!mounted) return;
-      setState(() => _commande = detail);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(
-            e.toString().replaceAll('Exception: ', ''))));
-    } finally {
-      if (mounted) setState(() => _enPaiement = false);
-    }
-  }
-
-  // ─── Suivi GPS livreur ───
-
-  void _demarrerSuivi() {
-    final courierId = _commande!['id'] as int;
-    final roomGps = _commande!['room_gps']?.toString() ??
-        'courier_gps_$courierId';
-
-    // Écoute la position GPS du livreur
-    _locationService.ecouterPosition(roomGps, (lat, lng) {
-      if (!mounted) return;
-      final nouvPos = LatLng(lat, lng);
-      setState(() => _positionLivreur = nouvPos);
-      try {
-        _mapController.move(nouvPos, 15.0);
-      } catch (_) {}
-    });
-
-    // Polling statut toutes les 5s
-    _timerPolling = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) async {
-        try {
-          final detail = await ApiService.detailCourier(courierId);
-          if (!mounted) return;
-          setState(() => _commande = detail);
-          if (detail['statut'] == 'livre' ||
-              detail['statut'] == 'annule') {
-            _timerPolling?.cancel();
-            _locationService.arreter();
-          }
-        } catch (_) {}
-      },
-    );
-  }
-
-  /// Carte de prix : un rendu explicite par état (points manquants,
-  /// calcul, erreur avec Réessayer, prix du serveur). Jamais de prix inventé.
-  Widget _contenuPrix() {
-    if (_pointCollecte == null || _pointLivraison == null) {
-      return const Row(
-        children: [
-          Icon(Icons.place_outlined, color: Colors.orange),
-          SizedBox(width: 10),
-          Expanded(
-            child: Text('Choisis les deux points sur la carte pour voir le prix.'),
-          ),
-        ],
-      );
-    }
-    if (_estimationEnCours) {
-      return const Row(
-        children: [
-          SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orange),
-          ),
-          SizedBox(width: 12),
-          Text('Calcul du prix…'),
-        ],
-      );
-    }
-    if (_erreurEstimation != null || _prix == null) {
-      return Row(
-        children: [
-          const Icon(Icons.error_outline, color: Colors.red),
-          const SizedBox(width: 10),
-          Expanded(child: Text(_erreurEstimation ?? 'Prix indisponible.')),
-          TextButton(onPressed: _estimer, child: const Text('Réessayer')),
-        ],
-      );
-    }
-    return Row(
-      children: [
-        const Icon(Icons.payments_outlined, color: Colors.orange),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Prix',
-                  style: TextStyle(color: Colors.orange, fontSize: 12)),
-              Text('$_prix FCFA',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 20,
-                      color: Colors.orange)),
-            ],
-          ),
-        ),
-        if (_distanceKm != null)
-          Text(
-            '${_distanceKm!.toStringAsFixed(1)} km',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-          ),
-      ],
-    );
-  }
+  // ─── Construction ───
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CouleursTaama.sable,
-      appBar: AppBar(
-        title: const Text('📦 Courier',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.orange,
-        foregroundColor: Colors.white,
-        actions: [
-          if (_commande != null)
-            IconButton(
-              icon: const Icon(Icons.chat_bubble_outline),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => EcranChat(
-                    roomName: _commande!['room_chat']?.toString() ??
-                        'courier_${_commande!['id']}',
-                    titreConversation: 'Livreur',
+      backgroundColor: TaamaColors.background,
+      body: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(child: _enTete()),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            sliver: SliverList.list(
+              children: [
+                _carteTrajet(),
+                if (_collecte != null && _livraison != null) ...[
+                  const SizedBox(height: 12),
+                  _ApercuTrajet(
+                    collecte: _collecte!.position,
+                    livraison: _livraison!.position,
+                  ),
+                ],
+                const SizedBox(height: 16),
+                _titreSection('Que veux-tu envoyer ?'),
+                const SizedBox(height: 10),
+                _choixCategorie(),
+                const SizedBox(height: 14),
+                _champ(
+                  controleur: _descriptionController,
+                  icone: Icons.notes_rounded,
+                  indication: 'Ex. 2 pagnes, un dossier, un plat…',
+                  longueurMax: _longueurMaxDescription,
+                  lignes: 2,
+                ),
+                const SizedBox(height: 16),
+                _titreSection('Destinataire (facultatif)'),
+                const SizedBox(height: 10),
+                _champ(
+                  controleur: _telephoneDestinataireController,
+                  icone: Icons.phone_rounded,
+                  indication: 'Numéro : 70 00 00 00',
+                  clavier: TextInputType.phone,
+                  formateurs: [FilteringTextInputFormatter.allow(RegExp(r'[0-9+ ]'))],
+                  longueurMax: 16,
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6, left: 4),
+                  child: Text(
+                    'S’il a un compte Taama, il pourra suivre le colis et payer lui-même.',
+                    style: TaamaText.muted.copyWith(fontSize: 12),
                   ),
                 ),
-              ),
+              ],
             ),
+          ),
         ],
       ),
-      body: _commande != null
-          ? _buildSuivi()
-          : _buildFormulaire(),
+      bottomNavigationBar: _barreCommande(),
     );
   }
 
-  // ─── FORMULAIRE ───
-
-  Widget _buildFormulaire() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+  Widget _enTete() {
+    final haut = MediaQuery.paddingOf(context).top;
+    return Container(
+      padding: EdgeInsets.fromLTRB(8, haut + 4, 20, 24),
+      decoration: const BoxDecoration(
+        color: TaamaColors.navy,
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(TaamaRadius.xl + 8)),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Bannière
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Colors.orange, Color(0xFFFF8C00)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Row(
+          IconButton(
+            tooltip: 'Retour',
+            onPressed: () => Navigator.maybePop(context),
+            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Row(
               children: [
-                Text('📦', style: TextStyle(fontSize: 36)),
-                SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Taama Courier',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18)),
-                      Text('Livraison rapide à Bamako',
-                          style: TextStyle(
-                              color: Colors.white70, fontSize: 12)),
+                      Text(
+                        'Envoyer un colis',
+                        style: TaamaText.title.copyWith(color: Colors.white, fontSize: 26),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Un livreur le récupère et le livre partout à Bamako.',
+                        style: TaamaText.body.copyWith(color: TaamaColors.onNavyMuted, fontSize: 13),
+                      ),
                     ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Formulaire
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: const [
-                BoxShadow(color: Colors.black12, blurRadius: 8)
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Informations de livraison',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 16)),
-                const SizedBox(height: 16),
-
-                // Catégorie de livraison
-                Row(
-                  children: _categories.map((c) {
-                    final (valeur, emoji, label) = c;
-                    final estSelectionne = _categorie == valeur;
-                    return Expanded(
-                      child: GestureDetector(
-                        onTap: () => setState(() => _categorie = valeur),
-                        child: Container(
-                          margin: EdgeInsets.only(
-                              right: valeur != _categories.last.$1 ? 8 : 0),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                          decoration: BoxDecoration(
-                            color: estSelectionne
-                                ? Colors.orange.shade100
-                                : CouleursTaama.sable,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: estSelectionne
-                                  ? Colors.orange
-                                  : Colors.transparent,
-                            ),
-                          ),
-                          child: Column(
-                            children: [
-                              Text(emoji, style: const TextStyle(fontSize: 20)),
-                              const SizedBox(height: 2),
-                              Text(
-                                label,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: estSelectionne
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
-                                  color: estSelectionne
-                                      ? Colors.orange.shade800
-                                      : Colors.grey.shade600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 16),
-
-                // Collecte
-                _ChampAdresse(
-                  controller: _collecteController,
-                  label: '📍 Point de collecte',
-                  hint: 'Où récupérer le colis ?',
-                  estSelectionne: _pointCollecte != null,
-                  onSelectGPS: () =>
-                      _selectionnerPoint(estCollecte: true),
-                ),
-                const SizedBox(height: 12),
-
-                // Livraison
-                _ChampAdresse(
-                  controller: _livraisonController,
-                  label: '🏁 Point de livraison',
-                  hint: 'Où livrer le colis ?',
-                  estSelectionne: _pointLivraison != null,
-                  onSelectGPS: () =>
-                      _selectionnerPoint(estCollecte: false),
-                ),
-                const SizedBox(height: 12),
-
-                // Description
-                TextField(
-                  controller: _descriptionController,
-                  maxLines: 2,
-                  decoration: InputDecoration(
-                    labelText: '📦 Description du colis',
-                    hintText:
-                        'Ex: Documents administratifs, vêtements...',
-                    filled: true,
-                    fillColor: CouleursTaama.sable,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                // Téléphone du destinataire (optionnel)
-                TextField(
-                  controller: _telephoneDestinataireController,
-                  keyboardType: TextInputType.phone,
-                  decoration: InputDecoration(
-                    labelText: '📱 Numéro du destinataire (optionnel)',
-                    hintText: 'S\'il a un compte Taama, il pourra payer lui-même',
-                    filled: true,
-                    fillColor: CouleursTaama.sable,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // Mini-carte si deux points sélectionnés
-                if (_pointCollecte != null && _pointLivraison != null)
-                  _MiniCarte(
-                    pointCollecte: _pointCollecte!,
-                    pointLivraison: _pointLivraison!,
-                  ),
-
-                const SizedBox(height: 12),
-
-                // Prix estimé
+                const SizedBox(width: 12),
                 Container(
-                  padding: const EdgeInsets.all(14),
+                  width: 60,
+                  height: 60,
                   decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.orange.shade200),
+                    color: TaamaColors.primary,
+                    borderRadius: BorderRadius.circular(TaamaRadius.lg),
                   ),
-                  child: _contenuPrix(),
+                  child: const Icon(Icons.local_shipping_rounded, color: Colors.white, size: 32),
                 ),
               ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Bouton commander
-          // Désactivé tant que le serveur n'a pas donné de prix.
-          ElevatedButton.icon(
-            onPressed: (_enChargement || _prix == null) ? null : _commander,
-            icon: const Icon(Icons.local_shipping),
-            label: _enChargement
-                ? const SizedBox(
-                    width: 22, height: 22,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white))
-                : Text(_prix == null ? 'Commander' : 'Commander — $_prix FCFA',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 16)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
             ),
           ),
         ],
@@ -565,336 +343,388 @@ class _EcranCourierState extends State<EcranCourier> {
     );
   }
 
-  // ─── SUIVI ───
+  Widget _titreSection(String texte) => Padding(
+        padding: const EdgeInsets.only(left: 4),
+        child: Text(texte, style: TaamaText.body.copyWith(fontWeight: FontWeight.w800, fontSize: 15)),
+      );
 
-  Widget _buildSuivi() {
-    final statut = _commande!['statut']?.toString() ?? '';
-    final livreur =
-        _commande!['livreur'] as Map<String, dynamic>?;
-    final aPhoto = _commande!['photo_livraison'] == true;
-
-    return Column(
-      children: [
-        // Carte de suivi
-        Expanded(
-          child: Stack(
-            children: [
-              FlutterMap(
-                mapController: _mapController,
-                options: MapOptions(
-                  initialCenter: _pointCollecte ??
-                      const LatLng(12.6392, -8.0029),
-                  initialZoom: 13.0,
-                ),
-                children: [
-                  const FondCarteTaama(),
-                  const CoucheCarteTaama(),
-                  MarkerLayer(
-                    markers: [
-                      // Point de collecte
-                      if (_pointCollecte != null)
-                        Marker(
-                          point: _pointCollecte!,
-                          width: 40, height: 40,
-                          child: const _MarqueurPoint(
-                              emoji: '📍',
-                              couleur: Colors.green),
-                        ),
-                      // Point de livraison
-                      if (_pointLivraison != null)
-                        Marker(
-                          point: _pointLivraison!,
-                          width: 40, height: 40,
-                          child: const _MarqueurPoint(
-                              emoji: '🏁',
-                              couleur: Colors.red),
-                        ),
-                      // Position livreur (temps réel)
-                      if (_positionLivreur != null)
-                        Marker(
-                          point: _positionLivreur!,
-                          width: 48, height: 48,
-                          child: const _MarqueurPoint(
-                              emoji: '🛵',
-                              couleur: Colors.orange),
-                        ),
-                    ],
-                  ),
-                  const AttributionCarteTaama(),
-                ],
-              ),
-
-              // Info livreur (overlay haut)
-              if (livreur != null)
-                Positioned(
-                  top: 12, left: 12, right: 12,
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: const [
-                        BoxShadow(color: Colors.black12,
-                            blurRadius: 8)
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: Colors.orange,
-                          child: Text(
-                            livreur['nom']?.toString()
-                                .substring(0, 1)
-                                .toUpperCase() ?? '?',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                livreur['nom']?.toString() ?? '',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                              ),
-                              Text(
-                                '${livreur['vehicule'] ?? ''} • '
-                                '⭐ ${livreur['note'] ?? '5.0'}',
-                                style: TextStyle(
-                                    color: Colors.grey.shade600,
-                                    fontSize: 12),
-                              ),
-                            ],
-                          ),
-                        ),
-                        // Bouton chat
-                        IconButton(
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => EcranChat(
-                                roomName: _commande![
-                                        'room_chat']
-                                    ?.toString() ??
-                                    'courier_${_commande!['id']}',
-                                titreConversation:
-                                    livreur['nom']?.toString() ??
-                                        'Livreur',
-                              ),
-                            ),
-                          ),
-                          icon: const Icon(Icons.chat_bubble_outline,
-                              color: Colors.orange),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
+  Widget _carteTrajet() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+      decoration: BoxDecoration(
+        color: TaamaColors.surface,
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        boxShadow: TaamaShadows.card,
+      ),
+      child: Column(
+        children: [
+          _LignePoint(
+            titre: 'Collecte',
+            indication: 'Où récupérer le colis ?',
+            adresse: _collecte?.adresse,
+            couleur: TaamaColors.navy,
+            icone: Icons.inventory_2_rounded,
+            avecLigne: true,
+            onTap: () => _choisirPoint(estCollecte: true),
           ),
-        ),
-
-        // Panel bas : statut + étapes
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius:
-                BorderRadius.vertical(top: Radius.circular(24)),
-            boxShadow: [
-              BoxShadow(color: Colors.black12, blurRadius: 12)
-            ],
+          _LignePoint(
+            titre: 'Livraison',
+            indication: 'Où livrer le colis ?',
+            adresse: _livraison?.adresse,
+            couleur: TaamaColors.primary,
+            icone: Icons.flag_rounded,
+            avecLigne: false,
+            onTap: () => _choisirPoint(estCollecte: false),
           ),
-          child: Column(
-            children: [
-              // Étapes de progression
-              _BarreProgression(statut: statut),
-              const SizedBox(height: 16),
-
-              // Photo de livraison si disponible
-              if (aPhoto)
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.green.shade200),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.check_circle, color: Colors.green),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Preuve de livraison disponible',
-                          style: TextStyle(
-                              color: Colors.green,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-              if (_commande!['peut_payer'] == true) ...[
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _enPaiement ? null : _payer,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: _enPaiement
-                        ? const SizedBox(
-                            width: 20, height: 20,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white))
-                        : Text('Payer ${_commande!['prix']} FCFA',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 15)),
-                  ),
-                ),
-              ],
-
-              if (statut == 'livre') ...[
-                const SizedBox(height: 12),
-                ElevatedButton(
-                  onPressed: () => setState(() => _commande = null),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(double.infinity, 46),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: const Text('Nouvelle livraison'),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
-}
 
-// ─── WIDGETS AUXILIAIRES ───
-
-class _ChampAdresse extends StatelessWidget {
-  final TextEditingController controller;
-  final String label;
-  final String hint;
-  final bool estSelectionne;
-  final VoidCallback onSelectGPS;
-
-  const _ChampAdresse({
-    required this.controller,
-    required this.label,
-    required this.hint,
-    required this.estSelectionne,
-    required this.onSelectGPS,
-  });
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _choixCategorie() {
     return Row(
       children: [
-        Expanded(
-          child: TextField(
-            controller: controller,
-            decoration: InputDecoration(
-              labelText: label,
-              hintText: hint,
-              filled: true,
-              fillColor: CouleursTaama.sable,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
+        for (final (valeur, icone, libelle) in _categories)
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: valeur == _categories.last.$1 ? 0 : 10),
+              child: _TuileCategorie(
+                icone: icone,
+                libelle: libelle,
+                choisie: _categorie == valeur,
+                onTap: () => setState(() => _categorie = valeur),
               ),
             ),
           ),
+      ],
+    );
+  }
+
+  Widget _champ({
+    required TextEditingController controleur,
+    required IconData icone,
+    required String indication,
+    int? longueurMax,
+    int lignes = 1,
+    TextInputType? clavier,
+    List<TextInputFormatter>? formateurs,
+  }) {
+    return TextField(
+      controller: controleur,
+      maxLength: longueurMax,
+      maxLines: lignes,
+      minLines: 1,
+      keyboardType: clavier,
+      inputFormatters: formateurs,
+      textCapitalization: TextCapitalization.sentences,
+      decoration: InputDecoration(
+        hintText: indication,
+        prefixIcon: Icon(icone),
+        counterText: '',
+        filled: true,
+        fillColor: TaamaColors.surface,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(TaamaRadius.md),
+          borderSide: const BorderSide(color: TaamaColors.border),
         ),
-        const SizedBox(width: 8),
-        GestureDetector(
-          onTap: onSelectGPS,
-          child: Container(
-            width: 48, height: 48,
-            decoration: BoxDecoration(
-              color: estSelectionne
-                  ? Colors.green.shade100
-                  : Colors.orange.shade100,
-              borderRadius: BorderRadius.circular(12),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(TaamaRadius.md),
+          borderSide: const BorderSide(color: TaamaColors.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(TaamaRadius.md),
+          borderSide: const BorderSide(color: TaamaColors.primary, width: 1.5),
+        ),
+      ),
+    );
+  }
+
+  Widget _barreCommande() {
+    final pointsOk = _collecte != null && _livraison != null;
+    Widget prix;
+    if (!pointsOk) {
+      prix = Text('Choisis les 2 points', key: const ValueKey('points'), style: TaamaText.muted);
+    } else if (_estimationEnCours) {
+      prix = Row(
+        key: const ValueKey('calcul'),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: TaamaColors.primary),
+          ),
+          const SizedBox(width: 8),
+          Text('Calcul…', style: TaamaText.muted),
+        ],
+      );
+    } else if (_erreurEstimation != null || _prix == null) {
+      prix = TextButton.icon(
+        key: const ValueKey('erreur'),
+        onPressed: _estimer,
+        icon: const Icon(Icons.refresh_rounded, color: TaamaColors.danger),
+        label: const Text('Réessayer', style: TextStyle(color: TaamaColors.danger)),
+      );
+    } else {
+      prix = Column(
+        key: ValueKey(_prix),
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TweenAnimationBuilder<double>(
+            tween: Tween(
+              begin: MediaQuery.disableAnimationsOf(context) ? _prix!.toDouble() : 0,
+              end: _prix!.toDouble(),
             ),
-            child: Icon(
-              estSelectionne ? Icons.check : Icons.map_outlined,
-              color: estSelectionne ? Colors.green : Colors.orange,
+            duration: const Duration(milliseconds: 700),
+            curve: Curves.easeOutCubic,
+            builder: (context, v, _) => Text(
+              formaterFcfa(v.round()),
+              style: TaamaText.title.copyWith(fontSize: 22, color: TaamaColors.textPrimary),
             ),
           ),
+          if (_distanceKm != null)
+            Text('${_distanceKm!.toStringAsFixed(1)} km · prix fixé', style: TaamaText.muted.copyWith(fontSize: 12)),
+        ],
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: TaamaColors.surface,
+        boxShadow: TaamaShadows.floating,
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  layoutBuilder: (actuel, precedents) => Stack(
+                    alignment: Alignment.centerLeft,
+                    children: [...precedents, if (actuel != null) actuel],
+                  ),
+                  child: prix,
+                ),
+              ),
+              SizedBox(
+                height: 54,
+                child: ElevatedButton.icon(
+                  // Désactivé tant que le serveur n'a pas donné de prix.
+                  onPressed: (_enChargement || _prix == null) ? null : _commander,
+                  icon: _enChargement
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.send_rounded),
+                  label: const Text('Commander', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: TaamaColors.primary,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(150, 54),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(TaamaRadius.lg)),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-      ],
+      ),
     );
   }
 }
 
-class _MiniCarte extends StatelessWidget {
-  final LatLng pointCollecte;
-  final LatLng pointLivraison;
+// ─── Widgets ───
 
-  const _MiniCarte({
-    required this.pointCollecte,
-    required this.pointLivraison,
+class _LignePoint extends StatelessWidget {
+  const _LignePoint({
+    required this.titre,
+    required this.indication,
+    required this.adresse,
+    required this.couleur,
+    required this.icone,
+    required this.avecLigne,
+    required this.onTap,
   });
+
+  final String titre;
+  final String indication;
+  final String? adresse;
+  final Color couleur;
+  final IconData icone;
+  final bool avecLigne;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final centre = LatLng(
-      (pointCollecte.latitude + pointLivraison.latitude) / 2,
-      (pointCollecte.longitude + pointLivraison.longitude) / 2,
-    );
-
-    return Container(
-      height: 150,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.orange.shade200),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: FlutterMap(
-          options: MapOptions(
-            initialCenter: centre,
-            initialZoom: 13.0,
-            interactionOptions: const InteractionOptions(
-              flags: InteractiveFlag.none,
+    final choisi = adresse != null;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(TaamaRadius.md),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              width: 40,
+              child: Column(
+                children: [
+                  const SizedBox(height: 10),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: choisi ? couleur : couleur.withValues(alpha: 0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icone, size: 18, color: choisi ? Colors.white : couleur),
+                  ),
+                  if (avecLigne)
+                    Expanded(
+                      child: Container(
+                        width: 2,
+                        margin: const EdgeInsets.only(top: 4),
+                        color: TaamaColors.border,
+                      ),
+                    ),
+                ],
+              ),
             ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(top: 10, bottom: avecLigne ? 14 : 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      titre.toUpperCase(),
+                      style: TaamaText.muted.copyWith(fontSize: 11, letterSpacing: 0.6, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      adresse ?? indication,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TaamaText.body.copyWith(
+                        fontWeight: choisi ? FontWeight.w800 : FontWeight.w600,
+                        color: choisi ? TaamaColors.textPrimary : TaamaColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 14),
+              child: Icon(
+                choisi ? Icons.edit_rounded : Icons.chevron_right_rounded,
+                color: TaamaColors.textSecondary,
+                size: 20,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TuileCategorie extends StatelessWidget {
+  const _TuileCategorie({
+    required this.icone,
+    required this.libelle,
+    required this.choisie,
+    required this.onTap,
+  });
+
+  final IconData icone;
+  final String libelle;
+  final bool choisie;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: choisie ? TaamaColors.primary : TaamaColors.surface,
+          borderRadius: BorderRadius.circular(TaamaRadius.lg),
+          border: Border.all(color: choisie ? TaamaColors.primary : TaamaColors.border),
+          boxShadow: choisie ? TaamaShadows.floating : const [],
+        ),
+        child: Column(
+          children: [
+            AnimatedScale(
+              scale: choisie ? 1.15 : 1,
+              duration: const Duration(milliseconds: 220),
+              child: Icon(icone, color: choisie ? Colors.white : TaamaColors.primary, size: 26),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              libelle,
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+                color: choisie ? Colors.white : TaamaColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Aperçu non interactif cadré sur les deux points.
+class _ApercuTrajet extends StatelessWidget {
+  const _ApercuTrajet({required this.collecte, required this.livraison});
+  final LatLng collecte;
+  final LatLng livraison;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(TaamaRadius.lg),
+      child: SizedBox(
+        height: 150,
+        child: FlutterMap(
+          key: ValueKey('$collecte$livraison'),
+          options: MapOptions(
+            initialCameraFit: CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints([collecte, livraison]),
+              padding: const EdgeInsets.all(36),
+              maxZoom: 16,
+            ),
+            interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
           ),
           children: [
             const FondCarteTaama(apercu: true),
             const CoucheCarteTaama(),
+            PolylineLayer(
+              polylines: [
+                Polyline(
+                  points: [collecte, livraison],
+                  color: TaamaColors.primary,
+                  strokeWidth: 3,
+                  pattern: StrokePattern.dashed(segments: const [8, 6]),
+                ),
+              ],
+            ),
             MarkerLayer(
               markers: [
-                Marker(
-                  point: pointCollecte,
-                  width: 32, height: 32,
-                  child: const _MarqueurPoint(
-                      emoji: '📍', couleur: Colors.green),
-                ),
-                Marker(
-                  point: pointLivraison,
-                  width: 32, height: 32,
-                  child: const _MarqueurPoint(
-                      emoji: '🏁', couleur: Colors.red),
-                ),
+                Marker(point: collecte, width: 30, height: 30, child: const _Pastille(couleur: TaamaColors.navy, icone: Icons.inventory_2_rounded)),
+                Marker(point: livraison, width: 30, height: 30, child: const _Pastille(couleur: TaamaColors.primary, icone: Icons.flag_rounded)),
               ],
             ),
             const AttributionCarteTaama(),
@@ -905,213 +735,21 @@ class _MiniCarte extends StatelessWidget {
   }
 }
 
-class _MarqueurPoint extends StatelessWidget {
-  final String emoji;
+class _Pastille extends StatelessWidget {
+  const _Pastille({required this.couleur, required this.icone});
   final Color couleur;
-
-  const _MarqueurPoint({required this.emoji, required this.couleur});
+  final IconData icone;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: couleur,
         shape: BoxShape.circle,
-        border: Border.all(color: couleur, width: 2),
-        boxShadow: [BoxShadow(
-          color: couleur.withValues(alpha: 0.3),
-          blurRadius: 4,
-        )],
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
       ),
-      child: Center(
-        child: Text(emoji, style: const TextStyle(fontSize: 14)),
-      ),
-    );
-  }
-}
-
-class _BarreProgression extends StatelessWidget {
-  final String statut;
-
-  const _BarreProgression({required this.statut});
-
-  @override
-  Widget build(BuildContext context) {
-    final etapes = [
-      ('livreur_assigne', '✅ Assigné'),
-      ('en_collecte', '🚗 Collecte'),
-      ('en_livraison', '📦 Livraison'),
-      ('livre', '🎉 Livré'),
-    ];
-
-    final indexActuel =
-        etapes.indexWhere((e) => e.$1 == statut);
-
-    return Column(
-      children: [
-        // Barre de progression
-        Row(
-          children: etapes.asMap().entries.map((entry) {
-            final index = entry.key;
-            final estPasse = index <= indexActuel;
-            return Expanded(
-              child: Container(
-                height: 4,
-                margin: EdgeInsets.only(
-                    right: index < etapes.length - 1 ? 4 : 0),
-                decoration: BoxDecoration(
-                  color: estPasse ? Colors.orange : Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: 8),
-        // Labels
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: etapes.asMap().entries.map((entry) {
-            final index = entry.key;
-            final (_, label) = entry.value;
-            final estActuel = index == indexActuel;
-            final estPasse = index < indexActuel;
-            return Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: estActuel
-                    ? FontWeight.bold
-                    : FontWeight.normal,
-                color: estActuel
-                    ? Colors.orange
-                    : estPasse
-                        ? Colors.green
-                        : Colors.grey,
-              ),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
-}
-
-// Écran de sélection d'adresse sur la carte
-class _EcranSelectionAdresse extends StatefulWidget {
-  final String titre;
-  const _EcranSelectionAdresse({required this.titre});
-
-  @override
-  State<_EcranSelectionAdresse> createState() =>
-      _EcranSelectionAdresseState();
-}
-
-class _EcranSelectionAdresseState
-    extends State<_EcranSelectionAdresse> {
-  LatLng? _point;
-  final MapController _ctrl = MapController();
-  bool _chargement = true;
-
-  static const _bamako = LatLng(12.6392, -8.0029);
-
-  @override
-  void initState() {
-    super.initState();
-    _centrerGPS();
-  }
-
-  Future<void> _centrerGPS() async {
-    try {
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 5),
-        ),
-      );
-      if (!mounted) return;
-      final p = LatLng(pos.latitude, pos.longitude);
-      setState(() { _point = p; _chargement = false; });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _ctrl.move(p, 15.0);
-      });
-    } catch (_) {
-      if (mounted) setState(() => _chargement = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.titre),
-        backgroundColor: Colors.orange,
-        foregroundColor: Colors.white,
-        actions: [
-          if (_point != null)
-            TextButton(
-              onPressed: () => Navigator.pop(context, _point),
-              child: const Text('Confirmer',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16)),
-            ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          FlutterMap(
-            mapController: _ctrl,
-            options: MapOptions(
-              initialCenter: _bamako,
-              initialZoom: 14.0,
-              onTap: (_, p) => setState(() => _point = p),
-            ),
-            children: [
-              const FondCarteTaama(),
-              const CoucheCarteTaama(),
-              if (_point != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _point!,
-                      width: 48, height: 48,
-                      child: const Icon(Icons.location_pin,
-                          color: Colors.orange, size: 48),
-                    ),
-                  ],
-                ),
-              const AttributionCarteTaama(),
-            ],
-          ),
-          Positioned(
-            top: 12, left: 12, right: 12,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: const [
-                  BoxShadow(color: Colors.black12, blurRadius: 6)
-                ],
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.touch_app, color: Colors.orange, size: 18),
-                  SizedBox(width: 8),
-                  Text('Tape sur la carte pour sélectionner',
-                      style: TextStyle(fontSize: 13)),
-                ],
-              ),
-            ),
-          ),
-          if (_chargement)
-            const Center(child: CircularProgressIndicator(
-                color: Colors.orange)),
-        ],
-      ),
+      child: Icon(icone, color: Colors.white, size: 15),
     );
   }
 }
