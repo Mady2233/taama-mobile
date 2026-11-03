@@ -9,7 +9,9 @@
     <application
         android:label="Taama"
         android:name="${applicationName}"
-        android:icon="@mipmap/launcher_icon">
+        android:icon="@mipmap/launcher_icon"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/regles_extraction_donnees">
         <!-- Canal utilisé par défaut pour toute notification FCM reçue
              SANS bloc `android.notification.channel_id` explicite dans le
              payload — filet de sécurité en plus du channel_id déjà envoyé
@@ -51,7 +53,6 @@
     </application>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.CAMERA" />
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
          https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
