@@ -247,13 +247,19 @@ class ApiService {
     required double lat,
     required double lng,
   }) async {
-    final reponse = await http.post(
-      Uri.parse('$_baseUrl/trajets/chauffeur/position/'),
-      headers: _headers,
-      body: jsonEncode({'lat': lat, 'lng': lng}),
-    );
+    final reponse = await _clientPosition
+        .post(
+          Uri.parse('$_baseUrl/trajets/chauffeur/position/'),
+          headers: _headers,
+          body: jsonEncode({'lat': lat, 'lng': lng}),
+        )
+        .timeout(const Duration(seconds: 12));
     _traiterReponse(reponse);
   }
+
+  // Connexion réutilisée : une position part toutes les 15 s pendant des heures,
+  // refaire une connexion chiffrée à chaque envoi coûterait cher en data.
+  static final http.Client _clientPosition = http.Client();
 
   /// Signale au serveur que le conducteur n'est plus en ligne (logout, mise
   /// en veille) : il ne sera plus proposé dans les recherches de proximité.

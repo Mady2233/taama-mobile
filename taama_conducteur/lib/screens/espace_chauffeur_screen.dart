@@ -16,11 +16,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../carte/fond_carte.dart';
 import '../services/api_service.dart';
 import '../services/config_app.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/location_service.dart';
+import '../services/polling_premier_plan.dart';
 import '../services/sonnerie_service.dart';
 import '../theme/couleurs_taama.dart';
 import '../widgets/couche_carte_taama.dart';
@@ -46,12 +48,22 @@ class EcranEspaceChauffeur extends StatefulWidget {
   State<EcranEspaceChauffeur> createState() => _EcranEspaceChauffeurState();
 }
 
-class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
+class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
+    with WidgetsBindingObserver {
   Map<String, dynamic>? _profil;
   List<dynamic> _demandesAssignees = [];
   List<dynamic> _livraisonsCourier = [];
   int? _solde;
-  Timer? _timerPolling;
+  // Écran affiché seulement. Écran verrouillé, le service de position garde
+  // l'app active : ce polling tournerait sans fin (~2 000 requêtes/h). Les
+  // demandes arrivent alors par notification push.
+  late final PollingPremierPlan _polling = PollingPremierPlan(
+    intervalle: const Duration(seconds: 5),
+    action: _rafraichirTout,
+  );
+  static const String _cleExplicationPosition = 'explication_position_en_ligne_vue';
+  bool _explicationOuverte = false;
+  bool _explicationRefusee = false;
   bool _chargementInitial = true;
   int? _enTraitement;
 
@@ -76,21 +88,34 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     ConfigApp.paiementActif.addListener(_surChangementPaiement);
     _chargerProfil();
     _chargerSolde();
     _rafraichirTout();
     _localiser();
-    _timerPolling = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _rafraichirTout(),
-    );
+    _polling.demarrer();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState etat) {
+    switch (etat) {
+      case AppLifecycleState.resumed:
+        _polling.reprendre();
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _polling.suspendre();
+      case AppLifecycleState.inactive:
+        break;
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     ConfigApp.paiementActif.removeListener(_surChangementPaiement);
-    _timerPolling?.cancel();
+    _polling.suspendre();
     for (final service in _servicesLocalisation.values) {
       service.arreter();
     }
@@ -159,7 +184,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
           .toSet();
 
       for (final id in idsEnRoute) {
-        if (!_servicesLocalisation.containsKey(id)) {
+        // Hors écran, le service de position ne peut pas démarrer : au retour.
+        if (!_servicesLocalisation.containsKey(id) && appVisible()) {
           final service = LocationService();
           service.demarrerEnvoiPosition('$id');
           _servicesLocalisation[id] = service;
@@ -188,7 +214,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
       });
       if (profil['disponible'] == true) {
         // Déjà en ligne (ex: relance de l'app) : on reprend le suivi GPS.
-        _serviceLocalisationGenerale.demarrerSuiviPositionEnLigne();
+        _demarrerSuiviEnLigne();
       }
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -334,15 +360,76 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
         debugPrint(
           '[Disponibilite] Suivi GPS inactif alors que disponible=true — relance',
         );
-        await _serviceLocalisationGenerale.demarrerSuiviPositionEnLigne();
+        await _demarrerSuiviEnLigne();
       }
     } catch (e) {
       debugPrint('[Disponibilite] Erreur resynchronisation : $e');
     }
   }
 
+  Future<void> _demarrerSuiviEnLigne() async {
+    if (!await _explicationPositionVue()) return;
+    await _serviceLocalisationGenerale.demarrerSuiviPositionEnLigne();
+  }
+
+  /// Avant la première collecte, écran verrouillé compris : le chauffeur sait
+  /// ce qui se passe et peut rester hors ligne. Affichée une seule fois.
+  Future<bool> _explicationPositionVue() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_cleExplicationPosition) == true) return true;
+    if (_explicationOuverte || _explicationRefusee || !mounted) return false;
+
+    _explicationOuverte = true;
+    final accepte = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Votre position quand vous êtes en ligne'),
+        content: const Text(
+          'Tant que vous êtes en ligne, Taama utilise votre position, même écran '
+          'verrouillé, pour vous proposer les courses proches et guider le client. '
+          'Une notification reste affichée. Tout s’arrête quand vous passez hors ligne.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Pas maintenant'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Compris'),
+          ),
+        ],
+      ),
+    );
+    _explicationOuverte = false;
+
+    if (accepte == true) {
+      await prefs.setBool(_cleExplicationPosition, true);
+      return true;
+    }
+
+    // Refus alors que le serveur le croit en ligne : hors ligne, sinon il
+    // resterait « disponible » sans position, et la question reviendrait
+    // à chaque rafraîchissement.
+    _explicationRefusee = true;
+    if (_profil?['disponible'] == true) {
+      try {
+        final disponible = await ApiService.changerDisponibilite();
+        if (mounted) setState(() => _profil?['disponible'] = disponible);
+      } catch (e) {
+        debugPrint('Erreur passage hors ligne : $e');
+      }
+    }
+    return false;
+  }
+
   Future<void> _basculerDisponibilite() async {
     try {
+      if (_profil?['disponible'] != true) {
+        _explicationRefusee = false; // Demande explicite du chauffeur.
+        if (!await _explicationPositionVue()) return;
+      }
       final nouvelleDisponibilite = await ApiService.changerDisponibilite();
       if (!mounted) return;
       setState(() => _profil?['disponible'] = nouvelleDisponibilite);

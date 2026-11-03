@@ -53,10 +53,10 @@
     </application>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- Suivi GPS pendant une course même écran verrouillé/app en arrière-plan.
-         Android exige que l'app ait DÉJÀ obtenu ACCESS_FINE_LOCATION avant de
-         proposer celle-ci (demande en 2 temps côté LocationService). -->
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Pas d'ACCESS_BACKGROUND_LOCATION : le suivi d'une course tourne dans
+         un service au premier plan (type location, notification « Course en
+         cours ») démarré app ouverte ; Android lui garde l'accès à la position
+         écran verrouillé avec la seule autorisation « pendant l'utilisation ». -->
     <!-- Service en foreground (notification persistante) qui garde le suivi
          actif en arrière-plan — géolocator_android fournit déjà le service
          lui-même (via foregroundNotificationConfig), ces 2 permissions sont

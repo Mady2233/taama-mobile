@@ -120,6 +120,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
 
   LatLng? _positionConducteur;
   LatLng? _positionClient;
+  LatLng? _positionDernierRecalcul;
   List<LatLng> _itineraire = [];
 
   // Instructions de navigation extraites des "steps" OSRM
@@ -690,15 +691,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
   LocationSettings _parametresPositionNavigation() {
     const distanceFiltre = 10; // mètres
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: distanceFiltre,
-        foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationTitle: 'Navigation en cours',
-          notificationText: 'Ta position est partagée avec le client pendant la course.',
-          enableWakeLock: true,
-        ),
-      );
+      return LocationService.parametresPositionAndroid();
     }
     if (defaultTargetPlatform == TargetPlatform.iOS) {
       return AppleSettings(
@@ -744,7 +737,12 @@ class _EcranNavigationState extends State<EcranNavigation> {
       // GPS séparée pour ça.
       _locationService.envoyerPosition(position.latitude, position.longitude);
 
-      if (_estHorsItineraire()) {
+      // Le flux émet aussi à l'arrêt : un seul recalcul par endroit, jamais une
+      // requête d'itinéraire toutes les 5 s pour un chauffeur immobile.
+      final dernierCalcul = _positionDernierRecalcul;
+      if (_estHorsItineraire() &&
+          (dernierCalcul == null || const Distance()(dernierCalcul, nouvellePosition) >= 10)) {
+        _positionDernierRecalcul = nouvellePosition;
         await _calculerItineraire();
       }
 

@@ -3,8 +3,19 @@ import 'dart:convert';
 import 'package:geolocator/geolocator.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding;
 import 'api_service.dart';
 import '../config/api_config.dart';
+
+/// Vrai si l'écran de l'app est affiché. Android 12+ refuse de démarrer un
+/// service au premier plan depuis l'arrière-plan : toute relance du suivi GPS
+/// attend le retour de l'app à l'écran.
+bool appVisible() {
+  final etat = WidgetsBinding.instance.lifecycleState;
+  return etat == null ||
+      etat == AppLifecycleState.resumed ||
+      etat == AppLifecycleState.inactive;
+}
 
 class LocationService {
   static final String _wsBaseUrl = ApiConfig.wsUrl;
@@ -13,12 +24,17 @@ class LocationService {
   // poussée au serveur, tant que le conducteur est en ligne sans course
   // active — évite de spammer l'API si le conducteur est immobile.
   static const int _distanceFiltreEnLigne = 25;
-  // Heartbeat temporel : repousse la DERNIÈRE position connue même si le
-  // conducteur n'a pas bougé de _distanceFiltreEnLigne. Sans ça, un
+  // Au plus cet intervalle entre deux envois, même à l'arrêt. Sans ça, un
   // conducteur immobile (feu rouge, embouteillage, en attente d'une course)
-  // sort de la fenêtre de fraîcheur backend après quelques dizaines de
+  // sort de la fenêtre de fraîcheur backend (45 s) après quelques dizaines de
   // secondes et devient invisible/inattribuable alors qu'il est bien en ligne.
+  // Sur Android, chaque envoi correspond à une vraie mesure GPS ; le Timer de
+  // répétition ne sert plus que sur iOS (voir demarrerSuiviPositionEnLigne).
   static const Duration _intervalleHeartbeat = Duration(seconds: 15);
+  // Au-delà, plus aucune mesure GPS nouvelle : on n'envoie plus rien. Le
+  // serveur sort alors le chauffeur des candidats, plutôt que de le croire
+  // présent à un endroit périmé.
+  static const Duration _ageMaxMesure = Duration(seconds: 30);
   // Gate anti-rafale : mouvement (distanceFilter) et heartbeat peuvent se
   // déclencher quasi simultanément ; au plus un envoi réseau toutes les 4s,
   // pour rester largement sous le throttle backend (30/min).
@@ -56,11 +72,64 @@ class LocationService {
   StreamSubscription<Position>? _streamPositionEnLigne;
   Timer? _timerHeartbeat;
   Position? _dernierePosition;
+  Position? _derniereEnvoyee;
   DateTime? _dernierEnvoiLe;
+  // Âge d'une mesure : depuis que son horodatage a changé, sur l'horloge du
+  // téléphone. Jamais horloge du téléphone contre heure du GPS : sur un
+  // téléphone mal réglé, le chauffeur ne serait plus jamais envoyé.
+  DateTime? _horodatageDerniereMesure;
+  DateTime? _mesureRecueLe;
   bool _enLigne = false;
+
+  // Canal WebSocket d'une course : même logique, seuil de déplacement plus fin.
+  double? _derniereLatWs;
+  double? _derniereLngWs;
+  DateTime? _dernierEnvoiWsLe;
 
   bool get connecte => _connecte;
   bool get enLigne => _enLigne;
+
+  /// Réglages Android de TOUS les suivis GPS du chauffeur (en ligne, course,
+  /// navigation, livraison). geolocator n'ouvre qu'un seul flux par app : tant
+  /// qu'il existe, un nouvel appel le renvoie et ignore les réglages passés.
+  /// Des réglages différents donneraient donc un comportement dépendant de
+  /// l'écran ouvert en premier — y compris aucun service au premier plan.
+  ///
+  /// distanceFilter 0 + intervalle : une vraie mesure toutes les 5 s, même à
+  /// l'arrêt. L'icône est référencée par l'icône de l'app : elle survit à la
+  /// réduction des ressources de la release (sans icône valide, Android refuse
+  /// la notification du service et l'app plante).
+  static AndroidSettings parametresPositionAndroid() => AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,
+        intervalDuration: const Duration(seconds: 5),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'Taama Conducteur',
+          notificationText: 'Votre position est partagée tant que vous êtes en ligne ou en course.',
+          notificationChannelName: 'Position du chauffeur',
+          notificationIcon: AndroidResource(name: 'ic_launcher_foreground', defType: 'drawable'),
+          setOngoing: true,
+          enableWakeLock: true,
+        ),
+      );
+
+  /// Cette position part-elle vers le serveur ? Non si la mesure n'est plus
+  /// nouvelle ; sinon au premier envoi, après [_intervalleHeartbeat], ou dès
+  /// [metresMin] de déplacement (au plus un envoi par
+  /// [_intervalleMinimumEntreEnvois], throttle backend : 30/min).
+  static bool doitEnvoyerPosition({
+    required Duration ageMesure,
+    required Duration? depuisDernierEnvoi,
+    required double? metresParcourus,
+    double metresMin = 25,
+  }) {
+    if (ageMesure > _ageMaxMesure) return false;
+    if (depuisDernierEnvoi == null) return true;
+    if (depuisDernierEnvoi >= _intervalleHeartbeat) return true;
+    return metresParcourus != null &&
+        metresParcourus >= metresMin &&
+        depuisDernierEnvoi >= _intervalleMinimumEntreEnvois;
+  }
 
   /// Établit la connexion WebSocket avec timeout et gestion d'erreur.
   Future<bool> _connecter(String demandeId) async {
@@ -95,14 +164,10 @@ class LocationService {
 
   /// Vérifie et demande les permissions GPS.
   ///
-  /// `arrierePlan=true` demande en plus l'upgrade vers "Toujours" (Android
-  /// 11+/iOS), nécessaire pour continuer à envoyer la position écran
-  /// verrouillé. Dégrade proprement si refusé : le suivi continue quand même
-  /// tant que l'app reste au premier plan, plutôt que de bloquer toute la
-  /// course pour une permission optionnelle — je ne peux pas tester sur
-  /// appareil réel depuis cet environnement le comportement exact de cette
-  /// 2e demande selon les versions d'OS, à vérifier en conditions réelles.
-  Future<bool> _verifierPermissions({bool arrierePlan = false}) async {
+  /// Autorisation « pendant l'utilisation » seulement : le suivi d'une course
+  /// passe par un service au premier plan (voir _parametresPositionArrierePlan),
+  /// qui garde l'accès à la position écran verrouillé. Jamais « Toujours ».
+  Future<bool> _verifierPermissions() async {
     try {
       final servicesActifs = await Geolocator.isLocationServiceEnabled();
       if (!servicesActifs) {
@@ -121,10 +186,6 @@ class LocationService {
         return false;
       }
 
-      if (arrierePlan && permission != LocationPermission.always) {
-        permission = await Geolocator.requestPermission();
-      }
-
       return permission != LocationPermission.denied &&
           permission != LocationPermission.deniedForever;
     } catch (e) {
@@ -139,15 +200,7 @@ class LocationService {
   LocationSettings _parametresPositionArrierePlan() {
     const distanceFiltre = 10; // mètres — assez fin pour un véhicule, sans spammer à l'arrêt
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: distanceFiltre,
-        foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationTitle: 'Course en cours',
-          notificationText: 'Ta position est partagée avec le client pendant la course.',
-          enableWakeLock: true,
-        ),
-      );
+      return parametresPositionAndroid();
     }
     if (defaultTargetPlatform == TargetPlatform.iOS) {
       return AppleSettings(
@@ -166,7 +219,7 @@ class LocationService {
   Future<void> demarrerEnvoiPosition(String demandeId) async {
     if (!_arrete) return; // Déjà démarré (ou reconnexion en cours)
 
-    final permissionsOk = await _verifierPermissions(arrierePlan: true);
+    final permissionsOk = await _verifierPermissions();
     if (!permissionsOk) return;
 
     _arrete = false;
@@ -220,15 +273,39 @@ class LocationService {
   /// déjà son propre envoi périodique).
   void envoyerPosition(double lat, double lng) {
     if (!_connecte || _channel == null) return;
+
+    // Le flux émet toutes les 5 s, même à l'arrêt : pas d'envoi au client ni de
+    // calcul d'itinéraire de son côté tant que le chauffeur ne bouge pas.
+    final maintenant = DateTime.now();
+    final precedentLat = _derniereLatWs;
+    final precedentLng = _derniereLngWs;
+    final dernierEnvoi = _dernierEnvoiWsLe;
+    if (!doitEnvoyerPosition(
+      ageMesure: Duration.zero,
+      depuisDernierEnvoi: dernierEnvoi == null ? null : maintenant.difference(dernierEnvoi),
+      metresParcourus: precedentLat == null || precedentLng == null
+          ? null
+          : Geolocator.distanceBetween(precedentLat, precedentLng, lat, lng),
+      metresMin: 10,
+    )) {
+      return;
+    }
+    _derniereLatWs = lat;
+    _derniereLngWs = lng;
+    _dernierEnvoiWsLe = maintenant;
     _channel?.sink.add(jsonEncode({'lat': lat, 'lng': lng}));
   }
 
   /// Côté CONDUCTEUR : démarre le suivi GPS "en ligne" (indépendant d'une
-  /// course précise) — position immédiate puis flux continu (distanceFilter
-  /// ~25m) poussé via POST /chauffeur/position/. Actif tant que le
-  /// conducteur est disponible, qu'il ait une course en cours ou non.
+  /// course précise) — position immédiate puis flux continu poussé via
+  /// POST /chauffeur/position/. Actif tant que le conducteur est disponible,
+  /// qu'il ait une course en cours ou non. Sur Android, protégé par un service
+  /// au premier plan : continue écran verrouillé.
   Future<void> demarrerSuiviPositionEnLigne() async {
     if (_enLigne) return; // Déjà démarré
+
+    // Relancé au retour à l'écran (_resynchroniserDisponibilite).
+    if (!appVisible()) return;
 
     // Posé de façon SYNCHRONE, avant le premier await : verrou immédiat
     // contre un déclenchement concurrent (ex. deux ticks de
@@ -258,33 +335,75 @@ class LocationService {
       debugPrint('[LocationService] Erreur position initiale : $e');
     }
 
+    final android = defaultTargetPlatform == TargetPlatform.android;
     _streamPositionEnLigne = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: _distanceFiltreEnLigne,
-      ),
+      locationSettings: android
+          ? parametresPositionAndroid()
+          : const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              distanceFilter: _distanceFiltreEnLigne,
+            ),
     ).listen(
       _pousserPosition,
-      onError: (e) => debugPrint('[LocationService] Erreur flux position : $e'),
+      onError: (e) {
+        // GPS coupé, permission retirée... Le flux est mort : on libère le
+        // verrou pour que _resynchroniserDisponibilite relance le suivi.
+        debugPrint('[LocationService] Erreur flux position : $e');
+        _suiviEnLigneInterrompu();
+      },
     );
 
-    // Heartbeat : repousse la dernière position connue même à l'arrêt
-    // complet (le stream ci-dessus ne se déclenche que sur un déplacement).
-    _timerHeartbeat = Timer.periodic(_intervalleHeartbeat, (_) {
-      final derniere = _dernierePosition;
-      if (derniere != null) _pousserPosition(derniere);
-    });
+    // iOS seulement : le flux ne se déclenche que sur un déplacement, on répète
+    // la dernière position pour rester frais à l'arrêt. Sur Android, le flux
+    // émet déjà toutes les 5 s : sans GPS, plus rien n'est envoyé.
+    if (!android) {
+      _timerHeartbeat = Timer.periodic(_intervalleHeartbeat, (_) {
+        final derniere = _dernierePosition;
+        if (derniere != null) _pousserPosition(derniere, repetition: true);
+      });
+    }
   }
 
-  Future<void> _pousserPosition(Position position) async {
+  void _suiviEnLigneInterrompu() {
+    _streamPositionEnLigne?.cancel();
+    _streamPositionEnLigne = null;
+    _timerHeartbeat?.cancel();
+    _timerHeartbeat = null;
+    _oublierMesures();
+    _enLigne = false;
+  }
+
+  void _oublierMesures() {
+    _dernierePosition = null;
+    _derniereEnvoyee = null;
+    _dernierEnvoiLe = null;
+    _horodatageDerniereMesure = null;
+    _mesureRecueLe = null;
+  }
+
+  Future<void> _pousserPosition(Position position, {bool repetition = false}) async {
     _dernierePosition = position;
 
-    // Gate anti-rafale : voir _intervalleMinimumEntreEnvois.
     final maintenant = DateTime.now();
-    if (_dernierEnvoiLe != null &&
-        maintenant.difference(_dernierEnvoiLe!) < _intervalleMinimumEntreEnvois) {
+    if (position.timestamp != _horodatageDerniereMesure) {
+      _horodatageDerniereMesure = position.timestamp;
+      _mesureRecueLe = maintenant;
+    }
+
+    final precedente = _derniereEnvoyee;
+    final dernierEnvoi = _dernierEnvoiLe;
+    if (!doitEnvoyerPosition(
+      ageMesure: repetition ? Duration.zero : maintenant.difference(_mesureRecueLe!),
+      depuisDernierEnvoi: dernierEnvoi == null ? null : maintenant.difference(dernierEnvoi),
+      metresParcourus: precedente == null
+          ? null
+          : Geolocator.distanceBetween(
+              precedente.latitude, precedente.longitude, position.latitude, position.longitude,
+            ),
+    )) {
       return;
     }
+    _derniereEnvoyee = position;
     _dernierEnvoiLe = maintenant;
 
     try {
@@ -306,8 +425,7 @@ class LocationService {
     _streamPositionEnLigne = null;
     _timerHeartbeat?.cancel();
     _timerHeartbeat = null;
-    _dernierePosition = null;
-    _dernierEnvoiLe = null;
+    _oublierMesures();
     if (!_enLigne) return;
     _enLigne = false;
 
