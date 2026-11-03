@@ -75,3 +75,31 @@ class DerniereCourse {
   final String destination;
   final int? prixFcfa;
 }
+
+/// Course en cours du client (non terminée), pour proposer de reprendre le
+/// suivi depuis l'accueil après un retour d'arrière-plan ou une sortie de
+/// l'écran de suivi.
+@immutable
+class CourseActive {
+  const CourseActive({
+    required this.id,
+    required this.destination,
+    required this.typeTransport,
+    required this.statut,
+  });
+
+  final int id;
+  final String destination;
+  final String typeTransport;
+  final String statut;
+
+  /// Libellé court de l'état, pour le bandeau de reprise. Statuts de
+  /// DemandeInstantanee.STATUT_CHOICES (backend).
+  String get libelleEtat => switch (statut) {
+        'en_recherche' => 'Recherche d’un chauffeur…',
+        'chauffeur_trouve' => 'Chauffeur en route',
+        'en_route' => 'Votre chauffeur arrive',
+        'client_a_bord' => 'Course en cours',
+        _ => 'Course en cours',
+      };
+}

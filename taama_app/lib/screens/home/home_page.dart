@@ -28,6 +28,7 @@ import '../../services/api_service.dart';
 import '../../services/config_app.dart';
 import '../../services/routing_service.dart';
 import '../courier_screen.dart';
+import '../course/suivi_course_page.dart';
 import '../portefeuille_screen.dart';
 import '../profil_screen.dart';
 import '../recherche_screen.dart';
@@ -42,6 +43,18 @@ const Duration _intervalleConducteurs = Duration(seconds: 20);
 
 const int _longueurMaxLibelle = 40;
 const int _longueurMaxAdresse = 200;
+
+/// Statuts qui ne sont PAS une course en cours (une demande qui n'en a aucun
+/// est "active"). Filtrage par exclusion : plus robuste si un statut actif
+/// est ajouté côté serveur. Statuts de DemandeInstantanee.STATUT_CHOICES
+/// (backend) : planifiee, en_recherche, chauffeur_trouve, en_route,
+/// client_a_bord, termine, annule. Une course planifiée n'est pas encore
+/// en cours.
+const Set<String> _statutsTermines = {'termine', 'annule', 'planifiee'};
+
+/// Garde-fou : une demande non terminée plus vieille que ça est ignorée
+/// (probablement bloquée côté serveur) pour ne pas ressortir un vieux bandeau.
+const Duration _ageMaxCourseActive = Duration(hours: 24);
 
 void _journal(String message) {
   if (kDebugMode) debugPrint('[HomePage] $message');
@@ -73,6 +86,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   List<ConducteurProche> _conducteurs = const [];
   List<SuggestionDestination> _suggestions = const [];
   LatLng? _positionClient;
+  CourseActive? _courseActive;
   Timer? _minuteurConducteurs;
 
   final Map<String, _EntreeCacheDuree> _cacheDurees = {};
@@ -84,6 +98,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     ConfigApp.paiementActif.addListener(_surChangementPaiement);
     _chargerProfil();
     _chargerSolde();
+    _chargerCourseActive();
     _initialiserPositionPuisDependances();
   }
 
@@ -100,6 +115,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     switch (etat) {
       case AppLifecycleState.resumed:
         _chargerConducteursProches(silencieux: true);
+        _chargerCourseActive();
         _demarrerRafraichissement();
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
@@ -110,6 +126,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  /// Chauffeurs proches seulement : la course active n'est PAS relue ici
+  /// (mes-demandes/ renvoie tout l'historique, trop lourd toutes les 20 s).
+  /// Elle l'est à l'ouverture, au retour au premier plan et au retour du suivi.
   void _demarrerRafraichissement() {
     _minuteurConducteurs?.cancel();
     _minuteurConducteurs = Timer.periodic(
@@ -125,6 +144,75 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   void _surChangementPaiement() {
     if (ConfigApp.paiementActif.value) _chargerSolde();
+  }
+
+  /// Cherche une course non terminée pour proposer d'en reprendre le suivi.
+  /// Filtrage par exclusion des statuts terminés (voir _statutsTermines),
+  /// on écarte les courses planifiées encore futures et les demandes trop
+  /// vieilles, et on garde la plus récente. Échec silencieux (confort).
+  Future<void> _chargerCourseActive() async {
+    try {
+      final demandes = await ApiService.mesDemandesClient();
+      if (!mounted) return;
+      final maintenant = DateTime.now();
+      CourseActive? active;
+      DateTime meilleureDate = DateTime(2000);
+      for (final d in demandes) {
+        if (d is! Map) continue;
+        final statut = d['statut']?.toString().toLowerCase() ?? '';
+        if (statut.isEmpty || _statutsTermines.contains(statut)) continue;
+
+        // Course planifiée dont l'heure n'est pas encore venue : pas "en cours".
+        final planif = DateTime.tryParse(d['date_heure_planifiee']?.toString() ?? '');
+        if (planif != null && planif.isAfter(maintenant)) continue;
+
+        final creeLe = DateTime.tryParse(d['cree_le']?.toString() ?? '');
+        if (creeLe != null && maintenant.difference(creeLe) > _ageMaxCourseActive) {
+          continue;
+        }
+
+        final idBrut = d['id'];
+        final id = idBrut is int ? idBrut : int.tryParse(idBrut.toString());
+        if (id == null) continue;
+
+        // Jamais de valeur inventée : sans destination ni type de transport
+        // réels, le suivi s'ouvrirait sur des données fausses.
+        final destination = d['destination']?.toString().trim() ?? '';
+        final typeTransport = d['type_transport']?.toString().trim() ?? '';
+        if (destination.isEmpty || typeTransport.isEmpty) continue;
+
+        final ref = creeLe ?? DateTime(2000);
+        if (active == null || ref.isAfter(meilleureDate)) {
+          meilleureDate = ref;
+          active = CourseActive(
+            id: id,
+            destination: destination,
+            typeTransport: typeTransport,
+            statut: statut,
+          );
+        }
+      }
+      if (!mounted) return;
+      setState(() => _courseActive = active);
+    } catch (e) {
+      _journal('Erreur chargement course active : $e');
+    }
+  }
+
+  Future<void> _reprendreCourse(CourseActive course) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SuiviCoursePage(
+          demandeId: course.id,
+          destination: course.destination,
+          typeTransport: course.typeTransport,
+        ),
+      ),
+    );
+    // Au retour du suivi (course terminée/annulée, ou toujours en cours) on
+    // réévalue pour masquer ou garder le bandeau.
+    if (mounted) _chargerCourseActive();
   }
 
   // ─── Chargement des données ───
@@ -375,9 +463,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final nuit = Theme.of(context).brightness == Brightness.dark;
     return HomeScreen(
       paiementActif: paiementActif,
-      // Mêmes paramètres que taama_map.dart : `nuit` suit le thème. Pas
-      // d'`apercu` : cette carte se déplace et zoome, la rangée de tuiles
-      // préchargée autour de la vue est utile (aperçu fixe = apercu: true).
+      // ⚠️ Seule ligne non vérifiée : reprendre EXACTEMENT les paramètres
+      // utilisés pour FondCarteTaama sur les autres écrans (taama_map.dart).
       coucheFond: FondCarteTaama(nuit: nuit),
       nuit: nuit,
       prenom: _prenom,
@@ -392,6 +479,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       conducteursProches: _conducteurs,
       positionClient: _positionClient,
       chargementConducteurs: _chargementConducteurs,
+      courseActive: _courseActive,
+      onReprendreCourse: _reprendreCourse,
       // ⚠️ Endpoint dernière course pas encore créé : carte masquée.
       derniereCourse: null,
       onChercherDestination: () => _ouvrirRecherche(),

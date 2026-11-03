@@ -59,6 +59,8 @@ class HomeScreen extends StatefulWidget {
     this.positionClient,
     this.chargementConducteurs = false,
     this.derniereCourse,
+    this.courseActive,
+    this.onReprendreCourse,
     required this.onChercherDestination,
     required this.onSuggestion,
     required this.onAjouterAdresse,
@@ -92,6 +94,10 @@ class HomeScreen extends StatefulWidget {
   final LatLng? positionClient;
   final bool chargementConducteurs;
   final DerniereCourse? derniereCourse;
+
+  /// Course non terminée à reprendre (null s'il n'y en a pas).
+  final CourseActive? courseActive;
+  final ValueChanged<CourseActive>? onReprendreCourse;
 
   final VoidCallback onChercherDestination;
   final ValueChanged<SuggestionDestination> onSuggestion;
@@ -201,7 +207,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 top: 0,
                 left: 0,
                 right: 0,
-                height: hauteurCarte + _carteSousFeuille,
+                // La carte s'arrête au bord de la feuille : le fond neutre de
+                // l'écran remplit les coins arrondis, sans étiquette qui
+                // dépasse dessous.
+                height: hauteurCarte,
                 child: _carteWidget(),
               ),
               Positioned(
@@ -367,6 +376,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
             ),
             const SizedBox(height: 14),
+            if (widget.courseActive != null && widget.onReprendreCourse != null) ...[
+              _BanniereCourseActive(
+                course: widget.courseActive!,
+                onTap: () => widget.onReprendreCourse!(widget.courseActive!),
+              ),
+              const SizedBox(height: 14),
+            ],
             _apparition(0.15, _salutation()),
             const SizedBox(height: 14),
             _apparition(
@@ -496,6 +512,84 @@ class _BoutonRond extends StatelessWidget {
         onPressed: onPressed,
         icon: Icon(icone, color: TaamaColors.primary),
         constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+      ),
+    );
+  }
+}
+
+/// Bandeau « course en cours » : rouvre le suivi. Bien visible, animé d'un
+/// léger battement pour attirer l'œil (coupé si animations réduites).
+class _BanniereCourseActive extends StatelessWidget {
+  const _BanniereCourseActive({required this.course, required this.onTap});
+
+  final CourseActive course;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: TaamaColors.navy,
+      borderRadius: BorderRadius.circular(TaamaRadius.lg),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              AnimeEnBoucle(
+                duree: const Duration(milliseconds: 900),
+                builder: (context, t, child) => Opacity(opacity: 1 - 0.6 * t, child: child),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: TaamaColors.primary,
+                    borderRadius: BorderRadius.circular(TaamaRadius.md),
+                  ),
+                  child: const Icon(Icons.navigation_rounded, color: Colors.white, size: 20),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(course.libelleEtat,
+                        style: TaamaText.body.copyWith(
+                            color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Vers ${course.destination}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TaamaText.body.copyWith(
+                          color: TaamaColors.onNavyMuted, fontSize: 12, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: TaamaColors.primary,
+                  borderRadius: BorderRadius.circular(TaamaRadius.pill),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Suivre',
+                        style: TaamaText.body.copyWith(
+                            color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 15),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -737,7 +831,7 @@ class _BarreRecherche extends StatelessWidget {
   }
 }
 
-/// Fait défiler « ex. « lieu » » toutes les 3 s (fixe si animations réduites).
+/// Fait défiler « ex. [lieu] » toutes les 3 s (fixe si animations réduites).
 class _TexteDefilant extends StatefulWidget {
   const _TexteDefilant({required this.textes});
 
