@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../widgets/dialogue_suppression_compte.dart';
 import '../widgets/widget_avatar_conducteur.dart';
@@ -29,6 +31,10 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
   bool _enregistrement = false;
   bool _uploadPhotoEnCours = false;
   final ImagePicker _picker = ImagePicker();
+  // Posé le temps du choix d'une photo de profil. retrieveLostData renvoie la
+  // dernière image de TOUS les écrans : sans ce repère, un document KYC perdu
+  // pourrait être proposé comme photo de profil, qui est publique.
+  static const String _cleChoixPhotoEnCours = 'photo_profil_choix_en_cours';
 
   // ─── Édition des infos véhicule ────────────────────────────────────────
   final TextEditingController _marqueVehiculeController = TextEditingController();
@@ -68,6 +74,7 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
   void initState() {
     super.initState();
     _charger();
+    _reprendrePhotoPerdue();
   }
 
   @override
@@ -113,6 +120,52 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
     }
   }
 
+  /// Sur un téléphone à court de mémoire, Android peut fermer l'app pendant
+  /// que l'appareil photo est ouvert : la photo n'arrive jamais à pickImage.
+  /// On la retrouve ici, et le chauffeur confirme avant tout envoi.
+  Future<void> _reprendrePhotoPerdue() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_cleChoixPhotoEnCours) != true) return;
+      await prefs.remove(_cleChoixPhotoEnCours);
+
+      final fichier = (await _picker.retrieveLostData()).file;
+      if (fichier == null || !mounted) return;
+
+      final confirme = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Utiliser cette photo ?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.file(File(fichier.path), height: 160, fit: BoxFit.cover),
+              ),
+              const SizedBox(height: 12),
+              const Text('Elle sera visible par vos clients.'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annuler'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Utiliser'),
+            ),
+          ],
+        ),
+      );
+      if (confirme == true && mounted) await _envoyerPhoto(fichier);
+    } catch (e) {
+      debugPrint('[ProfilChauffeur] Erreur reprise photo : $e');
+    }
+  }
+
   Future<void> _choisirEtUploaderPhoto() async {
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
@@ -136,9 +189,19 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
     );
     if (source == null) return;
 
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_cleChoixPhotoEnCours, true);
+
     XFile? image;
     try {
-      image = await _picker.pickImage(source: source, imageQuality: 85);
+      image = await _picker.pickImage(
+        source: source,
+        imageQuality: 80,
+        // Le serveur ne garde que 400 px : inutile d'envoyer plusieurs Mo,
+        // trop long sur un réseau lent, et cher en data pour le chauffeur.
+        maxWidth: 800,
+        maxHeight: 800,
+      );
     } catch (e) {
       // pickImage peut lever (permission refusée, pas d'appareil photo
       // disponible, etc.) — avant ce correctif, rien n'était affiché à
@@ -153,6 +216,8 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
         )),
       );
       return;
+    } finally {
+      await prefs.remove(_cleChoixPhotoEnCours);
     }
     if (image == null) {
       // Sélection annulée par l'utilisateur (retour sans choisir) — état
@@ -162,13 +227,20 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
       return;
     }
     debugPrint('[ProfilChauffeur] Photo sélectionnée : ${image.path}');
+    if (!mounted) return;
+    await _envoyerPhoto(image);
+  }
 
+  Future<void> _envoyerPhoto(XFile image) async {
     setState(() => _uploadPhotoEnCours = true);
     try {
       final chauffeur = await ApiService.uploaderPhotoProfil(File(image.path));
       debugPrint('[ProfilChauffeur] Photo envoyée avec succès : ${chauffeur['photo_profil']}');
       if (!mounted) return;
       setState(() => _chauffeur = {...?_chauffeur, ...chauffeur});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Photo enregistrée.')),
+      );
     } catch (e) {
       debugPrint('[ProfilChauffeur] Erreur envoi photo : $e');
       if (!mounted) return;

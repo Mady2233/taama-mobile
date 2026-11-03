@@ -18,6 +18,7 @@ import 'avis_app_screen.dart';
 import 'courier_livreur_screen.dart';
 import 'inscription_chauffeur_screen.dart';
 import '../widgets/widget_annulation.dart';
+import '../widgets/widget_avatar_conducteur.dart';
 
 class EcranEspaceChauffeur extends StatefulWidget {
   const EcranEspaceChauffeur({super.key});
@@ -243,7 +244,12 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     try {
       final profil = await ApiService.monProfilChauffeur();
       if (!mounted) return;
-      setState(() => _profil?['disponible'] = profil['disponible']);
+      setState(() {
+        _profil?['disponible'] = profil['disponible'];
+        // Photo changée sur l'écran Profil ou lors de la vérification : la
+        // carte du haut suit sans requête de plus.
+        _profil?['photo_profil'] = profil['photo_profil'];
+      });
 
       // Garde-fou : si le serveur dit "disponible" mais que le suivi GPS
       // général n'est plus actif (stream mort en silence, exception
@@ -681,21 +687,6 @@ class _CarteProfil extends StatelessWidget {
       .where((v) => v.isNotEmpty && v != 'null')
       .join(' • ');
 
-  String get _initiales {
-    final parties = (profil['nom']?.toString() ?? '')
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((p) => p.isNotEmpty)
-        .toList();
-    if (parties.isEmpty) return '?';
-    if (parties.length == 1) {
-      return parties[0]
-          .substring(0, parties[0].length >= 2 ? 2 : 1)
-          .toUpperCase();
-    }
-    return (parties[0][0] + parties[1][0]).toUpperCase();
-  }
-
   Widget _badgeVerification(BuildContext context) {
     final verifie = profil['verifie'] as bool? ?? false;
     final statut = profil['statut_verification']?.toString() ?? 'non_soumis';
@@ -769,17 +760,10 @@ class _CarteProfil extends StatelessWidget {
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            backgroundColor: CouleursTaama.indigo,
+          AvatarConducteur(
+            photoUrl: profil['photo_profil'] as String?,
+            nom: profil['nom']?.toString() ?? '',
             radius: 26,
-            child: Text(
-              _initiales,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-            ),
           ),
           const SizedBox(width: 14),
           Expanded(
