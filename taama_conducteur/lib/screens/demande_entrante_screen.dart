@@ -1,11 +1,34 @@
+// DESIGN_V4
+//
+// Écran « appel entrant » d'une nouvelle demande.
+//
+// Inchangé : vérification du statut (mesDemandesAssignees), compte à rebours
+// de 30 s, expiration = refus best-effort, accepter → EcranNavigation
+// (pushReplacement), ignorer avec gestion 400/404, _fermer() via pop(),
+// PopScope pendant un traitement, messages d'erreur lisibles.
+//
+// Nouveau :
+// - carte sombre plein écran (client + chauffeur, cadrée sur les deux,
+//   plein nord) sous un dégradé ;
+// - grand anneau de compte à rebours fluide qui passe du blanc à l'or puis
+//   au rouge, avec vibration sur les 5 dernières secondes ;
+// - panneau qui monte depuis le bas, prix qui défile, badges distance /
+//   temps d'approche / type ;
+// - bouton Accepter avec halo qui pulse, Ignorer discret ;
+// - la sonnerie s'arrête dès le premier appui ;
+// - toutes les animations décoratives se coupent si le téléphone est en
+//   « animations réduites ».
+
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/api_service.dart';
 import '../services/demande_entrante_navigator.dart';
+import '../services/sonnerie_service.dart';
 import '../theme/couleurs_taama.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../carte/fond_carte.dart';
@@ -15,6 +38,9 @@ import 'navigation_screen.dart';
 /// backend (VITESSE_APPROCHE_KMH dans trajets/views.py) pour rester cohérent
 /// avec l'ETA affichée côté client sur l'écran de sélection de véhicule.
 const double _vitesseApprocheKmh = 20;
+
+/// Hauteur approximative du panneau bas : la carte se cadre au-dessus.
+const double _hauteurPanneau = 360;
 
 /// Écran plein écran affiché dès qu'une nouvelle demande instantanée est
 /// attribuée au conducteur (statut 'chauffeur_trouve') — déclenché soit par
@@ -39,7 +65,8 @@ class EcranDemandeEntrante extends StatefulWidget {
   State<EcranDemandeEntrante> createState() => _EcranDemandeEntranteState();
 }
 
-class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
+class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
+    with TickerProviderStateMixin {
   static const int _dureeCompteARebours = 30;
 
   Map<String, dynamic>? _demande;
@@ -48,11 +75,33 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
   // Anti double-tap : dès le premier appui (Accepter OU Ignorer), les DEUX
   // boutons sont désactivés — jamais deux POST accepter/refuser en parallèle.
   bool _enTraitement = false;
+  // Quel bouton a été pressé (pour n'afficher le chargement que sur lui).
+  bool _acceptationEnCours = false;
   int _secondesRestantes = _dureeCompteARebours;
   Timer? _timerCompteARebours;
 
   LatLng? _positionActuelle;
   int? _etaMinutes;
+  double? _distanceKm;
+
+  // ─── Affichage ───
+  final MapController _carte = MapController();
+  bool _cartePrete = false;
+  // Anneau fluide (le Timer ci-dessus reste la source de vérité des secondes).
+  late final AnimationController _anneau = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: _dureeCompteARebours),
+  );
+  // Entrée du panneau.
+  late final AnimationController _entree = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 650),
+  );
+  // Pulsations (halo du bouton, onde du marqueur, pastille du titre).
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  );
 
   @override
   void initState() {
@@ -62,8 +111,24 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _pulse
+        ..stop()
+        ..value = 0;
+    } else if (!_pulse.isAnimating) {
+      _pulse.repeat();
+    }
+  }
+
+  @override
   void dispose() {
     _timerCompteARebours?.cancel();
+    _anneau.dispose();
+    _entree.dispose();
+    _pulse.dispose();
+    _carte.dispose();
     super.dispose();
   }
 
@@ -82,6 +147,8 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
       if (!mounted) return;
 
       if (actuelle.isEmpty) {
+        // Plus rien à accepter : on coupe la sonnerie tout de suite.
+        SonnerieService.instance.arreter();
         setState(() {
           _demandeIntrouvable = true;
           _chargement = false;
@@ -107,6 +174,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
         _demarrerCompteARebours();
         _calculerPositionEtEta();
       } else {
+        SonnerieService.instance.arreter();
         setState(() {
           _demandeIntrouvable = true;
           _chargement = false;
@@ -118,6 +186,8 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
   void _demarrerCompteARebours() {
     _timerCompteARebours?.cancel();
     _secondesRestantes = _dureeCompteARebours;
+    _anneau.forward(from: 0);
+    _entree.forward(from: 0);
     _timerCompteARebours = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         timer.cancel();
@@ -129,7 +199,13 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
         return;
       }
       setState(() => _secondesRestantes--);
+      if (_secondesRestantes <= 5) HapticFeedback.mediumImpact();
     });
+  }
+
+  void _arreterCompteARebours() {
+    _timerCompteARebours?.cancel();
+    _anneau.stop();
   }
 
   double? get _departLat => (_demande?['depart_lat'] as num?)?.toDouble();
@@ -150,8 +226,10 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
       );
       setState(() {
         _positionActuelle = LatLng(position.latitude, position.longitude);
+        _distanceKm = distanceKm;
         _etaMinutes = math.max(1, (distanceKm / _vitesseApprocheKmh * 60).round());
       });
+      _cadrerCarte();
     } catch (e) {
       debugPrint('[DemandeEntrante] Erreur position/ETA : $e');
     }
@@ -167,6 +245,22 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
   }
 
   double _rad(double deg) => deg * math.pi / 180;
+
+  /// Cadre la carte sur le client et le chauffeur, au-dessus du panneau.
+  void _cadrerCarte() {
+    if (!_cartePrete || _departLat == null || _departLng == null) return;
+    final depart = LatLng(_departLat!, _departLng!);
+    final haut = MediaQuery.paddingOf(context).top + 150;
+    if (_positionActuelle == null) {
+      _carte.move(depart, 15);
+      return;
+    }
+    _carte.fitCamera(CameraFit.bounds(
+      bounds: LatLngBounds.fromPoints([depart, _positionActuelle!]),
+      padding: EdgeInsets.fromLTRB(60, haut, 60, _hauteurPanneau + 40),
+      maxZoom: 16,
+    ));
+  }
 
   /// Timer UX arrivé à 0 : ferme l'écran et tente un refus en best-effort.
   /// Ne s'exécute que si l'app est au premier plan (ce timer ne tourne que
@@ -185,6 +279,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
 
   Future<void> _expirer() async {
     if (_enTraitement || !mounted) return;
+    SonnerieService.instance.arreter();
     setState(() => _enTraitement = true);
     try {
       await ApiService.refuserDemande(widget.demandeId);
@@ -197,8 +292,13 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
 
   Future<void> _accepter() async {
     if (_enTraitement) return;
-    setState(() => _enTraitement = true);
-    _timerCompteARebours?.cancel();
+    SonnerieService.instance.arreter();
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _enTraitement = true;
+      _acceptationEnCours = true;
+    });
+    _arreterCompteARebours();
 
     try {
       // La réponse contient la demande à jour (statut 'en_route') : le
@@ -232,14 +332,20 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
       } else if (e.statusCode == 404) {
         _fermer();
       } else {
-        setState(() => _enTraitement = false);
+        setState(() {
+          _enTraitement = false;
+          _acceptationEnCours = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.message)),
         );
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _enTraitement = false);
+      setState(() {
+        _enTraitement = false;
+        _acceptationEnCours = false;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_messageErreurLisible(e))),
       );
@@ -263,8 +369,9 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
 
   Future<void> _ignorer() async {
     if (_enTraitement) return;
+    SonnerieService.instance.arreter();
     setState(() => _enTraitement = true);
-    _timerCompteARebours?.cancel();
+    _arreterCompteARebours();
 
     try {
       await ApiService.refuserDemande(widget.demandeId);
@@ -296,6 +403,8 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
     ));
   }
 
+  // ─── Construction ───
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -303,13 +412,11 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
       canPop: !_enTraitement,
       child: Scaffold(
         backgroundColor: CouleursTaama.indigo,
-        body: SafeArea(
-          child: _chargement
-              ? const Center(child: CircularProgressIndicator(color: Colors.white))
-              : _demandeIntrouvable
-                  ? _buildDemandeIntrouvable()
-                  : _buildContenu(),
-        ),
+        body: _chargement
+            ? const Center(child: CircularProgressIndicator(color: Colors.white))
+            : _demandeIntrouvable
+                ? SafeArea(child: _buildDemandeIntrouvable())
+                : _buildContenu(),
       ),
     );
   }
@@ -321,11 +428,25 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.info_outline, color: Colors.white70, size: 48),
-            const SizedBox(height: 16),
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.update_disabled_rounded, color: Colors.white70, size: 40),
+            ),
+            const SizedBox(height: 20),
             const Text(
               'Cette demande n\'est plus disponible.',
-              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Elle a été annulée ou confiée à un autre chauffeur.',
+              style: TextStyle(color: Colors.white60),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -341,185 +462,573 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante> {
 
   Widget _buildContenu() {
     final demande = _demande!;
-    final destination = demande['destination']?.toString() ?? '';
-    final typeTransport = demande['type_transport']?.toString() ?? '';
-    final prixEstime = demande['prix_estime'];
+    final aDepart = _departLat != null && _departLng != null;
+    final hautSecurite = MediaQuery.paddingOf(context).top;
+    final margeAttribution = EdgeInsets.fromLTRB(8, hautSecurite + 8, 8, 8);
 
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        children: [
-          _buildCompteARebours(),
-          const SizedBox(height: 20),
-          if (_departLat != null && _departLng != null) ...[
-            _buildMiniCarteDepart(),
-            const SizedBox(height: 16),
-          ],
-          Expanded(
-            child: SingleChildScrollView(
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
+    return Stack(
+      children: [
+        // ─── Carte sombre plein écran ───
+        if (aDepart)
+          Positioned.fill(
+            child: FlutterMap(
+              mapController: _carte,
+              options: MapOptions(
+                initialCenter: LatLng(_departLat!, _departLng!),
+                initialZoom: 15,
+                interactionOptions: const InteractionOptions(
+                  flags: InteractiveFlag.none, // carte décorative : aucun geste
                 ),
+                onMapReady: () {
+                  _cartePrete = true;
+                  _cadrerCarte();
+                },
+              ),
+              children: [
+                const FondCarteTaama(nuit: true),
+                CoucheCarteTaama(
+                  nuit: true,
+                  reserves: [
+                    ZoneReservee.attribution(
+                      alignement: Alignment.topLeft,
+                      marge: margeAttribution,
+                    ),
+                  ],
+                ),
+                if (_positionActuelle != null)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: [_positionActuelle!, LatLng(_departLat!, _departLng!)],
+                        color: Colors.white.withValues(alpha: 0.7),
+                        strokeWidth: 3,
+                        pattern: StrokePattern.dashed(segments: const [8, 8]),
+                      ),
+                    ],
+                  ),
+                MarkerLayer(
+                  markers: [
+                    if (_positionActuelle != null)
+                      Marker(
+                        point: _positionActuelle!,
+                        width: 44,
+                        height: 44,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: CouleursTaama.indigo, width: 3),
+                          ),
+                          child: const Icon(Icons.directions_car_rounded,
+                              color: CouleursTaama.indigo, size: 22),
+                        ),
+                      ),
+                    Marker(
+                      point: LatLng(_departLat!, _departLng!),
+                      width: 90,
+                      height: 90,
+                      child: _OndeClient(animation: _pulse),
+                    ),
+                  ],
+                ),
+                AttributionCarteTaama(
+                  nuit: true,
+                  alignement: Alignment.topLeft,
+                  marge: margeAttribution,
+                ),
+              ],
+            ),
+          ),
+
+        // Dégradé : lisibilité du titre en haut et transition vers le panneau.
+        IgnorePointer(
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  CouleursTaama.indigo.withValues(alpha: aDepart ? 0.55 : 1),
+                  CouleursTaama.indigo.withValues(alpha: aDepart ? 0.05 : 1),
+                  CouleursTaama.indigo.withValues(alpha: aDepart ? 0.85 : 1),
+                ],
+                stops: const [0, 0.4, 0.75],
+              ),
+            ),
+          ),
+        ),
+
+        // ─── En-tête : titre + anneau ───
+        Positioned(
+          top: hautSecurite + 32,
+          left: 20,
+          right: 20,
+          child: Row(
+            children: [
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.flag, color: CouleursTaama.terreCuite),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            destination,
-                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      typeTransport,
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                    ),
-                    if (_etaMinutes != null) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(Icons.access_time, size: 16, color: Colors.grey.shade600),
-                          const SizedBox(width: 6),
-                          Text(
-                            '~$_etaMinutes min pour rejoindre le client',
-                            style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                          ),
-                        ],
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    Text(
-                      '$prixEstime FCFA',
-                      style: const TextStyle(
-                        color: CouleursTaama.terreCuite,
-                        fontWeight: FontWeight.bold,
+                    _PastilleEnDirect(animation: _pulse),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Nouvelle course',
+                      style: TextStyle(
+                        color: Colors.white,
                         fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                        height: 1.1,
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          _buildBoutons(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCompteARebours() {
-    final proportion = _secondesRestantes / _dureeCompteARebours;
-    return Column(
-      children: [
-        const Text(
-          'Nouvelle demande',
-          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          width: 56,
-          height: 56,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              CircularProgressIndicator(
-                value: proportion,
-                strokeWidth: 4,
-                backgroundColor: Colors.white24,
-                color: Colors.white,
-              ),
-              Text(
-                '$_secondesRestantes',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              _AnneauCompteARebours(
+                animation: _anneau,
+                secondes: _secondesRestantes,
               ),
             ],
           ),
         ),
+
+        // ─── Panneau bas ───
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: SlideTransition(
+            position: Tween(begin: const Offset(0, 1), end: Offset.zero).animate(
+              CurvedAnimation(parent: _entree, curve: Curves.easeOutCubic),
+            ),
+            child: FadeTransition(
+              opacity: _entree,
+              child: _panneau(demande),
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildMiniCarteDepart() {
-    final depart = LatLng(_departLat!, _departLng!);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: SizedBox(
-        height: 140,
-        child: FlutterMap(
-          options: MapOptions(initialCenter: depart, initialZoom: 14.5),
-          children: [
-            const FondCarteTaama(apercu: true),
-            const CoucheCarteTaama(),
-            MarkerLayer(
-              markers: [
-                Marker(
-                  point: depart,
-                  width: 40,
-                  height: 40,
-                  child: const Icon(Icons.location_on, color: CouleursTaama.terreCuite, size: 36),
-                ),
-                if (_positionActuelle != null)
-                  Marker(
-                    point: _positionActuelle!,
-                    width: 32,
-                    height: 32,
-                    child: const Icon(Icons.directions_car, color: CouleursTaama.indigo, size: 28),
+  Widget _panneau(Map<String, dynamic> demande) {
+    final destination = demande['destination']?.toString() ?? '';
+    final typeTransport = demande['type_transport']?.toString() ?? '';
+    final prix = num.tryParse(demande['prix_estime']?.toString() ?? '');
+    final reduit = MediaQuery.disableAnimationsOf(context);
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 24, offset: Offset(0, -6))],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 22, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Prix
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: prix == null
+                        ? Text(
+                            '${demande['prix_estime'] ?? '—'} FCFA',
+                            style: _stylePrix,
+                          )
+                        : TweenAnimationBuilder<double>(
+                            tween: Tween(begin: reduit ? prix.toDouble() : 0, end: prix.toDouble()),
+                            duration: const Duration(milliseconds: 900),
+                            curve: Curves.easeOutCubic,
+                            builder: (context, v, _) => FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text('${_formaterFcfa(v.round())} FCFA', style: _stylePrix),
+                            ),
+                          ),
                   ),
-              ],
-            ),
-            const AttributionCarteTaama(),
-          ],
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.payments_rounded, size: 16, color: Colors.green.shade700),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Espèces',
+                          style: TextStyle(
+                            color: Colors.green.shade700,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              // Badges
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (_distanceKm != null)
+                    _Badge(
+                      icone: Icons.near_me_rounded,
+                      texte: '${_distanceKm!.toStringAsFixed(1)} km de toi',
+                    ),
+                  if (_etaMinutes != null)
+                    _Badge(icone: Icons.schedule_rounded, texte: '~$_etaMinutes min'),
+                  if (typeTransport.isNotEmpty)
+                    _Badge(icone: Icons.directions_car_filled_rounded, texte: typeTransport),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Destination
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: CouleursTaama.indigo.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: CouleursTaama.terreCuite.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.flag_rounded, color: CouleursTaama.terreCuite),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Destination',
+                            style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w700),
+                          ),
+                          Text(
+                            destination.isEmpty ? '—' : destination,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: CouleursTaama.indigo,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              _buildBoutons(),
+            ],
+          ),
         ),
       ),
     );
   }
 
+  static const TextStyle _stylePrix = TextStyle(
+    color: CouleursTaama.terreCuite,
+    fontWeight: FontWeight.w900,
+    fontSize: 34,
+    height: 1,
+  );
+
   Widget _buildBoutons() {
     return Row(
       children: [
-        Expanded(
+        SizedBox(
+          height: 60,
           child: OutlinedButton(
             onPressed: _enTraitement ? null : _ignorer,
             style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.white,
-              side: const BorderSide(color: Colors.white),
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              minimumSize: const Size(96, 60),
+              foregroundColor: Colors.grey.shade700,
+              side: BorderSide(color: Colors.grey.shade300),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
             ),
-            child: const Text('Ignorer', style: TextStyle(fontWeight: FontWeight.bold)),
+            child: (_enTraitement && !_acceptationEnCours)
+                ? SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey.shade600),
+                  )
+                : const Text('Ignorer', style: TextStyle(fontWeight: FontWeight.w700)),
           ),
         ),
         const SizedBox(width: 12),
         Expanded(
-          flex: 2,
-          child: ElevatedButton(
-            onPressed: _enTraitement ? null : _accepter,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: AnimatedBuilder(
+            animation: _pulse,
+            builder: (context, child) {
+              final t = _enTraitement ? 0.0 : _pulse.value;
+              return Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.green.withValues(alpha: 0.45 * (1 - t)),
+                      blurRadius: 6 + 18 * t,
+                      spreadRadius: 6 * t,
+                    ),
+                  ],
+                ),
+                child: child,
+              );
+            },
+            child: SizedBox(
+              height: 60,
+              child: ElevatedButton(
+                onPressed: _enTraitement ? null : _accepter,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade600,
+                  disabledBackgroundColor: Colors.green.shade300,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(0, 60),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                ),
+                child: _acceptationEnCours
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                      )
+                    : const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.check_circle_rounded, size: 24),
+                          SizedBox(width: 8),
+                          Text('Accepter',
+                              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+                        ],
+                      ),
+              ),
             ),
-            child: _enTraitement
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Text('Accepter', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 12500 → « 12 500 ».
+String _formaterFcfa(int valeur) {
+  final s = valeur.abs().toString();
+  final b = StringBuffer(valeur < 0 ? '-' : '');
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 == 0) b.write(' ');
+    b.write(s[i]);
+  }
+  return b.toString();
+}
+
+// ─── Widgets ───
+
+/// Grand anneau du compte à rebours : fluide, blanc → or → rouge.
+class _AnneauCompteARebours extends StatelessWidget {
+  const _AnneauCompteARebours({required this.animation, required this.secondes});
+
+  final Animation<double> animation;
+  final int secondes;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduit = MediaQuery.disableAnimationsOf(context);
+    final couleur = secondes <= 5
+        ? Colors.redAccent
+        : (secondes <= 10 ? CouleursTaama.or : Colors.white);
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) {
+        final restant = reduit ? secondes / 30 : (1 - animation.value).clamp(0.0, 1.0);
+        final echelle = (!reduit && secondes <= 5) ? 1 + 0.06 * math.sin(animation.value * 30 * 2 * math.pi) : 1.0;
+        return Transform.scale(
+          scale: echelle,
+          child: SizedBox(
+            width: 84,
+            height: 84,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black.withValues(alpha: 0.25),
+                  ),
+                ),
+                SizedBox.expand(
+                  child: CircularProgressIndicator(
+                    value: restant,
+                    strokeWidth: 6,
+                    strokeCap: StrokeCap.round,
+                    backgroundColor: Colors.white.withValues(alpha: 0.15),
+                    color: couleur,
+                  ),
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '$secondes',
+                      style: TextStyle(
+                        color: couleur,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 28,
+                        height: 1,
+                      ),
+                    ),
+                    const Text(
+                      'sec',
+                      style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Pastille « EN DIRECT » avec point qui clignote.
+class _PastilleEnDirect extends StatelessWidget {
+  const _PastilleEnDirect({required this.animation});
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: CouleursTaama.terreCuite,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedBuilder(
+            animation: animation,
+            builder: (context, _) => Opacity(
+              opacity: 0.4 + 0.6 * (1 - animation.value),
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Text(
+            'DEMANDE EN DIRECT',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 11,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Point de prise en charge : deux ondes qui s'élargissent.
+class _OndeClient extends StatelessWidget {
+  const _OndeClient({required this.animation});
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) {
+        Widget onde(double decalage) {
+          final t = (animation.value + decalage) % 1;
+          return Opacity(
+            opacity: (1 - t) * 0.7,
+            child: Container(
+              width: 30 + 60 * t,
+              height: 30 + 60 * t,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: CouleursTaama.terreCuite, width: 2),
+                color: CouleursTaama.terreCuite.withValues(alpha: 0.15),
+              ),
+            ),
+          );
+        }
+
+        return Stack(
+          alignment: Alignment.center,
+          children: [onde(0), onde(0.5), child!],
+        );
+      },
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: CouleursTaama.terreCuite,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 10)],
+        ),
+        child: const Icon(Icons.person_rounded, color: Colors.white, size: 20),
+      ),
+    );
+  }
+}
+
+class _Badge extends StatelessWidget {
+  const _Badge({required this.icone, required this.texte});
+  final IconData icone;
+  final String texte;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: CouleursTaama.indigo.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icone, size: 16, color: CouleursTaama.indigo),
+          const SizedBox(width: 5),
+          Text(
+            texte,
+            style: const TextStyle(
+              color: CouleursTaama.indigo,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

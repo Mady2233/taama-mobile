@@ -12,6 +12,10 @@ class CouleursTaama {
   static const Color grisTexte = Color(0xFF6B7280);
   static const Color blanc = Colors.white;
 
+  // Ombres (accueil carte) : encre bleu nuit à 16 % et 8 %.
+  static const Color ombre = Color(0x29101828);
+  static const Color ombreLegere = Color(0x14101828);
+
   // Navigation de nuit (maquette « Conducteur »).
   static const Color nuitPanneau = Color(0xFF22273D);
   static const Color nuitTexteSecondaire = Color(0xFF9AA3C0);

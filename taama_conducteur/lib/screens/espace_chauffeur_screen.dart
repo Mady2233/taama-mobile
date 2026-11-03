@@ -1,12 +1,30 @@
-// DESIGN_V3_FINAL
+// DESIGN_V4_CARTE
+//
+// Accueil chauffeur, style « carte en fond » : la carte occupe tout l'écran
+// avec la position du chauffeur, un grand bouton En ligne / Hors ligne, et
+// une feuille du bas (glissable) qui contient stats, demandes et livraisons.
+//
+// TOUTE la logique métier est reprise à l'identique de la version
+// précédente (GPS continu par demande, canal « disponibilite », détection de
+// nouvelle demande, resynchronisation, workarounds de mise en page). Seul
+// ajout : lecture de la position GPS (Geolocator) pour CENTRER la carte —
+// elle n'est envoyée nulle part, l'envoi reste géré par LocationService.
+
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import '../carte/fond_carte.dart';
 import '../services/api_service.dart';
 import '../services/config_app.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/location_service.dart';
+import '../services/sonnerie_service.dart';
 import '../theme/couleurs_taama.dart';
+import '../widgets/couche_carte_taama.dart';
+import '../widgets/widget_avatar_conducteur.dart';
 import 'connexion_screen.dart';
 import 'profil_chauffeur_screen.dart';
 import 'portefeuille_screen.dart';
@@ -18,7 +36,8 @@ import 'avis_app_screen.dart';
 import 'courier_livreur_screen.dart';
 import 'inscription_chauffeur_screen.dart';
 import '../widgets/widget_annulation.dart';
-import '../widgets/widget_avatar_conducteur.dart';
+
+const LatLng _centreBamako = LatLng(12.6392, -8.0029);
 
 class EcranEspaceChauffeur extends StatefulWidget {
   const EcranEspaceChauffeur({super.key});
@@ -48,6 +67,12 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   // même sans course en cours (canal général "disponibilite").
   final LocationService _serviceLocalisationGenerale = LocationService();
 
+  // ─── Carte (affichage uniquement) ───
+  final MapController _carte = MapController();
+  bool _cartePrete = false;
+  LatLng? _positionChauffeur;
+  bool _basculeEnCours = false;
+
   @override
   void initState() {
     super.initState();
@@ -55,6 +80,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     _chargerProfil();
     _chargerSolde();
     _rafraichirTout();
+    _localiser();
     _timerPolling = Timer.periodic(
       const Duration(seconds: 5),
       (_) => _rafraichirTout(),
@@ -69,7 +95,50 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
       service.arreter();
     }
     _serviceLocalisationGenerale.arreterSuiviPositionEnLigne();
+    _carte.dispose();
+    SonnerieService.instance.arreter();
     super.dispose();
+  }
+
+  // ─── Position pour la carte (lecture seule) ───
+
+  Future<void> _localiser() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return;
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+      final p = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      if (!mounted) return;
+      final point = LatLng(p.latitude, p.longitude);
+      setState(() => _positionChauffeur = point);
+      if (_cartePrete) _carte.move(point, 15.5);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Carte] Position indisponible : $e');
+    }
+  }
+
+  /// Bascule avec retour visuel (bouton occupé) — délègue entièrement à
+  /// _basculerDisponibilite, inchangée.
+  Future<void> _surToggle() async {
+    if (_basculeEnCours) return;
+    setState(() => _basculeEnCours = true);
+    try {
+      await _basculerDisponibilite();
+    } finally {
+      if (mounted) setState(() => _basculeEnCours = false);
+    }
+    _localiser();
   }
 
   /// Démarre l'envoi de la position GPS pour chaque demande qui vient de
@@ -117,9 +186,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
         _erreurProfil = null;
         _sansProfil = false;
       });
-      // Si le conducteur était déjà en ligne (ex: relance de l'app), on
-      // reprend le suivi GPS.
       if (profil['disponible'] == true) {
+        // Déjà en ligne (ex: relance de l'app) : on reprend le suivi GPS.
         _serviceLocalisationGenerale.demarrerSuiviPositionEnLigne();
       }
     } on ApiException catch (e) {
@@ -200,12 +268,15 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
         _demandesAssignees = demandes;
         _erreurDemandes = null;
       });
+      // Plus aucune demande en attente de réponse (acceptée depuis l'écran
+      // de demande entrante, expirée, reprise par le serveur…) : on coupe.
+      if (!demandes.any((d) => d['statut'] == 'chauffeur_trouve')) {
+        SonnerieService.instance.arreter();
+      }
     } catch (e) {
       debugPrint('[DemandesAssignees] Erreur rafraîchissement : $e');
       if (mounted) {
-        setState(
-          () => _erreurDemandes = 'Impossible de mettre à jour tes demandes.',
-        );
+        setState(() => _erreurDemandes = 'Impossible de mettre à jour tes demandes.');
       }
     }
   }
@@ -222,6 +293,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
       final id = demande['id'];
       if (demande['statut'] == 'chauffeur_trouve' &&
           !idsDejaConnus.contains(id)) {
+        // La sonnerie (boucle + vibration, 45 s max) est démarrée par
+        // DemandeEntranteNavigator à l'ouverture de l'écran, et coupée à sa
+        // fermeture : pas de sonnerie pour une demande déjà refusée.
         DemandeEntranteNavigator.afficherSiNecessaire(
           id as int,
           demandeInitiale: demande as Map<String, dynamic>,
@@ -247,7 +321,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
       setState(() {
         _profil?['disponible'] = profil['disponible'];
         // Photo changée sur l'écran Profil ou lors de la vérification : la
-        // carte du haut suit sans requête de plus.
+        // barre du haut suit sans requête de plus.
         _profil?['photo_profil'] = profil['photo_profil'];
       });
 
@@ -288,6 +362,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   }
 
   Future<void> _accepterDemande(int id) async {
+    SonnerieService.instance.arreter();
     setState(() => _enTraitement = id);
     try {
       await ApiService.accepterDemande(id);
@@ -300,6 +375,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   }
 
   Future<void> _refuserDemande(int id) async {
+    SonnerieService.instance.arreter();
     setState(() => _enTraitement = id);
     try {
       await ApiService.refuserDemande(id);
@@ -315,12 +391,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   /// Message exact du serveur, ou « Pas de connexion » pour une erreur réseau.
   void _afficherErreur(Object e) {
     if (!mounted) return;
-    final message = e is ApiException
-        ? e.message
-        : 'Pas de connexion. Vérifie ton réseau et réessaie.';
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    final message = e is ApiException ? e.message : 'Pas de connexion. Vérifie ton réseau et réessaie.';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _annulerCourse(int demandeId, DateTime dateCreation) async {
@@ -398,79 +470,252 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
     );
   }
 
+  void _ouvrir(Widget ecran) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => ecran));
+  }
+
+  // ─── Construction ───
+
   @override
   Widget build(BuildContext context) {
     final disponible = _profil?['disponible'] as bool? ?? false;
+    final hautSecurite = MediaQuery.paddingOf(context).top;
+    // Attribution OSM/MapTiler en haut à gauche, sous la barre flottante :
+    // la feuille du bas (qui monte et descend) ne la recouvre jamais.
+    final margeAttribution = EdgeInsets.fromLTRB(8, hautSecurite + 76, 8, 8);
 
     return Scaffold(
       backgroundColor: CouleursTaama.sable,
-      appBar: AppBar(
-        title: const Text(
-          'Taama Conducteur',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: CouleursTaama.indigo,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.chat_bubble, color: Colors.white),
-            tooltip: 'Messages',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const MesConversationsScreen(),
+      body: Stack(
+        children: [
+          // 1. Carte plein écran
+          Positioned.fill(
+            child: FlutterMap(
+              mapController: _carte,
+              options: MapOptions(
+                initialCenter: _positionChauffeur ?? _centreBamako,
+                initialZoom: 15,
+                interactionOptions: const InteractionOptions(
+                  flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
                 ),
-              );
-            },
-          ),
-          if (ConfigApp.paiementActif.value)
-          IconButton(
-            icon: const Icon(Icons.account_balance_wallet, color: Colors.white),
-            tooltip: 'Mon portefeuille',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) =>
-                      const EcranPortefeuille(estChauffeur: true),
+                onMapReady: () {
+                  _cartePrete = true;
+                  final p = _positionChauffeur;
+                  if (p != null) _carte.move(p, 15.5);
+                },
+              ),
+              children: [
+                const FondCarteTaama(),
+                CoucheCarteTaama(
+                  reserves: [
+                    ZoneReservee.attribution(
+                      alignement: Alignment.topLeft,
+                      marge: margeAttribution,
+                    ),
+                  ],
                 ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.person, color: Colors.white),
-            tooltip: 'Mon profil',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const EcranProfilChauffeur(),
+                if (_positionChauffeur != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _positionChauffeur!,
+                        width: 80,
+                        height: 80,
+                        child: _MarqueurChauffeur(enLigne: disponible),
+                      ),
+                    ],
+                  ),
+                AttributionCarteTaama(
+                  alignement: Alignment.topLeft,
+                  marge: margeAttribution,
                 ),
-              );
-            },
+              ],
+            ),
           ),
-          IconButton(
-            icon: const Icon(Icons.star_rate, color: Colors.white),
-            tooltip: 'Donner mon avis',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const EcranAvisApp()),
-              );
-            },
+
+          // 2. Barre flottante du haut
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+                child: _barreHaute(disponible),
+              ),
+            ),
           ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white),
-            tooltip: 'Déconnexion',
-            onPressed: _deconnexion,
+
+          // 3. Feuille du bas glissable
+          DraggableScrollableSheet(
+            initialChildSize: 0.46,
+            minChildSize: 0.30,
+            maxChildSize: 0.92,
+            snap: true,
+            snapSizes: const [0.46],
+            builder: (context, controleur) => _feuille(controleur, disponible),
           ),
         ],
       ),
-      body: _chargementInitial
-          ? const Center(
-              child: CircularProgressIndicator(color: CouleursTaama.terreCuite),
+    );
+  }
+
+  Widget _barreHaute(bool disponible) {
+    final nom = _profil?['nom']?.toString() ?? '';
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            // Hauteur minimale, pas fixe : avec une police agrandie, la
+            // barre grandit au lieu de déborder.
+            constraints: const BoxConstraints(minHeight: 52),
+            padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(26),
+              boxShadow: _ombreFlottante,
+            ),
+            child: Row(
+              children: [
+                AvatarConducteur(
+                  photoUrl: _profil?['photo_profil'] as String?,
+                  nom: nom,
+                  radius: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        nom.isEmpty ? 'Taama Conducteur' : nom,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                          color: CouleursTaama.indigo,
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: disponible ? Colors.green : Colors.grey.shade400,
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            disponible ? 'En ligne' : 'Hors ligne',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: disponible
+                                  ? Colors.green.shade700
+                                  : Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        _BoutonRondBlanc(
+          icone: Icons.chat_bubble_rounded,
+          info: 'Messages',
+          onTap: () => _ouvrir(const MesConversationsScreen()),
+        ),
+        const SizedBox(width: 8),
+        _menu(),
+      ],
+    );
+  }
+
+  Widget _menu() {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 4,
+      shadowColor: Colors.black26,
+      child: PopupMenuButton<String>(
+        tooltip: 'Menu',
+        icon: const Icon(Icons.menu_rounded, color: CouleursTaama.indigo),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        onSelected: (choix) {
+          switch (choix) {
+            case 'profil':
+              _ouvrir(const EcranProfilChauffeur());
+            case 'portefeuille':
+              _ouvrir(const EcranPortefeuille(estChauffeur: true));
+            case 'verification':
+              _ouvrir(const EcranVerificationConducteur());
+            case 'avis':
+              _ouvrir(const EcranAvisApp());
+            case 'deconnexion':
+              _deconnexion();
+          }
+        },
+        itemBuilder: (context) => [
+          _entreeMenu('profil', Icons.person_rounded, 'Mon profil'),
+          if (ConfigApp.paiementActif.value)
+            _entreeMenu('portefeuille', Icons.account_balance_wallet_rounded,
+                'Mon portefeuille'),
+          _entreeMenu('verification', Icons.verified_user_rounded, 'Vérification'),
+          _entreeMenu('avis', Icons.star_rounded, 'Donner mon avis'),
+          const PopupMenuDivider(),
+          _entreeMenu('deconnexion', Icons.logout_rounded, 'Déconnexion',
+              danger: true),
+        ],
+      ),
+    );
+  }
+
+  PopupMenuItem<String> _entreeMenu(String valeur, IconData icone, String texte,
+      {bool danger = false}) {
+    final couleur = danger ? Colors.red : CouleursTaama.indigo;
+    return PopupMenuItem<String>(
+      value: valeur,
+      child: Row(
+        children: [
+          Icon(icone, size: 20, color: couleur),
+          const SizedBox(width: 12),
+          Text(texte,
+              style: TextStyle(
+                  color: danger ? Colors.red : null, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
+  Widget _feuille(ScrollController controleur, bool disponible) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: CouleursTaama.sable,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: [
+          BoxShadow(color: CouleursTaama.ombre, blurRadius: 24, offset: Offset(0, -6)),
+        ],
+      ),
+      child: _chargementInitial
+          ? ListView(
+              controller: controleur,
+              children: const [
+                SizedBox(height: 60),
+                Center(
+                  child: CircularProgressIndicator(color: CouleursTaama.terreCuite),
+                ),
+              ],
             )
           : RefreshIndicator(
               color: CouleursTaama.terreCuite,
@@ -478,10 +723,24 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                 await _chargerProfil();
                 await _chargerSolde();
                 await _rafraichirTout();
+                await _localiser();
               },
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                controller: controleur,
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 32),
                 children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade400,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
                   // 0. États sans profil chargé : jamais un écran vide.
                   if (_sansProfil)
                     _CarteEtat(
@@ -491,9 +750,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                       libelleAction: 'Créer mon profil',
                       onAction: () => Navigator.pushAndRemoveUntil(
                         context,
-                        MaterialPageRoute(
-                          builder: (_) => const EcranInscriptionChauffeur(),
-                        ),
+                        MaterialPageRoute(builder: (_) => const EcranInscriptionChauffeur()),
                         (route) => false,
                       ),
                     )
@@ -506,58 +763,57 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                       onAction: _reessayerChargement,
                     ),
 
-                  // 1. Carte de profil
-                  if (_profil != null)
-                    _CarteProfil(
-                      profil: _profil!,
+                  // 1. Gros bouton En ligne / Hors ligne
+                  if (_profil != null) ...[
+                    _BoutonDisponibilite(
                       disponible: disponible,
-                      onToggle: _basculerDisponibilite,
+                      enCours: _basculeEnCours,
+                      onTap: _surToggle,
                     ),
-                  const SizedBox(height: 20),
+                    const SizedBox(height: 12),
+                    _BandeauProfil(profil: _profil!),
+                    const SizedBox(height: 16),
+                  ],
 
                   // 2. Stats rapides
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _CarteStat(
-                          icone: Icons.directions_car,
-                          couleur: CouleursTaama.terreCuite,
-                          valeur: '${_demandesAssignees.length}',
-                          libelle: 'Courses du jour',
+                  if (_profil != null) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _CarteStat(
+                            icone: Icons.directions_car_filled_rounded,
+                            couleur: CouleursTaama.terreCuite,
+                            valeur: '${_demandesAssignees.length}',
+                            libelle: 'Courses du jour',
+                          ),
                         ),
-                      ),
-                      // Mode gratuit (lu sur le serveur) : pas de solde.
-                      if (ConfigApp.paiementActif.value) ...[
+                        // Mode gratuit (lu sur le serveur) : pas de solde.
+                        if (ConfigApp.paiementActif.value) ...[
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: _CarteStat(
+                              icone: Icons.account_balance_wallet_rounded,
+                              couleur: CouleursTaama.indigo,
+                              valeur: _solde != null ? '$_solde' : '...',
+                              libelle: 'Solde (FCFA)',
+                            ),
+                          ),
+                        ],
                         const SizedBox(width: 10),
                         Expanded(
                           child: _CarteStat(
-                            icone: Icons.account_balance_wallet,
-                            couleur: CouleursTaama.indigo,
-                            valeur: _solde != null ? '$_solde' : '...',
-                            libelle: 'Solde (FCFA)',
+                            icone: Icons.star_rounded,
+                            couleur: CouleursTaama.or,
+                            valeur: (_profil!['note'] as num?)?.toStringAsFixed(1) ?? '—',
+                            libelle: 'Note',
                           ),
                         ),
                       ],
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _CarteStat(
-                          icone: Icons.star,
-                          couleur: CouleursTaama.or,
-                          valeur: _profil != null
-                              ? (_profil!['note'] as num?)?.toStringAsFixed(
-                                      1,
-                                    ) ??
-                                    '—'
-                              : '-',
-                          libelle: 'Note',
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 28),
+                    ),
+                    const SizedBox(height: 22),
+                  ],
 
-                  // 2.5 Rafraîchissement en échec : les cartes ci-dessous
-                  // peuvent ne plus être à jour.
+                  // 2.5 Rafraîchissement en échec.
                   if (_profil != null && _erreurDemandes != null) ...[
                     _CarteEtat(
                       icone: Icons.sync_problem,
@@ -571,29 +827,21 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                     const SizedBox(height: 16),
                   ],
 
-                  // 3. Demandes en cours : section toujours présente une fois
-                  // le profil chargé, avec un état explicite quand elle est
-                  // vide (jamais un titre suivi de rien).
+                  // 3. Demandes en cours
                   if (_profil != null) ...[
-                    const Text(
-                      'Demandes en cours',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: CouleursTaama.indigo,
-                      ),
+                    const _TitreSection(
+                      icone: Icons.local_taxi_rounded,
+                      texte: 'Demandes en cours',
                     ),
                     const SizedBox(height: 12),
-                    // En erreur de rafraîchissement, la carte 2.5 ci-dessus
-                    // l'explique déjà : pas de « aucune demande » trompeur.
                     if (_demandesAssignees.isEmpty && _erreurDemandes == null)
-                      _CarteEtat(
-                        icone: Icons.hourglass_empty,
-                        titre: 'Aucune demande pour le moment',
-                        texte: disponible
-                            ? 'Tu es en ligne : les demandes proches apparaîtront ici.'
-                            : 'Tu es hors ligne : passe en ligne pour recevoir des demandes.',
-                      ),
+                      disponible
+                          ? const _AttenteRadar()
+                          : const _CarteEtat(
+                              icone: Icons.power_settings_new_rounded,
+                              titre: 'Tu es hors ligne',
+                              texte: 'Passe en ligne pour recevoir des demandes.',
+                            ),
                     ..._demandesAssignees.map((demande) {
                       final enAttente = demande['statut'] == 'chauffeur_trouve';
                       final demandeId = demande['id'] as int;
@@ -602,43 +850,44 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                             demande['cree_le']?.toString() ?? '',
                           ) ??
                           DateTime.now();
-                      return _CarteDemande(
-                        // Clé incluant enAttente (pas juste l'id) : force un
-                        // remontage complet du sous-arbre quand le statut
-                        // bascule 'chauffeur_trouve' -> 'en_route' (la Row
-                        // change de structure : 3 boutons Expanded vs.
-                        // Expanded+boutons fixes). Sans ça, Flutter tente de
-                        // réutiliser en place l'ancien arbre de rendu, ce qui
-                        // provoquait "BoxConstraints forces an infinite
-                        // width" en cascade (jusqu'à un écran blanc) au
-                        // moment précis de l'acceptation d'une course.
+                      // Clé incluant enAttente (pas juste l'id) : force un
+                      // remontage complet du sous-arbre quand le statut
+                      // bascule 'chauffeur_trouve' -> 'en_route' (la Row
+                      // change de structure : 3 boutons Expanded vs.
+                      // Expanded+boutons fixes). Sans ça, Flutter tente de
+                      // réutiliser en place l'ancien arbre de rendu, ce qui
+                      // provoquait "BoxConstraints forces an infinite
+                      // width" en cascade (jusqu'à un écran blanc) au
+                      // moment précis de l'acceptation d'une course.
+                      // La clé est sur l'enveloppe animée (le parent).
+                      return _ApparitionCarte(
                         key: ValueKey('${demandeId}_$enAttente'),
-                        demande: demande,
                         enAttente: enAttente,
-                        enTraitement: _enTraitement == demande['id'],
-                        onRefuser: () => _refuserDemande(demande['id'] as int),
-                        onAccepter: () =>
-                            _accepterDemande(demande['id'] as int),
-                        onChat: () => _ouvrirChat(
-                          roomName: 'demande_${demande['id']}',
-                          titre: 'Client - ${demande['destination']}',
+                        child: _CarteDemande(
+                          key: ValueKey('carte_${demandeId}_$enAttente'),
+                          demande: demande,
+                          enAttente: enAttente,
+                          enTraitement: _enTraitement == demande['id'],
+                          onRefuser: () => _refuserDemande(demande['id'] as int),
+                          onAccepter: () =>
+                              _accepterDemande(demande['id'] as int),
+                          onChat: () => _ouvrirChat(
+                            roomName: 'demande_${demande['id']}',
+                            titre: 'Client - ${demande['destination']}',
+                          ),
+                          onAnnuler: () =>
+                              _annulerCourse(demandeId, dateCreation),
                         ),
-                        onAnnuler: () =>
-                            _annulerCourse(demandeId, dateCreation),
                       );
                     }),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                   ],
 
                   // 3.5 Livraisons Courier en cours
                   if (_livraisonsCourier.isNotEmpty) ...[
-                    const Text(
-                      '📦 Livraisons en cours',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: CouleursTaama.indigo,
-                      ),
+                    const _TitreSection(
+                      icone: Icons.inventory_2_rounded,
+                      texte: 'Livraisons en cours',
                     ),
                     const SizedBox(height: 12),
                     ..._livraisonsCourier.map((livraison) {
@@ -657,7 +906,6 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
                         },
                       );
                     }),
-                    const SizedBox(height: 24),
                   ],
                 ],
               ),
@@ -666,22 +914,528 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur> {
   }
 }
 
-/// Carte de profil du conducteur : avatar avec initiales, nom, véhicule,
-/// switch de disponibilité et badge de note moyenne.
-class _CarteProfil extends StatelessWidget {
-  final Map<String, dynamic> profil;
-  final bool disponible;
-  final VoidCallback onToggle;
+// ─── Widgets ───
 
-  const _CarteProfil({
-    required this.profil,
+const List<BoxShadow> _ombreCarte = [
+  BoxShadow(color: CouleursTaama.ombreLegere, blurRadius: 12, offset: Offset(0, 4)),
+];
+
+const List<BoxShadow> _ombreFlottante = [
+  BoxShadow(color: CouleursTaama.ombre, blurRadius: 16, offset: Offset(0, 6)),
+];
+
+class _BoutonRondBlanc extends StatelessWidget {
+  const _BoutonRondBlanc({required this.icone, required this.info, required this.onTap});
+  final IconData icone;
+  final String info;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: const CircleBorder(),
+      elevation: 4,
+      shadowColor: Colors.black26,
+      child: IconButton(
+        tooltip: info,
+        onPressed: onTap,
+        icon: Icon(icone, color: CouleursTaama.indigo),
+        constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+      ),
+    );
+  }
+}
+
+/// Position du chauffeur sur la carte : pastille véhicule + halo qui pulse
+/// quand il est en ligne (fixe s'il est hors ligne ou animations réduites).
+class _MarqueurChauffeur extends StatefulWidget {
+  const _MarqueurChauffeur({required this.enLigne});
+  final bool enLigne;
+
+  @override
+  State<_MarqueurChauffeur> createState() => _MarqueurChauffeurState();
+}
+
+class _MarqueurChauffeurState extends State<_MarqueurChauffeur>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1800));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _mettreAJour();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MarqueurChauffeur ancien) {
+    super.didUpdateWidget(ancien);
+    _mettreAJour();
+  }
+
+  void _mettreAJour() {
+    final anime = widget.enLigne && !MediaQuery.disableAnimationsOf(context);
+    if (anime && !_c.isAnimating) {
+      _c.repeat();
+    } else if (!anime) {
+      _c
+        ..stop()
+        ..value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final couleur = widget.enLigne ? CouleursTaama.terreCuite : Colors.grey.shade600;
+    return Semantics(
+      label: 'Ma position',
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, child) {
+          final t = _c.value;
+          return Stack(
+            alignment: Alignment.center,
+            children: [
+              if (widget.enLigne)
+                Opacity(
+                  opacity: (1 - t) * 0.6,
+                  child: Container(
+                    width: 30 + 50 * t,
+                    height: 30 + 50 * t,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: couleur.withValues(alpha: 0.18),
+                      border: Border.all(color: couleur, width: 2),
+                    ),
+                  ),
+                ),
+              child!,
+            ],
+          );
+        },
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: couleur,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 3),
+            boxShadow: _ombreFlottante,
+          ),
+          child: const Icon(Icons.navigation_rounded, color: Colors.white, size: 18),
+        ),
+      ),
+    );
+  }
+}
+
+/// Grand bouton de disponibilité, l'élément principal de l'écran.
+/// Animations : couleur qui glisse d'un état à l'autre, texte qui change en
+/// fondu, léger enfoncement au toucher, et halo qui « respire » en ligne.
+class _BoutonDisponibilite extends StatefulWidget {
+  const _BoutonDisponibilite({
     required this.disponible,
-    required this.onToggle,
+    required this.enCours,
+    required this.onTap,
   });
 
-  /// « Toyota Corolla • AB1234 », sans jamais afficher « null » : chaque
-  /// segment vide ou absent est omis (ancien serveur sans `vehicule`,
-  /// véhicule non renseigné…). Vide → la ligne entière est masquée.
+  final bool disponible;
+  final bool enCours;
+  final VoidCallback onTap;
+
+  @override
+  State<_BoutonDisponibilite> createState() => _BoutonDisponibiliteState();
+}
+
+class _BoutonDisponibiliteState extends State<_BoutonDisponibilite>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _halo = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  );
+  bool _appuye = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _mettreAJour();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BoutonDisponibilite ancien) {
+    super.didUpdateWidget(ancien);
+    _mettreAJour();
+  }
+
+  void _mettreAJour() {
+    final anime = widget.disponible && !MediaQuery.disableAnimationsOf(context);
+    if (anime) {
+      if (!_halo.isAnimating) _halo.repeat(reverse: true);
+    } else {
+      _halo
+        ..stop()
+        ..value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _halo.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final disponible = widget.disponible;
+    final fond = disponible ? CouleursTaama.indigo : CouleursTaama.terreCuite;
+    final reduit = MediaQuery.disableAnimationsOf(context);
+    final duree = reduit ? Duration.zero : const Duration(milliseconds: 380);
+
+    final contenu = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: widget.enCours ? null : widget.onTap,
+        onHighlightChanged: (v) => setState(() => _appuye = v),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  shape: BoxShape.circle,
+                ),
+                child: AnimatedSwitcher(
+                  duration: duree,
+                  transitionBuilder: (enfant, animation) =>
+                      ScaleTransition(scale: animation, child: enfant),
+                  child: widget.enCours
+                      ? const Padding(
+                          key: ValueKey('chargement'),
+                          padding: EdgeInsets.all(11),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5, color: Colors.white),
+                        )
+                      : Icon(
+                          disponible
+                              ? Icons.wifi_tethering_rounded
+                              : Icons.power_settings_new_rounded,
+                          key: ValueKey('icone_$disponible'),
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: duree,
+                  transitionBuilder: (enfant, animation) => FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween(
+                        begin: const Offset(0, 0.25),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: enfant,
+                    ),
+                  ),
+                  child: Column(
+                    key: ValueKey('texte_$disponible'),
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        disponible ? 'Tu es en ligne' : 'Passer en ligne',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        disponible
+                            ? 'Appuie pour te mettre en pause'
+                            : 'Appuie pour recevoir des courses',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    return AnimatedBuilder(
+      animation: _halo,
+      child: contenu,
+      builder: (context, child) {
+        final t = Curves.easeInOut.transform(_halo.value);
+        return AnimatedScale(
+          scale: _appuye ? 0.97 : 1,
+          duration: const Duration(milliseconds: 120),
+          child: AnimatedContainer(
+            duration: duree,
+            curve: Curves.easeOutCubic,
+            // Hauteur MINIMALE, pas fixe : avec une police agrandie (réglage
+            // Android), le contenu fait grandir le bouton au lieu de déborder.
+            constraints: const BoxConstraints(minHeight: 68),
+            decoration: BoxDecoration(
+              color: fond,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: fond.withValues(alpha: 0.35 + 0.25 * t),
+                  blurRadius: 14 + 14 * t,
+                  spreadRadius: 2 * t,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// En ligne sans course : radar animé (ondes qui partent du centre).
+class _AttenteRadar extends StatefulWidget {
+  const _AttenteRadar();
+
+  @override
+  State<_AttenteRadar> createState() => _AttenteRadarState();
+}
+
+class _AttenteRadarState extends State<_AttenteRadar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2400),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _c
+        ..stop()
+        ..value = 0.5;
+    } else if (!_c.isAnimating) {
+      _c.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  Widget _onde(double t) {
+    return Opacity(
+      opacity: (1 - t) * 0.7,
+      child: Container(
+        width: 30 + 66 * t,
+        height: 30 + 66 * t,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: CouleursTaama.terreCuite, width: 2),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 20),
+      decoration: BoxDecoration(
+        color: CouleursTaama.blanc,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: _ombreCarte,
+      ),
+      child: Column(
+        children: [
+          SizedBox(
+            width: 100,
+            height: 100,
+            child: AnimatedBuilder(
+              animation: _c,
+              builder: (context, child) => Stack(
+                alignment: Alignment.center,
+                children: [
+                  _onde(_c.value),
+                  _onde((_c.value + 0.33) % 1),
+                  _onde((_c.value + 0.66) % 1),
+                  child!,
+                ],
+              ),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: const BoxDecoration(
+                  color: CouleursTaama.terreCuite,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.radar_rounded, color: Colors.white, size: 20),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'En attente de courses…',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 15,
+              color: CouleursTaama.indigo,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Les demandes proches apparaîtront ici.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: CouleursTaama.grisTexte),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Entrée d'une carte de demande : glisse et apparaît ; si elle attend une
+/// réponse (nouvelle demande), elle « bat » doucement pour attirer l'œil.
+class _ApparitionCarte extends StatefulWidget {
+  const _ApparitionCarte({super.key, required this.enAttente, required this.child});
+
+  final bool enAttente;
+  final Widget child;
+
+  @override
+  State<_ApparitionCarte> createState() => _ApparitionCarteState();
+}
+
+class _ApparitionCarteState extends State<_ApparitionCarte>
+    with TickerProviderStateMixin {
+  late final AnimationController _entree = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 450),
+  );
+  late final AnimationController _battement = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+  bool _initialise = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduit = MediaQuery.disableAnimationsOf(context);
+    if (!_initialise) {
+      _initialise = true;
+      if (reduit) {
+        _entree.value = 1;
+      } else {
+        _entree.forward();
+      }
+    }
+    if (widget.enAttente && !reduit) {
+      if (!_battement.isAnimating) _battement.repeat(reverse: true);
+    } else {
+      _battement
+        ..stop()
+        ..value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _entree.dispose();
+    _battement.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_entree, _battement]),
+      child: widget.child,
+      builder: (context, child) {
+        final e = Curves.easeOutCubic.transform(_entree.value);
+        final b = Curves.easeInOut.transform(_battement.value);
+        return Opacity(
+          opacity: e,
+          child: Transform.translate(
+            offset: Offset(0, (1 - e) * 24),
+            child: Transform.scale(scale: 1 + 0.015 * b, child: child),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Valeur de stat qui monte en compteur (entier ou décimal, ex. la note).
+/// Texte non numérique (« ... », « — ») : affiché tel quel.
+class _ValeurAnimee extends StatelessWidget {
+  const _ValeurAnimee({required this.valeur});
+  final String valeur;
+
+  static const TextStyle _style = TextStyle(fontWeight: FontWeight.w800, fontSize: 17);
+
+  @override
+  Widget build(BuildContext context) {
+    final entier = int.tryParse(valeur);
+    final decimal = entier == null ? double.tryParse(valeur) : null;
+    if (entier == null && decimal == null) return Text(valeur, style: _style);
+
+    final cible = (entier ?? decimal)!.toDouble();
+    final duree = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 700);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: cible),
+      duration: duree,
+      curve: Curves.easeOutCubic,
+      builder: (context, v, _) => Text(
+        entier != null ? v.round().toString() : v.toStringAsFixed(1),
+        style: _style,
+      ),
+    );
+  }
+}
+
+/// Véhicule, note et vérification du chauffeur (sous le gros bouton).
+class _BandeauProfil extends StatelessWidget {
+  const _BandeauProfil({required this.profil});
+  final Map<String, dynamic> profil;
+
+  /// « Toyota Corolla • AB1234 », sans jamais afficher « null ».
   String get _ligneVehicule => [profil['vehicule'], profil['plaque']]
       .map((v) => v?.toString().trim() ?? '')
       .where((v) => v.isNotEmpty && v != 'null')
@@ -717,7 +1471,7 @@ class _CarteProfil extends StatelessWidget {
         ),
       ),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
           color: couleur.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(8),
@@ -729,11 +1483,7 @@ class _CarteProfil extends StatelessWidget {
             const SizedBox(width: 4),
             Text(
               libelle,
-              style: TextStyle(
-                color: couleur,
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-              ),
+              style: TextStyle(color: couleur, fontWeight: FontWeight.bold, fontSize: 12),
             ),
           ],
         ),
@@ -743,120 +1493,85 @@ class _CarteProfil extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final note = (profil['note'] as num?)?.toStringAsFixed(1) ?? '—';
-
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: _ombreCarte,
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AvatarConducteur(
-            photoUrl: profil['photo_profil'] as String?,
-            nom: profil['nom']?.toString() ?? '',
-            radius: 26,
+          Row(
+            children: [
+              const Icon(Icons.directions_car_filled_rounded,
+                  color: CouleursTaama.indigo, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _ligneVehicule.isEmpty ? 'Véhicule non renseigné' : _ligneVehicule,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: _ligneVehicule.isEmpty ? Colors.grey.shade600 : null,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _badgeVerification(context),
+            ],
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  profil['nom']?.toString() ?? '',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+          // Le serveur ne propose aucune course à un compte non vérifié.
+          if (profil['verifie'] != true) ...[
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const EcranVerificationConducteur(),
                 ),
-                if (_ligneVehicule.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    _ligneVehicule,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                  ),
-                ],
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: CouleursTaama.or.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.star,
-                            color: CouleursTaama.or,
-                            size: 14,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            note,
-                            style: const TextStyle(
-                              color: CouleursTaama.or,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    _badgeVerification(context),
-                  ],
-                ),
-                // Le serveur ne propose aucune course à un compte non vérifié.
-                if (profil['verifie'] != true) ...[
-                  const SizedBox(height: 6),
-                  InkWell(
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const EcranVerificationConducteur(),
-                      ),
-                    ),
-                    child: const Text(
-                      'Vous recevrez des courses une fois votre compte vérifié.',
-                      style: TextStyle(fontSize: 12, color: CouleursTaama.grisTexte),
-                    ),
-                  ),
-                ],
-              ],
+              ),
+              child: const Text(
+                'Vous recevrez des courses une fois votre compte vérifié.',
+                style: TextStyle(fontSize: 12, color: CouleursTaama.grisTexte),
+              ),
             ),
-          ),
-          Switch(
-            value: disponible,
-            activeThumbColor: Colors.amber,
-            inactiveThumbColor: Colors.grey.shade400,
-            inactiveTrackColor: Colors.grey.shade300,
-            onChanged: (_) => onToggle(),
-          ),
+          ],
         ],
       ),
     );
   }
 }
 
-/// Une des 3 cartes de statistiques rapides (courses du jour, solde, note).
-/// Carte d'état de l'accueil (erreur, compte sans profil, aucune demande) :
-/// présentationnelle, l'action éventuelle arrive par callback. Sans action,
-/// aucun bouton n'est affiché.
+/// Titre de section (icône + texte).
+class _TitreSection extends StatelessWidget {
+  const _TitreSection({required this.icone, required this.texte});
+  final IconData icone;
+  final String texte;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icone, size: 18, color: CouleursTaama.indigo),
+        const SizedBox(width: 6),
+        Text(
+          texte,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            color: CouleursTaama.indigo,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Carte d'état (erreur, compte sans profil, aucune demande).
 class _CarteEtat extends StatelessWidget {
   final IconData icone;
   final String titre;
@@ -880,6 +1595,7 @@ class _CarteEtat extends StatelessWidget {
       decoration: BoxDecoration(
         color: CouleursTaama.blanc,
         borderRadius: BorderRadius.circular(16),
+        boxShadow: _ombreCarte,
       ),
       child: Column(
         children: [
@@ -904,9 +1620,7 @@ class _CarteEtat extends StatelessWidget {
             const SizedBox(height: 14),
             FilledButton(
               onPressed: onAction,
-              style: FilledButton.styleFrom(
-                backgroundColor: CouleursTaama.terreCuite,
-              ),
+              style: FilledButton.styleFrom(backgroundColor: CouleursTaama.terreCuite),
               child: Text(libelleAction!),
             ),
           ],
@@ -916,6 +1630,7 @@ class _CarteEtat extends StatelessWidget {
   }
 }
 
+/// Une des cartes de statistiques rapides (courses du jour, solde, note).
 class _CarteStat extends StatelessWidget {
   final IconData icone;
   final Color couleur;
@@ -934,28 +1649,30 @@ class _CarteStat extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
       decoration: BoxDecoration(
-        color: couleur.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(14),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: _ombreCarte,
       ),
       child: Column(
         children: [
-          Icon(icone, color: couleur, size: 22),
-          const SizedBox(height: 6),
-          Text(
-            valeur,
-            style: TextStyle(
-              color: couleur,
-              fontWeight: FontWeight.bold,
-              fontSize: 15,
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: couleur.withValues(alpha: 0.14),
+              shape: BoxShape.circle,
             ),
+            child: Icon(icone, color: couleur, size: 20),
           ),
+          const SizedBox(height: 8),
+          _ValeurAnimee(valeur: valeur),
           const SizedBox(height: 2),
           Text(
             libelle,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: couleur,
-              fontSize: 10,
+              color: Colors.grey.shade600,
+              fontSize: 10.5,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -965,10 +1682,10 @@ class _CarteStat extends StatelessWidget {
   }
 }
 
-/// Une carte de demande instantanée assignée au conducteur.
 /// Bouton icône dans une Row : largeur minimale finie (voir _CarteDemande).
 const Size _tailleBoutonIcone = Size(48, 44);
 
+/// Une carte de demande instantanée assignée au conducteur.
 class _CarteDemande extends StatelessWidget {
   final dynamic demande;
   final bool enAttente;
@@ -996,47 +1713,91 @@ class _CarteDemande extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: const Border(
-          left: BorderSide(color: CouleursTaama.terreCuite, width: 4),
-        ),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6),
-        ],
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: _ombreCarte,
+        border: enAttente
+            ? Border.all(color: CouleursTaama.terreCuite, width: 2)
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            demande['destination']?.toString() ?? '',
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${demande['type_transport']}',
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '${demande['prix_estime']} FCFA',
-            style: const TextStyle(
-              color: CouleursTaama.terreCuite,
-              fontWeight: FontWeight.bold,
-              fontSize: 20,
+          if (enAttente) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: CouleursTaama.terreCuite,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                'Nouvelle demande',
+                style: TextStyle(
+                    color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800),
+              ),
             ),
+            const SizedBox(height: 10),
+          ],
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: CouleursTaama.terreCuite.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.location_on_rounded,
+                    color: CouleursTaama.terreCuite, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      demande['destination']?.toString() ?? '',
+                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${demande['type_transport']}',
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                '${demande['prix_estime']} F',
+                style: const TextStyle(
+                  color: CouleursTaama.terreCuite,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 19,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           if (enAttente)
             Row(
               children: [
+                // Marges réduites (le thème met 24 px de chaque côté) et
+                // texte sur une ligne : sur un écran de 360 px, « Accepter »
+                // se coupait au milieu du mot.
                 Expanded(
                   child: OutlinedButton(
                     onPressed: enTraitement ? null : onRefuser,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.red,
                       side: const BorderSide(color: Colors.red),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
                     ),
-                    child: const Text('Refuser'),
+                    child: const Text(
+                      'Refuser',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1046,6 +1807,7 @@ class _CarteDemande extends StatelessWidget {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
                     ),
                     child: enTraitement
                         ? const SizedBox(
@@ -1056,19 +1818,26 @@ class _CarteDemande extends StatelessWidget {
                               color: Colors.white,
                             ),
                           )
-                        : const Text('Accepter'),
+                        : const Text(
+                            'Accepter',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                   ),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: onChat,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: CouleursTaama.indigo,
-                      side: const BorderSide(color: CouleursTaama.indigo),
-                    ),
-                    child: const Icon(Icons.chat_bubble_outline, size: 18),
+                // Largeur FINIE : le thème impose une largeur minimale
+                // infinie, impossible hors Expanded. 52 px de haut, comme
+                // Refuser et Accepter.
+                OutlinedButton(
+                  onPressed: onChat,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(52, 52),
+                    padding: EdgeInsets.zero,
+                    foregroundColor: CouleursTaama.indigo,
+                    side: const BorderSide(color: CouleursTaama.indigo),
                   ),
+                  child: const Icon(Icons.chat_bubble_outline, size: 18),
                 ),
               ],
             )
@@ -1121,63 +1890,64 @@ class _CarteDemande extends StatelessWidget {
           if (demande['statut'] == 'en_route' ||
               demande['statut'] == 'client_a_bord') ...[
             const SizedBox(height: 8),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) {
-                    // depart_lat/depart_lng : vraie position de prise en
-                    // charge du client, déjà dans la réponse API. Sans ça,
-                    // EcranNavigation géocode le texte `destination` (où le
-                    // client VEUT ALLER) et affiche ce point comme position
-                    // du client — bug corrigé ici.
-                    final departLat = (demande['depart_lat'] as num?)
-                        ?.toDouble();
-                    final departLng = (demande['depart_lng'] as num?)
-                        ?.toDouble();
-                    final destinationLat = (demande['destination_lat'] as num?)
-                        ?.toDouble();
-                    final destinationLng = (demande['destination_lng'] as num?)
-                        ?.toDouble();
-                    // Si le client est déjà à bord (écran de navigation
-                    // rouvert après l'avoir quitté), on route directement
-                    // vers la destination — pas de 2e jambe à redéclencher,
-                    // le passage en 'client_a_bord' a déjà eu lieu côté
-                    // backend.
-                    final clientDejaABord =
-                        demande['statut'] == 'client_a_bord';
-                    final positionClient = clientDejaABord
-                        ? (destinationLat != null && destinationLng != null
-                              ? LatLng(destinationLat, destinationLng)
-                              : null)
-                        : (departLat != null && departLng != null
-                              ? LatLng(departLat, departLng)
-                              : null);
-                    return EcranNavigation(
-                      demandeId: demande['id'] is int
-                          ? demande['id'] as int
-                          : int.tryParse(demande['id'].toString()) ?? 0,
-                      destination: demande['destination']?.toString() ?? '',
-                      positionClient: positionClient,
-                      destinationLat: clientDejaABord ? null : destinationLat,
-                      destinationLng: clientDejaABord ? null : destinationLng,
-                      telephoneClient: demande['client_telephone']?.toString(),
-                      arrets: extraireArrets(demande['arrets']),
-                    );
-                  },
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) {
+                      // depart_lat/depart_lng : vraie position de prise en
+                      // charge du client, déjà dans la réponse API. Sans ça,
+                      // EcranNavigation géocode le texte `destination` (où le
+                      // client VEUT ALLER) et affiche ce point comme position
+                      // du client — bug corrigé ici.
+                      final departLat = (demande['depart_lat'] as num?)
+                          ?.toDouble();
+                      final departLng = (demande['depart_lng'] as num?)
+                          ?.toDouble();
+                      final destinationLat = (demande['destination_lat'] as num?)
+                          ?.toDouble();
+                      final destinationLng = (demande['destination_lng'] as num?)
+                          ?.toDouble();
+                      // Si le client est déjà à bord (écran de navigation
+                      // rouvert après l'avoir quitté), on route directement
+                      // vers la destination — pas de 2e jambe à redéclencher,
+                      // le passage en 'client_a_bord' a déjà eu lieu côté
+                      // backend.
+                      final clientDejaABord =
+                          demande['statut'] == 'client_a_bord';
+                      final positionClient = clientDejaABord
+                          ? (destinationLat != null && destinationLng != null
+                                ? LatLng(destinationLat, destinationLng)
+                                : null)
+                          : (departLat != null && departLng != null
+                                ? LatLng(departLat, departLng)
+                                : null);
+                      return EcranNavigation(
+                        demandeId: demande['id'] is int
+                            ? demande['id'] as int
+                            : int.tryParse(demande['id'].toString()) ?? 0,
+                        destination: demande['destination']?.toString() ?? '',
+                        positionClient: positionClient,
+                        destinationLat: clientDejaABord ? null : destinationLat,
+                        destinationLng: clientDejaABord ? null : destinationLng,
+                        telephoneClient: demande['client_telephone']?.toString(),
+                        arrets: extraireArrets(demande['arrets']),
+                        clientDejaABord: clientDejaABord,
+                      );
+                    },
+                  ),
                 ),
-              ),
-              icon: const Icon(Icons.navigation, size: 18),
-              label: const Text('Naviguer'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: CouleursTaama.indigo,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+                icon: const Icon(Icons.navigation_rounded, size: 18),
+                label: const Text('Naviguer'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: CouleursTaama.indigo,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
             ),
@@ -1195,73 +1965,72 @@ class _CarteLivraisonCourier extends StatelessWidget {
 
   const _CarteLivraisonCourier({required this.livraison, required this.onTap});
 
-  static const _emojisCategorie = {
-    'colis': '📦',
-    'repas': '🍽️',
-    'document': '📄',
+  static const _iconesCategorie = {
+    'colis': Icons.inventory_2_rounded,
+    'repas': Icons.restaurant_rounded,
+    'document': Icons.description_rounded,
   };
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: const Border(
-            left: BorderSide(color: Colors.orange, width: 4),
+    final icone = _iconesCategorie[livraison['categorie']] ?? Icons.inventory_2_rounded;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        elevation: 2,
+        shadowColor: Colors.black12,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: CouleursTaama.terreCuite.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icone, color: CouleursTaama.terreCuite, size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        livraison['description_colis']?.toString() ?? '',
+                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${livraison['adresse_collecte']} → ${livraison['adresse_livraison']}',
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${livraison['prix'] ?? 0} FCFA',
+                        style: const TextStyle(
+                          color: CouleursTaama.terreCuite,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: Colors.grey),
+              ],
+            ),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 6,
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Text(
-              _emojisCategorie[livraison['categorie']] ?? '📦',
-              style: const TextStyle(fontSize: 28),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    livraison['description_colis']?.toString() ?? '',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${livraison['adresse_collecte']} → ${livraison['adresse_livraison']}',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${livraison['prix'] ?? 0} FCFA',
-                    style: const TextStyle(
-                      color: Colors.orange,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right, color: Colors.grey),
-          ],
         ),
       ),
     );

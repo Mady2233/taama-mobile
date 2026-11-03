@@ -1,3 +1,26 @@
+// DESIGN_V4
+//
+// Navigation du conducteur.
+//
+// Inchangé : calcul OSRM, voix (TTS), flux GPS en service de premier plan,
+// envoi de la position au client (LocationService), passage « client à
+// bord » (marquerClientABord), fin de course (terminerCourse).
+//
+// Nouveau :
+// - carte fixée plein nord (plus de texte à l'envers), flèche du chauffeur
+//   qui tourne selon son cap ;
+// - bandeau de la prochaine manœuvre à l'écran (icône + distance), en plus
+//   de la voix ;
+// - suivi automatique de la carte, suspendu quand le chauffeur la déplace,
+//   avec bouton « Recentrer » ;
+// - boutons explicites « Client à bord » et « Terminer la course » (avec
+//   confirmation), en plus de la détection automatique à 100 m ;
+// - « Quitter » ne prétend plus terminer la course ;
+// - « Ouvrir dans Google Maps » ;
+// - si la position du client est introuvable : message clair, jamais de
+//   repli sur le centre de Bamako (qui guidait au mauvais endroit) ;
+// - si OSRM ne répond pas : message + Google Maps, au lieu d'une carte vide.
+
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
@@ -8,6 +31,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../config/app_config.dart';
 import '../theme/couleurs_taama.dart';
 import '../services/location_service.dart';
 import '../services/api_service.dart';
@@ -31,9 +55,18 @@ List<Map<String, dynamic>> extraireArrets(dynamic arretsJson) {
 class _EtapeNavigation {
   final LatLng position;
   final String instruction;
+  final IconData icone;
 
-  const _EtapeNavigation({required this.position, required this.instruction});
+  const _EtapeNavigation({
+    required this.position,
+    required this.instruction,
+    required this.icone,
+  });
 }
+
+/// Hauteur réservée en bas pour le panneau d'actions (attribution et badges
+/// se placent au-dessus).
+const double _hauteurPanneau = 186;
 
 /// Écran de navigation GPS pour le conducteur.
 /// Affiche l'itinéraire entre sa position actuelle et le client,
@@ -57,6 +90,13 @@ class EcranNavigation extends StatefulWidget {
   // qui n'a rien à voir avec ses arrêts).
   final List<Map<String, dynamic>> arrets;
 
+  /// Navigation rouverte alors que le client est déjà à bord (statut
+  /// 'client_a_bord') : [positionClient] est alors SA DESTINATION, et l'écran
+  /// démarre directement en 2e jambe (libellés « Course », drapeau,
+  /// « Terminer la course »). Les arrêts ne sont pas repris dans le calcul
+  /// d'itinéraire : on ne sait pas lesquels sont déjà passés.
+  final bool clientDejaABord;
+
   const EcranNavigation({
     super.key,
     required this.demandeId,
@@ -66,6 +106,7 @@ class EcranNavigation extends StatefulWidget {
     this.destinationLat,
     this.destinationLng,
     this.arrets = const [],
+    this.clientDejaABord = false,
   });
 
   @override
@@ -98,6 +139,18 @@ class _EcranNavigationState extends State<EcranNavigation> {
   bool _jambeVersDestination = false;
   StreamSubscription<Position>? _positionStream;
 
+  // ─── Affichage (nouveau) ───
+  bool _cartePrete = false;
+  bool _suivre = true; // la carte suit le chauffeur tant qu'il ne la déplace pas
+  bool _erreurItineraire = false;
+  bool _positionClientIntrouvable = false;
+  // Sans position du chauffeur, aucun itinéraire : jamais une carte vide
+  // sans explication (voir _bandeauProbleme).
+  LocationPermission? _permissionRefusee; // denied ou deniedForever
+  bool _gpsIndisponible = false;
+  double _capAffiche = 0; // degrés, cumulés (rotation par le plus court chemin)
+  bool _actionEnCours = false;
+
   LatLng? get _positionDestinationReelle {
     if (widget.destinationLat == null || widget.destinationLng == null) return null;
     return LatLng(widget.destinationLat!, widget.destinationLng!);
@@ -106,6 +159,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
   @override
   void initState() {
     super.initState();
+    _jambeVersDestination = widget.clientDejaABord;
     _initialiserTts();
     _initialiser();
   }
@@ -121,14 +175,21 @@ class _EcranNavigationState extends State<EcranNavigation> {
     _positionStream?.cancel();
     _locationService.arreter();
     _tts.stop();
+    _mapController.dispose();
     super.dispose();
   }
 
   Future<void> _initialiser() async {
     // 1. Vérifie les permissions GPS
     final permission = await _verifierPermissions();
-    if (!permission) {
-      setState(() => _chargement = false);
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        setState(() {
+          _permissionRefusee = permission;
+          _chargement = false;
+        });
+      }
       return;
     }
 
@@ -144,34 +205,89 @@ class _EcranNavigationState extends State<EcranNavigation> {
     } catch (e) {
       debugPrint('[Navigation] Erreur position conducteur : $e');
     }
+    _gpsIndisponible = _positionConducteur == null;
 
-    // 3. Utilise la position client fournie ou celle du backend
-    _positionClient = widget.positionClient ??
-        await _recupererPositionClient();
+    // 3. Utilise la position client fournie ou celle géocodée
+    _positionClient = widget.positionClient ?? await _recupererPositionClient();
+    _positionClientIntrouvable = _positionClient == null;
 
     // 4. Calcule l'itinéraire via OSRM
     if (_positionConducteur != null && _positionClient != null) {
       await _calculerItineraire();
     }
 
+    if (!mounted) return;
     setState(() => _chargement = false);
 
     // 5. Centre la carte sur les deux points
     _centrerCarte();
   }
 
-  Future<bool> _verifierPermissions() async {
+  Future<LocationPermission> _verifierPermissions() async {
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    return permission != LocationPermission.denied &&
-        permission != LocationPermission.deniedForever;
+    return permission;
   }
 
+  /// Bouton « Réessayer » des bandeaux GPS : relance toute l'initialisation.
+  Future<void> _reessayerInitialisation() async {
+    if (_chargement) return;
+    setState(() {
+      _chargement = true;
+      _permissionRefusee = null;
+      _gpsIndisponible = false;
+      _positionClientIntrouvable = false;
+      _erreurItineraire = false;
+    });
+    await _initialiser();
+  }
+
+  /// Bandeau du problème le plus bloquant, ou null s'il n'y en a pas.
+  Widget? _bandeauProbleme() {
+    if (_permissionRefusee == LocationPermission.deniedForever) {
+      return _BandeauAlerte(
+        texte: 'Localisation refusée. Autorise-la dans les réglages pour être guidé.',
+        libelleAction: 'Réglages',
+        onAction: () async {
+          await Geolocator.openAppSettings();
+          if (mounted) _reessayerInitialisation();
+        },
+      );
+    }
+    if (_permissionRefusee == LocationPermission.denied) {
+      return _BandeauAlerte(
+        texte: 'Autorise la localisation pour être guidé jusqu’au client.',
+        libelleAction: 'Réessayer',
+        onAction: _reessayerInitialisation,
+      );
+    }
+    if (_gpsIndisponible) {
+      return _BandeauAlerte(
+        texte: 'Position GPS indisponible. Active la localisation et réessaie.',
+        libelleAction: 'Réessayer',
+        onAction: _reessayerInitialisation,
+      );
+    }
+    if (_positionClientIntrouvable) {
+      return const _BandeauAlerte(
+        texte: 'Position du client introuvable. Appelle-le pour le localiser.',
+      );
+    }
+    if (_erreurItineraire) {
+      return const _BandeauAlerte(
+        texte: "Itinéraire indisponible pour l'instant. Utilise Google Maps.",
+      );
+    }
+    return null;
+  }
+
+  /// Géocode la destination via Nominatim. `null` si introuvable : on ne
+  /// renvoie JAMAIS de position par défaut (l'ancien repli sur le centre de
+  /// Bamako guidait le chauffeur au mauvais endroit).
   Future<LatLng?> _recupererPositionClient() async {
     try {
-      // Géocode la destination via Nominatim (OpenStreetMap - gratuit)
       final destination = Uri.encodeComponent(
         '${widget.destination}, Bamako, Mali'
       );
@@ -181,7 +297,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
       );
 
       final reponse = await http.get(url, headers: {
-        'User-Agent': 'TaamaApp/1.0',
+        'User-Agent': AppConfig.userAgentHttp,
       }).timeout(const Duration(seconds: 10));
 
       if (reponse.statusCode == 200) {
@@ -195,9 +311,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
     } catch (e) {
       debugPrint('[Navigation] Erreur géocodage : $e');
     }
-
-    // Fallback : centre de Bamako
-    return const LatLng(12.6392, -8.0029);
+    return null;
   }
 
   /// Ne recalcule l'itinéraire que si le conducteur s'est écarté de plus de
@@ -205,13 +319,12 @@ class _EcranNavigationState extends State<EcranNavigation> {
   bool _estHorsItineraire() {
     if (_itineraire.isEmpty || _positionConducteur == null) return false;
     const Distance distance = Distance();
-    // Trouve le point le plus proche sur l'itinéraire
     double distanceMin = double.infinity;
     for (final point in _itineraire) {
       final d = distance(_positionConducteur!, point);
       if (d < distanceMin) distanceMin = d;
     }
-    return distanceMin > 50; // Recalcule si > 50 mètres de l'itinéraire
+    return distanceMin > 50;
   }
 
   String _texteInstruction(String type, String modifier) {
@@ -238,19 +351,38 @@ class _EcranNavigationState extends State<EcranNavigation> {
     }
   }
 
+  IconData _iconeManoeuvre(String type, String modifier) {
+    if (type == 'roundabout' || type == 'rotary') return Icons.roundabout_right_rounded;
+    switch (modifier) {
+      case 'left':
+        return Icons.turn_left_rounded;
+      case 'right':
+        return Icons.turn_right_rounded;
+      case 'slight left':
+        return Icons.turn_slight_left_rounded;
+      case 'slight right':
+        return Icons.turn_slight_right_rounded;
+      case 'sharp left':
+        return Icons.turn_sharp_left_rounded;
+      case 'sharp right':
+        return Icons.turn_sharp_right_rounded;
+      case 'uturn':
+        return Icons.u_turn_left_rounded;
+      default:
+        return Icons.straight_rounded;
+    }
+  }
+
   Future<void> _calculerItineraire() async {
     if (_positionConducteur == null || _positionClient == null) return;
 
     try {
-      // Arrêts intermédiaires uniquement sur la 2e jambe (client à bord) —
-      // avant ça, ils n'ont pas encore de sens pour l'itinéraire du
-      // conducteur (qui va simplement chercher le client).
-      final pointsVia = _jambeVersDestination ? widget.arrets : const [];
+      // Arrêts intermédiaires uniquement sur la 2e jambe (client à bord), et
+      // pas sur une navigation rouverte : certains sont peut-être déjà passés.
+      final pointsVia = (_jambeVersDestination && !widget.clientDejaABord)
+          ? widget.arrets
+          : const [];
 
-      // OSRM : API de routage open source, gratuite et sans clé API.
-      // steps=true pour récupérer les instructions de navigation (virages,
-      // etc.) — fonctionne nativement avec plus de 2 points (legs multiples,
-      // déjà gérés par le expand() plus bas, qui aplati tous les legs).
       final coords = [
         '${_positionConducteur!.longitude},${_positionConducteur!.latitude}',
         for (final a in pointsVia) '${a['longitude']},${a['latitude']}',
@@ -283,7 +415,6 @@ class _EcranNavigationState extends State<EcranNavigation> {
           final distanceMetres = (route['distance'] as num).toDouble();
           final dureeSec = (route['duration'] as num).toDouble();
 
-          // Extrait les instructions de virage de chaque étape OSRM
           final etapesBrutes = (route['legs'] as List)
               .expand((leg) => (leg['steps'] as List))
               .toList();
@@ -297,9 +428,11 @@ class _EcranNavigationState extends State<EcranNavigation> {
             nouvellesEtapes.add(_EtapeNavigation(
               position: LatLng((loc[1] as num).toDouble(), (loc[0] as num).toDouble()),
               instruction: _texteInstruction(type, modifier),
+              icone: _iconeManoeuvre(type, modifier),
             ));
           }
 
+          if (!mounted) return;
           setState(() {
             _itineraire = points;
             _distanceKm = distanceMetres / 1000;
@@ -307,11 +440,15 @@ class _EcranNavigationState extends State<EcranNavigation> {
             _etapes = nouvellesEtapes;
             _etapeIndex = 0;
             _etapeAnnoncee = false;
+            _erreurItineraire = false;
           });
+          return;
         }
       }
+      if (mounted) setState(() => _erreurItineraire = true);
     } catch (e) {
       debugPrint('[Navigation] Erreur calcul itinéraire OSRM : $e');
+      if (mounted) setState(() => _erreurItineraire = true);
     }
   }
 
@@ -329,8 +466,12 @@ class _EcranNavigationState extends State<EcranNavigation> {
       final metres = ((d / 50).round() * 50).clamp(50, 250);
       await _tts.speak('Dans $metres mètres, ${etape.instruction}');
     } else if (d <= 25) {
-      _etapeIndex++;
-      _etapeAnnoncee = false;
+      if (mounted) {
+        setState(() {
+          _etapeIndex++;
+          _etapeAnnoncee = false;
+        });
+      }
     }
   }
 
@@ -383,10 +524,58 @@ class _EcranNavigationState extends State<EcranNavigation> {
       _etapes = [];
       _etapeIndex = 0;
       _etapeAnnoncee = false;
+      _suivre = true;
     });
 
     await _calculerItineraire();
     _centrerCarte();
+  }
+
+  /// Bouton « Client à bord » : même effet que la détection à 100 m, pour
+  /// quand le GPS dérive ou que le client attend un peu plus loin.
+  Future<void> _clientABordManuel() async {
+    if (_jambeVersDestination || _actionEnCours) return;
+    final ok = await _confirmer(
+      titre: 'Le client est à bord ?',
+      texte: 'Le guidage passera vers sa destination : ${widget.destination}.',
+      action: 'Oui, démarrer le trajet',
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _actionEnCours = true);
+    _arriveeDetectee = true;
+    try {
+      await _demarrerJambeVersDestination();
+    } finally {
+      if (mounted) setState(() => _actionEnCours = false);
+    }
+  }
+
+  Future<bool?> _confirmer({
+    required String titre,
+    required String texte,
+    required String action,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(titre),
+        content: Text(texte),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: CouleursTaama.terreCuite,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
   }
 
   void _proposerFinDeCourse() {
@@ -394,8 +583,8 @@ class _EcranNavigationState extends State<EcranNavigation> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Vous êtes arrivé !'),
-        content: const Text('Souhaitez-vous terminer la course maintenant ?'),
+        title: const Text('Terminer la course ?'),
+        content: const Text('Le client est-il bien arrivé à destination ?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
@@ -433,6 +622,14 @@ class _EcranNavigationState extends State<EcranNavigation> {
     }
   }
 
+  /// Quitte l'écran SANS terminer la course (elle reste en cours ; on peut
+  /// revenir via « Naviguer »).
+  void _quitter() {
+    _locationService.arreter();
+    _positionStream?.cancel();
+    Navigator.pop(context);
+  }
+
   Future<void> _appelerClient() async {
     final numero = widget.telephoneClient;
     if (numero == null || numero.isEmpty) return;
@@ -443,26 +640,46 @@ class _EcranNavigationState extends State<EcranNavigation> {
     }
   }
 
+  /// Ouvre le point suivi dans Google Maps (ou l'app de cartes du téléphone).
+  Future<void> _ouvrirGoogleMaps() async {
+    final cible = _positionClient;
+    if (cible == null) return;
+    final uri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1'
+      '&destination=${cible.latitude},${cible.longitude}'
+      '&travelmode=driving',
+    );
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      debugPrint('[Navigation] Erreur ouverture Google Maps : $e');
+    }
+  }
+
   void _centrerCarte() {
     if (_positionConducteur == null && _positionClient == null) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !_cartePrete) return;
 
       if (_positionConducteur != null && _positionClient != null) {
-        // Calcule le centre entre les deux points
-        final lat = (_positionConducteur!.latitude +
-                     _positionClient!.latitude) / 2;
-        final lng = (_positionConducteur!.longitude +
-                     _positionClient!.longitude) / 2;
-        _mapController.move(LatLng(lat, lng), 13.0);
-      } else {
-        _mapController.move(
-          _positionConducteur ?? _positionClient!,
-          14.0,
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints([_positionConducteur!, _positionClient!]),
+            padding: EdgeInsets.fromLTRB(48, 200, 48, _hauteurPanneau + 40),
+            maxZoom: 16,
+          ),
         );
+      } else {
+        _mapController.move(_positionConducteur ?? _positionClient!, 14.0);
       }
     });
+  }
+
+  void _recentrer() {
+    setState(() => _suivre = true);
+    final p = _positionConducteur;
+    if (p != null && _cartePrete) _mapController.move(p, 16.0);
   }
 
   /// Flux GPS continu (pas un Timer.periodic) protégé par un service en
@@ -495,7 +712,10 @@ class _EcranNavigationState extends State<EcranNavigation> {
   }
 
   void _demarrerNavigation() {
-    setState(() => _navigationDemarree = true);
+    setState(() {
+      _navigationDemarree = true;
+      _suivre = true;
+    });
 
     // Connexion WebSocket seule (pas de boucle GPS interne à LocationService)
     // : cet écran fournit sa propre position ci-dessous via envoyerPosition().
@@ -512,13 +732,18 @@ class _EcranNavigationState extends State<EcranNavigation> {
       setState(() {
         _positionConducteur = nouvellePosition;
         _vitesseKmh = vitesseKmh;
+        // Le cap n'a de sens qu'en mouvement (à l'arrêt, le GPS renvoie
+        // souvent 0) : on garde la dernière direction connue.
+        if (position.speed > 1.5 && position.heading >= 0) {
+          final delta = ((position.heading - _capAffiche + 540) % 360) - 180;
+          _capAffiche += delta;
+        }
       });
 
       // Réutilise cette même position pour le client — pas de 2e requête
       // GPS séparée pour ça.
       _locationService.envoyerPosition(position.latitude, position.longitude);
 
-      // Ne recalcule l'itinéraire que si on s'est écarté de la route
       if (_estHorsItineraire()) {
         await _calculerItineraire();
       }
@@ -526,41 +751,74 @@ class _EcranNavigationState extends State<EcranNavigation> {
       await _verifierInstructionVocale();
       await _verifierArrivee();
 
-      // Centre la carte sur la position du conducteur
-      _mapController.move(nouvellePosition, 15.0);
+      // Suit le chauffeur, sauf s'il a déplacé la carte à la main.
+      if (_suivre && _cartePrete && mounted) {
+        _mapController.move(nouvellePosition, 16.0);
+      }
     }, onError: (e) {
       debugPrint('[Navigation] Erreur flux position : $e');
     });
   }
 
+  // ─── Construction ───
+
+  String get _heureArrivee {
+    final duree = _dureeMinutes;
+    if (duree == null) return '—';
+    final h = DateTime.now().add(Duration(minutes: duree));
+    return '${h.hour.toString().padLeft(2, '0')}:${h.minute.toString().padLeft(2, '0')}';
+  }
+
+  /// Distance jusqu'à la prochaine manœuvre, arrondie pour l'affichage.
+  String? get _distanceManoeuvre {
+    if (_positionConducteur == null || _etapeIndex >= _etapes.length) return null;
+    final d = const Distance()(_positionConducteur!, _etapes[_etapeIndex].position);
+    if (d >= 1000) return '${(d / 1000).toStringAsFixed(1)} km';
+    final arrondi = d < 100 ? (d / 10).round() * 10 : (d / 50).round() * 50;
+    return '$arrondi m';
+  }
+
   @override
   Widget build(BuildContext context) {
     final nuit = MediaQuery.platformBrightnessOf(context) == Brightness.dark;
-    // Au-dessus du panneau bas (bouton de 54 px + 2 × 16 de marge), côté
-    // droit : le badge de vitesse occupe la gauche.
+    final basSecurite = MediaQuery.paddingOf(context).bottom;
     final margeAttribution = EdgeInsets.only(
       right: 12,
-      bottom: 94 + MediaQuery.paddingOf(context).bottom,
+      bottom: _hauteurPanneau + 8 + basSecurite,
     );
-    // Nuit : palette de la maquette « Conducteur » ; jour : inchangé.
     final texte = nuit ? CouleursTaama.blanc : CouleursTaama.indigo;
-    final texteSecondaire = nuit ? CouleursTaama.nuitTexteSecondaire : Colors.grey;
-    final ombre = nuit ? Colors.black26 : Colors.black12;
+    final panneau = nuit ? CouleursTaama.nuitPanneau : Colors.white;
+    final reduit = MediaQuery.disableAnimationsOf(context);
+    final duree = reduit ? Duration.zero : const Duration(milliseconds: 300);
+    final etapeCourante =
+        _etapeIndex < _etapes.length ? _etapes[_etapeIndex] : null;
+    final probleme = _chargement ? null : _bandeauProbleme();
+
     return Scaffold(
       body: Stack(
         children: [
-          // Carte plein écran
+          // ─── Carte plein écran ───
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: _positionConducteur ??
-                  const LatLng(12.6392, -8.0029),
+              initialCenter: _positionConducteur ?? const LatLng(12.6392, -8.0029),
               initialZoom: 13.0,
+              // Plein nord : la rotation retournait les noms de rue.
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              ),
+              onMapReady: () {
+                _cartePrete = true;
+                _centrerCarte();
+              },
+              onPositionChanged: (camera, aGeste) {
+                if (aGeste && _suivre && _navigationDemarree) {
+                  setState(() => _suivre = false);
+                }
+              },
             ),
             children: [
               FondCarteTaama(nuit: nuit),
-              // Densité réduite en conduite ; même position que
-              // l'attribution ci-dessous (au-dessus du panneau bas).
               CoucheCarteTaama(
                 nuit: nuit,
                 densite: DensiteEtiquettes.navigation,
@@ -571,82 +829,41 @@ class _EcranNavigationState extends State<EcranNavigation> {
                   ),
                 ],
               ),
-
-              // Itinéraire tracé en bleu
               if (_itineraire.isNotEmpty)
                 PolylineLayer(
                   polylines: [
+                    // Liseré sous le tracé : plus lisible sur le fond de carte.
+                    Polyline(
+                      points: _itineraire,
+                      color: nuit ? Colors.black54 : Colors.white,
+                      strokeWidth: 9.0,
+                    ),
                     Polyline(
                       points: _itineraire,
                       color: nuit ? CouleursTaama.itineraireNuit : CouleursTaama.indigo,
-                      strokeWidth: 5.0,
+                      strokeWidth: 5.5,
                     ),
                   ],
                 ),
-
-              // Marqueurs
               MarkerLayer(
                 markers: [
-                  // Position conducteur (voiture)
-                  if (_positionConducteur != null)
-                    Marker(
-                      point: _positionConducteur!,
-                      width: 48,
-                      height: 48,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: nuit ? CouleursTaama.blanc : CouleursTaama.indigo,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: (nuit ? CouleursTaama.blanc : CouleursTaama.indigo)
-                                  .withValues(alpha: 0.4),
-                              blurRadius: 8,
-                            ),
-                          ],
-                        ),
-                        child: Icon(
-                          Icons.directions_car,
-                          color: nuit ? CouleursTaama.indigo : Colors.white,
-                          size: 24,
-                        ),
-                      ),
-                    ),
-
-                  // Position client (destination)
                   if (_positionClient != null)
                     Marker(
                       point: _positionClient!,
-                      width: 48,
-                      height: 48,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: CouleursTaama.terreCuite,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: CouleursTaama.terreCuite
-                                  .withValues(alpha: 0.4),
-                              blurRadius: 8,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.person_pin_circle,
-                          color: Colors.white,
-                          size: 24,
-                        ),
+                      width: 70,
+                      height: 70,
+                      child: _MarqueurCible(
+                        icone: _jambeVersDestination
+                            ? Icons.flag_rounded
+                            : Icons.person_pin_circle_rounded,
                       ),
                     ),
-
-                  // Arrêts intermédiaires (2e jambe uniquement, voir
-                  // _calculerItineraire) : petits marqueurs numérotés.
                   if (_jambeVersDestination)
                     for (var i = 0; i < widget.arrets.length; i++)
                       Marker(
                         point: LatLng(
-                          widget.arrets[i]['latitude'] as double,
-                          widget.arrets[i]['longitude'] as double,
+                          (widget.arrets[i]['latitude'] as num).toDouble(),
+                          (widget.arrets[i]['longitude'] as num).toDouble(),
                         ),
                         width: 32,
                         height: 32,
@@ -674,6 +891,38 @@ class _EcranNavigationState extends State<EcranNavigation> {
                           ),
                         ),
                       ),
+                  if (_positionConducteur != null)
+                    Marker(
+                      point: _positionConducteur!,
+                      width: 56,
+                      height: 56,
+                      child: AnimatedRotation(
+                        turns: _capAffiche / 360,
+                        duration: reduit ? Duration.zero : const Duration(milliseconds: 400),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: nuit ? CouleursTaama.blanc : CouleursTaama.indigo,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: nuit ? CouleursTaama.indigo : Colors.white,
+                              width: 3,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.3),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: Icon(
+                            Icons.navigation_rounded,
+                            color: nuit ? CouleursTaama.indigo : Colors.white,
+                            size: 28,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
               AttributionCarteTaama(
@@ -684,100 +933,62 @@ class _EcranNavigationState extends State<EcranNavigation> {
             ],
           ),
 
-          // Header flottant avec infos
+          // ─── Haut : retour + manœuvre (ou titre) ───
           Positioned(
             top: 0,
             left: 0,
             right: 0,
             child: SafeArea(
-              child: Container(
-                margin: const EdgeInsets.all(12),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: nuit ? CouleursTaama.indigo : Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: ombre,
-                      blurRadius: 10,
-                    ),
-                  ],
-                ),
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Row(
                       children: [
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: Icon(Icons.arrow_back, color: nuit ? CouleursTaama.blanc : null),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                        _BoutonRond(
+                          icone: Icons.arrow_back_rounded,
+                          info: 'Quitter la navigation',
+                          onTap: _quitter,
+                          nuit: nuit,
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 10),
                         Expanded(
-                          child: Text(
-                            _jambeVersDestination
-                                ? widget.destination
-                                : 'Récupération du client',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: texte,
-                            ),
-                            overflow: TextOverflow.ellipsis,
+                          child: _CartePhase(
+                            versDestination: _jambeVersDestination,
+                            destination: widget.destination,
+                            nbArrets: widget.arrets.length,
+                            nuit: nuit,
                           ),
                         ),
-                        if (widget.telephoneClient != null && widget.telephoneClient!.isNotEmpty)
-                          IconButton(
-                            onPressed: _appelerClient,
-                            icon: const Icon(Icons.phone, color: CouleursTaama.terreCuite),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
                       ],
                     ),
-                    if (_distanceKm != null && _dureeMinutes != null) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(Icons.route,
-                              size: 16, color: texteSecondaire),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${_distanceKm!.toStringAsFixed(1)} km',
-                            style: TextStyle(
-                              color: texteSecondaire,
-                              fontSize: 13,
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Icon(Icons.access_time,
-                              size: 16, color: texteSecondaire),
-                          const SizedBox(width: 4),
-                          Text(
-                            '$_dureeMinutes min',
-                            style: TextStyle(
-                              color: texteSecondaire,
-                              fontSize: 13,
-                            ),
-                          ),
-                          if (_jambeVersDestination && widget.arrets.isNotEmpty) ...[
-                            const SizedBox(width: 16),
-                            const Icon(Icons.flag,
-                                size: 16, color: CouleursTaama.or),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${widget.arrets.length} arrêt${widget.arrets.length > 1 ? 's' : ''}',
-                              style: const TextStyle(
-                                color: CouleursTaama.or,
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ],
+                    const SizedBox(height: 10),
+                    AnimatedSwitcher(
+                      duration: duree,
+                      transitionBuilder: (enfant, animation) => FadeTransition(
+                        opacity: animation,
+                        child: SlideTransition(
+                          position: Tween(
+                            begin: const Offset(0, -0.3),
+                            end: Offset.zero,
+                          ).animate(animation),
+                          child: enfant,
+                        ),
                       ),
+                      child: (_navigationDemarree && etapeCourante != null)
+                          ? _BandeauManoeuvre(
+                              key: ValueKey('etape_${_jambeVersDestination}_$_etapeIndex'),
+                              icone: etapeCourante.icone,
+                              instruction: etapeCourante.instruction,
+                              distance: _distanceManoeuvre,
+                            )
+                          : const SizedBox.shrink(key: ValueKey('aucune_etape')),
+                    ),
+                    if (probleme != null) ...[
+                      const SizedBox(height: 10),
+                      probleme,
                     ],
                   ],
                 ),
@@ -785,34 +996,106 @@ class _EcranNavigationState extends State<EcranNavigation> {
             ),
           ),
 
-          // Badge de vitesse actuelle
+          // ─── Boutons flottants à droite ───
+          Positioned(
+            right: 12,
+            bottom: _hauteurPanneau + 40 + basSecurite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedScale(
+                  scale: _suivre ? 0 : 1,
+                  duration: duree,
+                  curve: Curves.easeOutBack,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _BoutonRond(
+                      icone: Icons.my_location_rounded,
+                      info: 'Recentrer',
+                      onTap: _recentrer,
+                      nuit: nuit,
+                    ),
+                  ),
+                ),
+                if (widget.telephoneClient != null && widget.telephoneClient!.isNotEmpty) ...[
+                  _BoutonRond(
+                    icone: Icons.phone_rounded,
+                    info: 'Appeler le client',
+                    onTap: _appelerClient,
+                    nuit: nuit,
+                    accent: true,
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                if (_positionClient != null)
+                  _BoutonRond(
+                    icone: Icons.map_rounded,
+                    info: 'Ouvrir dans Google Maps',
+                    onTap: _ouvrirGoogleMaps,
+                    nuit: nuit,
+                  ),
+              ],
+            ),
+          ),
+
+          // ─── Badge de vitesse ───
           if (_navigationDemarree)
             Positioned(
-              bottom: 110,
-              left: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              left: 12,
+              bottom: _hauteurPanneau + 40 + basSecurite,
+              child: AnimatedContainer(
+                duration: duree,
+                width: 64,
+                height: 64,
                 decoration: BoxDecoration(
-                  color: _vitesseKmh > 80
-                      ? Colors.red
-                      : (nuit ? CouleursTaama.nuitPanneau : Colors.white),
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: const [
-                    BoxShadow(color: Colors.black26, blurRadius: 6),
+                  color: _vitesseKmh > 80 ? Colors.red : panneau,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _vitesseKmh > 80 ? Colors.white : CouleursTaama.indigo.withValues(alpha: 0.15),
+                    width: 3,
+                  ),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8)],
+                ),
+                // Rond de taille fixe : le texte rétrécit si la police est
+                // agrandie, au lieu de déborder du cercle.
+                padding: const EdgeInsets.all(8),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '${_vitesseKmh.round()}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 20,
+                        height: 1,
+                        color: _vitesseKmh > 80 ? Colors.white : texte,
+                      ),
+                    ),
+                    Text(
+                      'km/h',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: _vitesseKmh > 80 ? Colors.white70 : Colors.grey,
+                      ),
+                    ),
                   ],
                 ),
-                child: Text(
-                  '${_vitesseKmh.round()} km/h',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                    color: _vitesseKmh > 80 ? Colors.white : texte,
-                  ),
                 ),
               ),
             ),
 
-          // Indicateur de chargement
+          // ─── Panneau bas ───
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: _panneauBas(nuit: nuit, panneau: panneau, texte: texte, duree: duree),
+          ),
+
+          // ─── Chargement ───
           if (_chargement)
             Container(
               color: Colors.black26,
@@ -823,9 +1106,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        CircularProgressIndicator(
-                          color: CouleursTaama.terreCuite,
-                        ),
+                        CircularProgressIndicator(color: CouleursTaama.terreCuite),
                         SizedBox(height: 16),
                         Text('Calcul de l\'itinéraire...'),
                       ],
@@ -834,78 +1115,505 @@ class _EcranNavigationState extends State<EcranNavigation> {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
 
-          // Panel bas : bouton navigation
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              child: Container(
-                padding: const EdgeInsets.all(16),
+  Widget _panneauBas({
+    required bool nuit,
+    required Color panneau,
+    required Color texte,
+    required Duration duree,
+  }) {
+    final secondaire = nuit ? CouleursTaama.nuitTexteSecondaire : Colors.grey.shade600;
+    final peutClientABord =
+        !_jambeVersDestination && _positionDestinationReelle != null;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: panneau,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 16, offset: Offset(0, -4)),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
-                  color: nuit ? CouleursTaama.nuitPanneau : Colors.white,
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(20),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: ombre,
-                      blurRadius: 10,
-                      offset: Offset(0, -2),
-                    ),
-                  ],
+                  color: Colors.grey.shade400,
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                child: _navigationDemarree
-                    ? Row(
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _Chiffre(
+                    valeur: _dureeMinutes != null ? '$_dureeMinutes' : '—',
+                    unite: 'min',
+                    couleur: CouleursTaama.terreCuite,
+                    secondaire: secondaire,
+                  ),
+                  _separateur(secondaire),
+                  _Chiffre(
+                    valeur: _distanceKm != null ? _distanceKm!.toStringAsFixed(1) : '—',
+                    unite: 'km',
+                    couleur: texte,
+                    secondaire: secondaire,
+                  ),
+                  _separateur(secondaire),
+                  _Chiffre(
+                    valeur: _heureArrivee,
+                    unite: 'arrivée',
+                    couleur: texte,
+                    secondaire: secondaire,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              AnimatedSwitcher(
+                duration: duree,
+                child: !_navigationDemarree
+                    // Hauteurs MINIMALES (pas fixes) et textes sur une ligne :
+                    // avec une police agrandie, les boutons grandissent au
+                    // lieu de déborder.
+                    ? SizedBox(
+                        key: const ValueKey('demarrer'),
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _chargement ? null : _demarrerNavigation,
+                          icon: const Icon(Icons.navigation_rounded),
+                          label: const Text(
+                            'Démarrer la navigation',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: CouleursTaama.terreCuite,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(56),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                        ),
+                      )
+                    : Row(
+                        key: ValueKey('actions_$_jambeVersDestination'),
                         children: [
-                          Icon(Icons.navigation, color: texte),
-                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: _quitter,
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(90, 56),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              foregroundColor: secondaire,
+                              side: BorderSide(color: secondaire.withValues(alpha: 0.5)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            child: const Text('Quitter', maxLines: 1),
+                          ),
+                          const SizedBox(width: 10),
                           Expanded(
-                            child: Text(
-                              'Navigation en cours...',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: texte,
+                            child: ElevatedButton.icon(
+                              onPressed: _actionEnCours
+                                  ? null
+                                  : (peutClientABord ? _clientABordManuel : _proposerFinDeCourse),
+                              icon: Icon(peutClientABord
+                                  ? Icons.person_add_alt_1_rounded
+                                  : Icons.flag_rounded),
+                              label: Text(
+                                peutClientABord ? 'Client à bord' : 'Terminer la course',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: peutClientABord
+                                    ? CouleursTaama.indigo
+                                    : CouleursTaama.terreCuite,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(0, 56),
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
                               ),
                             ),
                           ),
-                          TextButton(
-                            onPressed: () {
-                              _locationService.arreter();
-                              _positionStream?.cancel();
-                              Navigator.pop(context);
-                            },
-                            child: const Text(
-                              'Terminer',
-                              style: TextStyle(color: Colors.red),
-                            ),
-                          ),
                         ],
-                      )
-                    : ElevatedButton.icon(
-                        onPressed: _chargement ? null : _demarrerNavigation,
-                        icon: const Icon(Icons.navigation),
-                        label: const Text(
-                          'Démarrer la navigation',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: CouleursTaama.terreCuite,
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(double.infinity, 54),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
                       ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _separateur(Color couleur) => Container(
+        width: 1,
+        height: 32,
+        margin: const EdgeInsets.symmetric(horizontal: 8),
+        color: couleur.withValues(alpha: 0.25),
+      );
+}
+
+// ─── Widgets ───
+
+class _Chiffre extends StatelessWidget {
+  const _Chiffre({
+    required this.valeur,
+    required this.unite,
+    required this.couleur,
+    required this.secondaire,
+  });
+
+  final String valeur;
+  final String unite;
+  final Color couleur;
+  final Color secondaire;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        children: [
+          AnimatedSwitcher(
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 250),
+            child: Text(
+              valeur,
+              key: ValueKey(valeur),
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                color: couleur,
               ),
             ),
           ),
+          Text(
+            unite,
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: secondaire),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _BoutonRond extends StatelessWidget {
+  const _BoutonRond({
+    required this.icone,
+    required this.info,
+    required this.onTap,
+    required this.nuit,
+    this.accent = false,
+  });
+
+  final IconData icone;
+  final String info;
+  final VoidCallback onTap;
+  final bool nuit;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final fond = accent
+        ? CouleursTaama.terreCuite
+        : (nuit ? CouleursTaama.nuitPanneau : Colors.white);
+    final couleurIcone = accent
+        ? Colors.white
+        : (nuit ? CouleursTaama.blanc : CouleursTaama.indigo);
+    return Material(
+      color: fond,
+      shape: const CircleBorder(),
+      elevation: 5,
+      shadowColor: Colors.black38,
+      child: IconButton(
+        tooltip: info,
+        onPressed: onTap,
+        icon: Icon(icone, color: couleurIcone),
+        constraints: const BoxConstraints.tightFor(width: 50, height: 50),
+      ),
+    );
+  }
+}
+
+/// Carte du haut : phase de la course (vers le client / vers la destination).
+class _CartePhase extends StatelessWidget {
+  const _CartePhase({
+    required this.versDestination,
+    required this.destination,
+    required this.nbArrets,
+    required this.nuit,
+  });
+
+  final bool versDestination;
+  final String destination;
+  final int nbArrets;
+  final bool nuit;
+
+  @override
+  Widget build(BuildContext context) {
+    final fond = nuit ? CouleursTaama.nuitPanneau : Colors.white;
+    final texte = nuit ? CouleursTaama.blanc : CouleursTaama.indigo;
+    final couleurPhase = versDestination ? CouleursTaama.terreCuite : CouleursTaama.indigo;
+    return Container(
+      // Hauteur minimale, pas fixe : police agrandie -> la carte grandit.
+      constraints: const BoxConstraints(minHeight: 50),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: fond,
+        borderRadius: BorderRadius.circular(25),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
+      ),
+      child: Row(
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: couleurPhase,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              versDestination ? 'Course' : 'Prise en charge',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              versDestination ? destination : 'Va chercher le client',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: texte),
+            ),
+          ),
+          if (versDestination && nbArrets > 0) ...[
+            const Icon(Icons.flag_rounded, size: 16, color: CouleursTaama.or),
+            const SizedBox(width: 2),
+            Text(
+              '$nbArrets',
+              style: const TextStyle(
+                color: CouleursTaama.or,
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Prochaine manœuvre, en grand (lisible d'un coup d'œil en roulant).
+class _BandeauManoeuvre extends StatelessWidget {
+  const _BandeauManoeuvre({
+    super.key,
+    required this.icone,
+    required this.instruction,
+    required this.distance,
+  });
+
+  final IconData icone;
+  final String instruction;
+  final String? distance;
+
+  @override
+  Widget build(BuildContext context) {
+    final texte = instruction.isEmpty
+        ? ''
+        : instruction[0].toUpperCase() + instruction.substring(1);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: CouleursTaama.indigo,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 14, offset: Offset(0, 4))],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(icone, color: Colors.white, size: 36),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (distance != null)
+                  Text(
+                    distance!,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      height: 1.1,
+                    ),
+                  ),
+                Text(
+                  texte,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.9),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Bandeau d'alerte. Sans action (les deux paramètres), aucun bouton.
+class _BandeauAlerte extends StatelessWidget {
+  const _BandeauAlerte({required this.texte, this.libelleAction, this.onAction});
+  final String texte;
+  final String? libelleAction;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade800,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8)],
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Colors.white),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              texte,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+          ),
+          if (libelleAction != null && onAction != null) ...[
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: onAction,
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+                backgroundColor: Colors.white.withValues(alpha: 0.18),
+                minimumSize: const Size(0, 40),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              child: Text(
+                libelleAction!,
+                maxLines: 1,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Point d'arrivée de la jambe en cours (client ou destination), avec une
+/// onde qui pulse (fixe si animations réduites).
+class _MarqueurCible extends StatefulWidget {
+  const _MarqueurCible({required this.icone});
+  final IconData icone;
+
+  @override
+  State<_MarqueurCible> createState() => _MarqueurCibleState();
+}
+
+class _MarqueurCibleState extends State<_MarqueurCible>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _c
+        ..stop()
+        ..value = 0;
+    } else if (!_c.isAnimating) {
+      _c.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, child) {
+        final t = _c.value;
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            Opacity(
+              opacity: (1 - t) * 0.6,
+              child: Container(
+                width: 34 + 36 * t,
+                height: 34 + 36 * t,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: CouleursTaama.terreCuite.withValues(alpha: 0.2),
+                  border: Border.all(color: CouleursTaama.terreCuite, width: 2),
+                ),
+              ),
+            ),
+            child!,
+          ],
+        );
+      },
+      child: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: CouleursTaama.terreCuite,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 8)],
+        ),
+        child: Icon(widget.icone, color: Colors.white, size: 22),
       ),
     );
   }
