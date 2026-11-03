@@ -62,11 +62,6 @@ class _EcranDemandeInstantaneeState
   double? _destinationLat;
   double? _destinationLng;
 
-  // Planification
-  bool _planifier = false;
-  DateTime? _datePlanifiee;
-  TimeOfDay? _heurePlanifiee;
-
   // Code promo — validé côté serveur avant confirmation (aperçu, ne
   // consomme aucun quota) ; la réduction réellement appliquée dépend du
   // véhicule choisi ensuite dans le bottom sheet et n'est recalculée
@@ -320,28 +315,6 @@ class _EcranDemandeInstantaneeState
     );
     if (choix == null || !mounted) return;
 
-    // Planifier reste réservé à un service avec un chauffeur proche : les
-    // courses planifiées ne sont pas encore activées automatiquement.
-    if (_planifier && choix['disponible'] != true) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Aucun chauffeur proche pour ce service : impossible de planifier pour le moment.')));
-      return;
-    }
-
-    DateTime? dateHeurePlanifiee;
-    if (_planifier && _datePlanifiee != null && _heurePlanifiee != null) {
-      dateHeurePlanifiee = DateTime(
-        _datePlanifiee!.year, _datePlanifiee!.month, _datePlanifiee!.day,
-        _heurePlanifiee!.hour, _heurePlanifiee!.minute,
-      );
-      if (dateHeurePlanifiee.isBefore(
-          DateTime.now().add(const Duration(minutes: 30)))) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Planifie au moins 30 min à l\'avance')));
-        return;
-      }
-    }
-
     // Envoyé tel quel si non-vide, même si _verifierCodePromo n'a jamais été
     // appuyé — le serveur re-valide intégralement et rejette toute la
     // demande si le code est invalide (jamais une réduction silencieusement
@@ -353,7 +326,6 @@ class _EcranDemandeInstantaneeState
       devisId: choix['devis_id'] as int,
       typeServiceId: choix['type_service'] as int,
       prixAffiche: choix['prix_estime'] as int?,
-      dateHeurePlanifiee: dateHeurePlanifiee,
       codePromo: codePromo,
     );
   }
@@ -371,7 +343,6 @@ class _EcranDemandeInstantaneeState
     required int devisId,
     required int typeServiceId,
     required int? prixAffiche,
-    required DateTime? dateHeurePlanifiee,
     required String? codePromo,
     bool dejaRelance = false,
   }) async {
@@ -381,32 +352,24 @@ class _EcranDemandeInstantaneeState
         destination: widget.destination,
         devisId: devisId,
         typeServiceId: typeServiceId,
-        dateHeurePlanifiee: dateHeurePlanifiee,
         codePromo: codePromo,
       );
       if (!mounted) return;
 
-      if (dateHeurePlanifiee != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Course planifiée avec succès !')),
-        );
-        Navigator.of(context).popUntil((route) => route.isFirst);
-      } else {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => SuiviCoursePage(
-              demandeId: demande['id'] as int,
-              destination: widget.destination,
-              // demande['type_transport'] (renvoyé par le serveur, dérivé
-              // côté backend même pour le chemin type_service) — PAS
-              // choix['type'], absent en mode dynamique et qui ferait
-              // planter ce cast.
-              typeTransport: demande['type_transport'] as String,
-            ),
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SuiviCoursePage(
+            demandeId: demande['id'] as int,
+            destination: widget.destination,
+            // demande['type_transport'] (renvoyé par le serveur, dérivé
+            // côté backend même pour le chemin type_service) — PAS
+            // choix['type'], absent en mode dynamique et qui ferait
+            // planter ce cast.
+            typeTransport: demande['type_transport'] as String,
           ),
-        );
-      }
+        ),
+      );
     } on DevisExpireException catch (e) {
       if (!mounted) return;
       if (dejaRelance) {
@@ -420,7 +383,7 @@ class _EcranDemandeInstantaneeState
         // choix et la confirmation, rien n'a changé pour le client.
         await _soumettre(
           devisId: e.nouveauDevisId, typeServiceId: typeServiceId,
-          prixAffiche: e.nouveauPrix, dateHeurePlanifiee: dateHeurePlanifiee,
+          prixAffiche: e.nouveauPrix,
           codePromo: codePromo, dejaRelance: true,
         );
         return;
@@ -450,7 +413,7 @@ class _EcranDemandeInstantaneeState
       if (accepte == true && mounted) {
         await _soumettre(
           devisId: e.nouveauDevisId, typeServiceId: typeServiceId,
-          prixAffiche: e.nouveauPrix, dateHeurePlanifiee: dateHeurePlanifiee,
+          prixAffiche: e.nouveauPrix,
           codePromo: codePromo, dejaRelance: true,
         );
       } else if (mounted) {
@@ -559,8 +522,6 @@ class _EcranDemandeInstantaneeState
             _carteArrets(),
             const SizedBox(height: 12),
             _carteDistancePrix(),
-            const SizedBox(height: 12),
-            _cartePlanification(),
             const SizedBox(height: 12),
             _carteCodePromo(),
             const SizedBox(height: 20),
@@ -808,78 +769,6 @@ class _EcranDemandeInstantaneeState
     );
   }
 
-  Widget _cartePlanification() {
-    return _Carte(
-      child: Column(
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.schedule_rounded, color: TaamaColors.primary, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text('Planifier à l’avance',
-                    style: TaamaText.body.copyWith(fontWeight: FontWeight.w800)),
-              ),
-              Switch(
-                value: _planifier,
-                onChanged: (v) => setState(() => _planifier = v),
-                activeThumbColor: TaamaColors.primary,
-              ),
-            ],
-          ),
-          if (_planifier) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      final d = await showDatePicker(
-                        context: context,
-                        initialDate: DateTime.now().add(const Duration(hours: 1)),
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime.now().add(const Duration(days: 30)),
-                      );
-                      if (d != null) setState(() => _datePlanifiee = d);
-                    },
-                    icon: const Icon(Icons.calendar_today_rounded, size: 16),
-                    label: Text(_datePlanifiee == null
-                        ? 'Date'
-                        : '${_datePlanifiee!.day}/${_datePlanifiee!.month}'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: TaamaColors.primary,
-                      side: const BorderSide(color: TaamaColors.primary),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      final h = await showTimePicker(
-                        context: context,
-                        initialTime: TimeOfDay.now(),
-                      );
-                      if (h != null) setState(() => _heurePlanifiee = h);
-                    },
-                    icon: const Icon(Icons.access_time_rounded, size: 16),
-                    label: Text(_heurePlanifiee == null
-                        ? 'Heure'
-                        : _heurePlanifiee!.format(context)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: TaamaColors.primary,
-                      side: const BorderSide(color: TaamaColors.primary),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
   Widget _carteCodePromo() {
     return _Carte(
       child: Column(
@@ -982,8 +871,7 @@ class _EcranDemandeInstantaneeState
   }
 
   Widget _boutonConfirmer() {
-    final actif = !(_calcul || _enChargement || _distanceKm == null || !_peutCommander ||
-        (_planifier && !_chauffeurDisponible));
+    final actif = !(_calcul || _enChargement || _distanceKm == null || !_peutCommander);
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton(
@@ -1003,15 +891,14 @@ class _EcranDemandeInstantaneeState
                 width: 24,
                 height: 24,
                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-            : Row(
+            : const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(_planifier ? Icons.event_available_rounded : Icons.local_taxi_rounded,
-                      size: 20),
-                  const SizedBox(width: 8),
+                  Icon(Icons.local_taxi_rounded, size: 20),
+                  SizedBox(width: 8),
                   Text(
-                    _planifier ? 'Planifier la course' : 'Choisir mon véhicule',
-                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                    'Choisir mon véhicule',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                   ),
                 ],
               ),

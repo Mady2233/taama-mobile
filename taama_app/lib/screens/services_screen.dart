@@ -15,7 +15,6 @@ import '../theme/taama_theme.dart';
 import 'courier_screen.dart';
 import 'recherche_screen.dart';
 import 'resultats_recherche_screen.dart';
-import 'mes_demandes_planifiees_screen.dart';
 
 class EcranServices extends StatelessWidget {
   const EcranServices({super.key});
@@ -153,19 +152,6 @@ class EcranServices extends StatelessWidget {
                     titre: 'Réserver',
                     sousTitre: 'Choisir une destination',
                     onTap: () => _choisirDestinationPuisDemander(context, null),
-                  ),
-                  const SizedBox(height: 10),
-                  _LigneServiceHub(
-                    icone: Icons.event_available_rounded,
-                    couleur: TaamaColors.textPrimary,
-                    fondIcone: TaamaColors.surfaceMuted,
-                    titre: 'Planifier',
-                    sousTitre: 'Réserver à l\'avance',
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => const MesDemandesPlanifieesScreen()),
-                    ),
                   ),
 
                   const SizedBox(height: TaamaSpacing.xl),
