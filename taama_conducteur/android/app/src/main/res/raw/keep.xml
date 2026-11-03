@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- La sonnerie des demandes de course n'est référencée que par son nom
+     (canal de notification, NotificationService) : sans cette règle, la
+     réduction des ressources de la release (activée par Flutter) la
+     supprimerait de l'APK, et la notification sonnerait par défaut. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/sonnerie_course" />

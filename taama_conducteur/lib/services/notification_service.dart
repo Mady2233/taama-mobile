@@ -4,9 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'api_service.dart';
 import 'demande_entrante_navigator.dart';
 
-/// Canal Android dédié aux demandes de course — importance MAX (son +
-/// pop-up "heads-up") pour que le conducteur soit alerté même téléphone
-/// verrouillé/app fermée, comme un appel entrant. Référencé également côté
+/// Canal Android général (messages, annulations…). Référencé également côté
 /// backend (envoyer_notification, trajets/notifications.py) et dans
 /// AndroidManifest.xml (canal par défaut FCM) : les trois doivent rester
 /// alignés sur le même identifiant 'taama_notifications'.
@@ -14,9 +12,33 @@ const AndroidNotificationChannel _canalNotificationsTaama =
     AndroidNotificationChannel(
   'taama_notifications',
   'Notifications Taama',
-  description: 'Nouvelles demandes de course et messages importants',
+  description: 'Messages et informations importantes',
   importance: Importance.max,
   playSound: true,
+);
+
+/// Identifiant du canal des demandes de course. Doit être IDENTIQUE à celui
+/// envoyé par le backend pour les notifications `nouvelle_demande`
+/// (android.notification.channel_id).
+const String idCanalDemandesCourse = 'taama_demandes_course';
+
+/// Canal dédié aux demandes de course : sonnerie Taama (fichier
+/// android/app/src/main/res/raw/sonnerie_course.wav), vibration longue,
+/// importance MAX (pop-up même téléphone verrouillé), comme un appel.
+///
+/// Canal distinct de 'taama_notifications' : Android fige le son d'un canal à
+/// sa création — modifier celui d'un canal déjà installé n'a aucun effet sur
+/// les téléphones des chauffeurs. Pour changer de sonnerie plus tard, il
+/// faudra donc un NOUVEL identifiant (ex. 'taama_demandes_course_v2').
+final AndroidNotificationChannel _canalDemandesCourse = AndroidNotificationChannel(
+  idCanalDemandesCourse,
+  'Demandes de course',
+  description: 'Sonnerie quand un client te demande une course',
+  importance: Importance.max,
+  playSound: true,
+  sound: const RawResourceAndroidNotificationSound('sonnerie_course'),
+  enableVibration: true,
+  vibrationPattern: Int64List.fromList([0, 600, 300, 600, 300, 600]),
 );
 
 /// Handler de messages FCM reçus alors que l'app est en arrière-plan ou
@@ -25,9 +47,8 @@ const AndroidNotificationChannel _canalNotificationsTaama =
 /// pouvoir relancer un isolate Dart dédié en dehors du cycle de vie normal
 /// de l'app. Ne fait rien de plus ici : pour un message avec un bloc
 /// `notification` (toujours le cas, voir envoyer_notification côté
-/// backend), Android/iOS affichent déjà la notification système
-/// automatiquement, sans code Dart — ce handler existe pour respecter le
-/// contrat du plugin et garder la porte ouverte à un traitement futur.
+/// backend), Android affiche déjà la notification système — avec le son du
+/// canal indiqué par le backend — sans code Dart.
 @pragma('vm:entry-point')
 Future<void> gestionnaireMessageArrierePlan(RemoteMessage message) async {}
 
@@ -56,17 +77,17 @@ class NotificationService {
     );
 
     // 2. Je configure l'affichage des notifications locales (pour le premier plan)
-    //    et je crée le canal haute-importance AVANT toute notification —
-    //    sinon la toute première demande de course reçue app fermée
-    //    tomberait sur le canal par défaut (silencieux, pas de heads-up).
+    //    et je crée les canaux AVANT toute notification — sinon la toute
+    //    première demande reçue app fermée tomberait sur un canal inexistant
+    //    (Android la rangerait alors dans le canal par défaut, sans sonnerie).
     if (!kIsWeb) {
       const parametresAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
       const parametres = InitializationSettings(android: parametresAndroid);
       await _notificationsLocales.initialize(parametres);
-      await _notificationsLocales
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(_canalNotificationsTaama);
+      final android = _notificationsLocales.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      await android?.createNotificationChannel(_canalNotificationsTaama);
+      await android?.createNotificationChannel(_canalDemandesCourse);
     }
 
     // 2bis. Handler des messages reçus app en arrière-plan/tuée (voir
@@ -77,30 +98,41 @@ class NotificationService {
     // 3. Je récupère le token de cet appareil
     try {
       token = await _messaging.getToken();
-      debugPrint('Token FCM récupéré : $token');
+      // Le token identifie l'appareil : jamais dans les logs en production.
+      if (kDebugMode) debugPrint('Token FCM récupéré : $token');
     } catch (e) {
       debugPrint('Erreur lors de la récupération du token FCM : $e');
     }
 
-    // 4. J'écoute les notifications reçues quand l'app est ouverte au premier plan
+    // 4. Notifications reçues quand l'app est ouverte au premier plan.
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      debugPrint('Notification reçue au premier plan : ${message.notification?.title}');
+      if (kDebugMode) {
+        debugPrint('Notification reçue au premier plan : ${message.notification?.title}');
+      }
+      if (_estNouvelleDemande(message.data)) {
+        // App ouverte : l'écran de demande s'ouvre tout de suite et
+        // DemandeEntranteNavigator lance la sonnerie en boucle. Pas de
+        // notification système en plus (elle ferait sonner deux fois).
+        _traiterDonneesNotification(message.data);
+        return;
+      }
       _afficherNotificationLocale(message);
       _traiterDonneesNotification(message.data);
     });
 
     // 4bis. L'utilisateur tape la notification alors que l'app était en
     // arrière-plan (pas tuée) : Firebase relance ce listener au retour au
-    // premier plan avec le message qui a été tapé.
+    // premier plan avec le message qui a été tapé. Le téléphone a déjà sonné
+    // (notification système) : on ouvre l'écran sans relancer la sonnerie.
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      _traiterDonneesNotification(message.data);
+      _traiterDonneesNotification(message.data, sonner: false);
     });
 
     // 4ter. L'app était tuée et a été relancée par un tap sur la
     // notification : le message qui a servi à la relancer est récupéré ici.
     final messageInitial = await _messaging.getInitialMessage();
     if (messageInitial != null) {
-      _traiterDonneesNotification(messageInitial.data);
+      _traiterDonneesNotification(messageInitial.data, sonner: false);
     }
 
     // 5. Si le token change (rare mais possible), je le garde à jour ET je
@@ -112,7 +144,7 @@ class NotificationService {
     // silence en interne, ce try/catch protège contre toute autre erreur.
     _messaging.onTokenRefresh.listen((nouveauToken) async {
       token = nouveauToken;
-      debugPrint('Token FCM mis à jour : $nouveauToken');
+      if (kDebugMode) debugPrint('Token FCM mis à jour : $nouveauToken');
       try {
         await ApiService.enregistrerTokenNotification(nouveauToken);
       } catch (e) {
@@ -121,16 +153,22 @@ class NotificationService {
     });
   }
 
+  static bool _estNouvelleDemande(Map<String, dynamic> donnees) =>
+      donnees['type'] == 'nouvelle_demande';
+
   /// Ouvre l'écran de demande entrante si ces données FCM correspondent à
   /// une nouvelle demande instantanée assignée — que l'app soit au premier
   /// plan (onMessage), relancée depuis l'arrière-plan (onMessageOpenedApp)
   /// ou depuis un état tué (getInitialMessage). Ignore silencieusement tout
   /// autre type de notification (chat, annulation, etc.).
-  static void _traiterDonneesNotification(Map<String, dynamic> donnees) {
-    if (donnees['type'] != 'nouvelle_demande') return;
+  static void _traiterDonneesNotification(
+    Map<String, dynamic> donnees, {
+    bool sonner = true,
+  }) {
+    if (!_estNouvelleDemande(donnees)) return;
     final demandeId = int.tryParse(donnees['demande_id']?.toString() ?? '');
     if (demandeId == null) return;
-    DemandeEntranteNavigator.afficherSiNecessaire(demandeId);
+    DemandeEntranteNavigator.afficherSiNecessaire(demandeId, sonner: sonner);
   }
 
   static Future<void> _afficherNotificationLocale(RemoteMessage message) async {
