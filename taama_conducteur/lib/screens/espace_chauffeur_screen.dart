@@ -20,6 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../carte/fond_carte.dart';
 import '../services/annulations_course.dart';
 import '../services/api_service.dart';
+import '../services/politique_confidentialite.dart';
 import '../services/config_app.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/location_service.dart';
@@ -769,6 +770,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
               _ouvrir(const EcranVerificationConducteur());
             case 'avis':
               _ouvrir(const EcranAvisApp());
+            case 'politique':
+              ouvrirPolitiqueConfidentialite(context);
             case 'deconnexion':
               _deconnexion();
           }
@@ -780,6 +783,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
                 'Mon portefeuille'),
           _entreeMenu('verification', Icons.verified_user_rounded, 'Vérification'),
           _entreeMenu('avis', Icons.star_rounded, 'Donner mon avis'),
+          _entreeMenu('politique', Icons.privacy_tip_outlined, 'Politique de confidentialité'),
           const PopupMenuDivider(),
           _entreeMenu('deconnexion', Icons.logout_rounded, 'Déconnexion',
               danger: true),

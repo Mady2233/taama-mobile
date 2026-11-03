@@ -15,6 +15,10 @@ class AppConfig {
   /// confidentialité).
   static const String contactSupport = 'nkakalanso@gmail.com';
 
+  /// Adresse publique de la politique, déclarée dans la fiche Google Play : stable.
+  static const String urlPolitiqueConfidentialite =
+      'https://taama-backend-gt9i.onrender.com/politique-confidentialite/';
+
   /// User-Agent des appels HTTP vers des services tiers (Nominatim, OSRM) :
   /// leurs politiques d'usage exigent une app identifiable et joignable.
   static const String userAgentHttp =
