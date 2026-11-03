@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'carte/journal_sans_cle.dart';
 import 'config/api_config.dart';
+import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'services/config_app.dart';
@@ -22,7 +23,9 @@ void main() async {
   debugPrint('ApiConfig.wsUrl   = ${ApiConfig.wsUrl}');
 
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
     await NotificationService.initialiser();
   } catch (e) {
     debugPrint('Firebase init error: $e');
