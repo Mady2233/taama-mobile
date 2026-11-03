@@ -5,13 +5,91 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:taama_app/screens/recherche_screen.dart';
 import 'package:taama_app/services/recherche_lieux.dart';
+import 'package:taama_app/widgets/champ_adresse_lieu.dart';
 
 void main() {
   group('rechercherLieux', () {
-    test('moins de 2 caractères : rien', () {
+    test('rien de saisi : rien', () {
       expect(rechercherLieux(''), isEmpty);
-      expect(rechercherLieux('b'), isEmpty);
       expect(rechercherLieux('  '), isEmpty);
+    });
+
+    test('une lettre : les quartiers qui commencent par elle, jamais un repère', () {
+      final lieux = rechercherLieux('b');
+      expect(lieux, isNotEmpty);
+      for (final lieu in lieux) {
+        expect(normaliserLieu(lieu.nom), startsWith('b'));
+        expect(lieu.detail, anyOf('Quartier', 'Localité'));
+      }
+    });
+
+    test('une lettre sans quartier : vide, jamais un nom qui la contient', () {
+      for (final lieu in rechercherLieux('y')) {
+        expect(normaliserLieu(lieu.nom), startsWith('y'));
+      }
+    });
+
+    test('les orthographes courantes trouvent le quartier', () {
+      const attendus = {
+        'Kalabancoura': 'Kalaban Coura',
+        'Kalabankoura': 'Kalaban Coura',
+        'Medina Koura': 'Médina-coura',
+        'Magnanbougou': 'Magnambougou',
+        'Maniambougou': 'Magnambougou',
+        'Magnambugu': 'Magnambougou',
+        'Kinzambougou': 'Quinzambougou',
+        'Quinzanbougou': 'Quinzambougou',
+        'Nyarela': 'Niaréla',
+        'Faladje': 'Faladie',
+        'Hamdalaye': 'Hamdallaye',
+        'Amdallaye': 'Hamdallaye',
+        'Baco djikoroni': 'Baco-Djicoroni',
+        'Bako djicoroni': 'Baco-Djicoroni',
+        'Darsalam': 'Dar Salam',
+        'Daoudabugu': 'Daoudabougou',
+        'Boulkasoumbougou': 'Boulkassoumbougou',
+      };
+      attendus.forEach((saisie, nom) {
+        expect(rechercherLieux(saisie).first.nom, nom, reason: saisie);
+      });
+    });
+
+    test('une faute de frappe : le nom le plus proche d’abord', () {
+      expect(rechercherLieux('Sokoniko').first.nom, 'Sogoniko');
+      expect(rechercherLieux('Boulkassombougou').first.nom, 'Boulkassoumbougou');
+      expect(rechercherLieux('Tomikorobougou').first.nom, "N'Tomikirobougou");
+    });
+
+    test('bien écrit : le bon quartier reste en tête, sans quartier voisin ajouté', () {
+      final noms = rechercherLieux('Kabala').map((l) => l.nom).toList();
+      expect(noms.first, 'Kabala');
+      expect(noms, isNot(contains('Kababougou')));
+      expect(rechercherLieux('Sogoniko').first.nom, 'Sogoniko');
+      expect(rechercherLieux('Hamdallaye').first.nom, 'Hamdallaye');
+    });
+
+    test('le nom identique passe devant les noms plus longs', () {
+      expect(rechercherLieux('Kalaban Coura').first.nom, 'Kalaban Coura');
+      expect(rechercherLieux('Lafiabougou').first.nom, 'Lafiabougou');
+    });
+
+    test('un nom trop court ne tolère aucune faute', () {
+      expect(rechercherLieux('xoli'), isEmpty);
+    });
+
+    test('les localités du Grand Bamako sont trouvées, avec leurs coordonnées', () {
+      for (final nom in const ['Moribabougou', 'Sangarebougou', 'Dialakorodji', 'Mountougoula', 'Kati']) {
+        final lieu = rechercherLieux(nom).first;
+        expect(lieu.nom, nom);
+        expect(lieu.detail, 'Localité');
+        expect(lieu.adresse, nom);
+        expect(lieu.lat, inInclusiveRange(12.48, 12.77));
+        expect(lieu.lng, inInclusiveRange(-8.12, -7.80));
+      }
+    });
+
+    test('le nom de la ville seul n’est pas une destination', () {
+      expect(rechercherLieux('Bamako').map((l) => l.nom), isNot(contains('Bamako')));
     });
 
     test('début de nom d’abord, grand quartier en tête', () {
@@ -59,6 +137,24 @@ void main() {
           expect(lieu.lng, inInclusiveRange(-8.2, -7.8));
         }
       }
+    });
+  });
+
+  group('clePhonetique', () {
+    String cle(String texte) => clePhonetique(normaliserLieu(texte));
+
+    test('les écritures d’un même nom donnent la même clé', () {
+      expect(cle('Kalabancoura'), cle('Kalaban Coura'));
+      expect(cle('Magnanbougou'), cle('Maniambougou'));
+      expect(cle('Djikoroni'), cle('Jikoroni'));
+      expect(cle('Faladie'), cle('Faladje'));
+      expect(cle('Kinzambougou'), cle('Quinzambougou'));
+      expect(cle('Hamdalaye'), cle('Hamdallaye'));
+    });
+
+    test('des noms différents restent différents', () {
+      expect(cle('Sogoniko'), isNot(cle('Sokorodji')));
+      expect(cle('ACI 2000'), isNot(cle('ACI 20')));
     });
   });
 
@@ -112,6 +208,42 @@ void main() {
       expect(find.text('Destinations populaires'), findsOneWidget);
     });
 
+    testWidgets('dès la première lettre : des quartiers', (t) async {
+      await ouvrir(t);
+      await t.enterText(find.byType(TextField).first, 'b');
+      await t.pump();
+
+      expect(find.text('Destinations populaires'), findsNothing);
+      expect(find.text('Quartier'), findsWidgets);
+    });
+
+    testWidgets('une autre orthographe propose le quartier', (t) async {
+      final resultats = await ouvrir(t);
+      await t.enterText(find.byType(TextField).first, 'Kinzambougou');
+      await t.pump();
+
+      await t.tap(find.text('Quinzambougou'));
+      await t.pumpAndSettle();
+
+      expect(resultats.single?.nom, 'Quinzambougou');
+      expect(resultats.single?.lat, isNotNull);
+    });
+
+    testWidgets('adresse « Domicile » : les suggestions apparaissent aussi', (t) async {
+      await ouvrir(t);
+      await t.tap(find.text('Domicile'));
+      await t.pumpAndSettle();
+
+      await t.enterText(find.byType(ChampAdresseLieu), 'Magnanbou');
+      await t.pump();
+
+      // Le nom existe aussi derrière le dialogue, dans les destinations populaires.
+      expect(
+        find.descendant(of: find.byType(ChampAdresseLieu), matching: find.text('Magnambougou')),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('choisir une suggestion renvoie le lieu et ses coordonnées', (t) async {
       final resultats = await ouvrir(t);
       await t.enterText(find.byType(TextField).first, 'badala');
@@ -139,6 +271,59 @@ void main() {
 
       expect(resultats.single?.nom, 'zzzzzz');
       expect(resultats.single?.lat, isNull);
+    });
+  });
+
+  group('champ d’adresse avec suggestions', () {
+    late List<LieuTrouve?> lieux;
+    late TextEditingController controleur;
+
+    Future<void> ouvrir(WidgetTester t) async {
+      lieux = [];
+      controleur = TextEditingController();
+      addTearDown(controleur.dispose);
+      await t.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: ChampAdresseLieu(controleur: controleur, longueurMax: 120, onLieu: lieux.add),
+        ),
+      ));
+    }
+
+    testWidgets('choisir une suggestion remplit le champ et donne les coordonnées', (t) async {
+      await ouvrir(t);
+      await t.enterText(find.byType(TextFormField), 'badala');
+      await t.pump();
+
+      await t.tap(find.text('Badalabougou'));
+      await t.pump();
+
+      expect(controleur.text, 'Badalabougou');
+      expect(lieux.last?.lat, isNotNull);
+      expect(find.byType(ListTile), findsNothing);
+    });
+
+    testWidgets('modifier le texte après un choix oublie les coordonnées', (t) async {
+      await ouvrir(t);
+      await t.enterText(find.byType(TextFormField), 'badala');
+      await t.pump();
+      await t.tap(find.text('Badalabougou'));
+      await t.pump();
+
+      await t.enterText(find.byType(TextFormField), 'Badalabougou, rue 12');
+      await t.pump();
+
+      expect(lieux.last, isNull);
+    });
+
+    testWidgets('au plus 4 suggestions, et aucune pour une saisie inconnue', (t) async {
+      await ouvrir(t);
+      await t.enterText(find.byType(TextFormField), 'ba');
+      await t.pump();
+      expect(find.byType(ListTile), findsNWidgets(4));
+
+      await t.enterText(find.byType(TextFormField), 'zzzzzz');
+      await t.pump();
+      expect(find.byType(ListTile), findsNothing);
     });
   });
 }

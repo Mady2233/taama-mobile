@@ -23,6 +23,7 @@ import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 import '../services/recherche_lieux.dart';
 import '../theme/taama_theme.dart';
+import '../widgets/champ_adresse_lieu.dart';
 
 const int _longueurMaxAdresse = 120;
 
@@ -138,27 +139,41 @@ class _EcranRechercheState extends State<EcranRecherche> {
     Navigator.pop(context, DestinationChoisie(lieu.adresse, lat: lieu.lat, lng: lieu.lng));
   }
 
+  /// Un favori enregistré depuis une suggestion garde ses coordonnées.
+  void _validerFavori(Map<String, dynamic> favori) {
+    final adresse = favori['adresse']?.toString() ?? '';
+    final lat = (favori['latitude'] as num?)?.toDouble();
+    final lng = (favori['longitude'] as num?)?.toDouble();
+    if (adresse.isNotEmpty && lat != null && lng != null) {
+      Navigator.pop(context, DestinationChoisie(adresse, lat: lat, lng: lng));
+      return;
+    }
+    _valider(adresse);
+  }
+
   Future<void> _onTapEmplacementFavori(String libelle) async {
     final favori = _favori(libelle);
     final adresse = favori?['adresse']?.toString();
-    if (adresse != null && adresse.isNotEmpty) {
-      _valider(adresse);
+    if (favori != null && adresse != null && adresse.isNotEmpty) {
+      _validerFavori(favori);
       return;
     }
     await _ouvrirDialogueAjoutFavori(libelle);
   }
 
   Future<void> _ouvrirDialogueAjoutFavori(String libelle) async {
-    final adresse = await showDialog<String>(
+    final choix = await showDialog<DestinationChoisie>(
       context: context,
       builder: (_) => _DialogueAdresseFavori(libelle: libelle),
     );
-    if (adresse == null || adresse.isEmpty || !mounted) return;
+    if (choix == null || !mounted) return;
 
     try {
       final enregistre = await ApiService.enregistrerAdresseFavorite(
         libelle: libelle,
-        adresse: adresse,
+        adresse: choix.nom,
+        latitude: choix.lat,
+        longitude: choix.lng,
       );
       if (!mounted) return;
       // enregistrerAdresseFavorite renvoie toujours un Map<String, dynamic>.
@@ -168,7 +183,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
           enregistre,
         ];
       });
-      _valider(adresse);
+      Navigator.pop(context, choix);
     } catch (e) {
       _journal('Erreur enregistrement favori : $e');
       if (!mounted) return;
@@ -235,7 +250,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
               // Le clavier reste ouvert : la liste doit pouvoir défiler dessous.
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              children: _ctrl.text.trim().length >= 2
+              children: _ctrl.text.trim().isNotEmpty
                   ? _contenuSuggestions(_ctrl.text.trim())
                   : [
                 _sectionFavoris(),
@@ -388,7 +403,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
               couleurIcone: TaamaColors.star,
               titre: f['libelle']?.toString() ?? '',
               sousTitre: f['adresse']?.toString(),
-              onTap: () => _valider(f['adresse']?.toString() ?? ''),
+              onTap: () => _validerFavori(f),
               onLongPress: () => _confirmerSuppressionFavori(f),
             ),
           ),
@@ -716,7 +731,8 @@ class _ChipFavori extends StatelessWidget {
 }
 
 /// Dialogue d'ajout d'adresse favorite : possède son contrôleur (libéré avec
-/// le dialogue), longueur limitée, validation du champ vide.
+/// le dialogue), longueur limitée, validation du champ vide. Renvoie l'adresse
+/// et, si elle vient d'une suggestion ou d'un nom connu, ses coordonnées.
 class _DialogueAdresseFavori extends StatefulWidget {
   const _DialogueAdresseFavori({required this.libelle});
   final String libelle;
@@ -727,6 +743,7 @@ class _DialogueAdresseFavori extends StatefulWidget {
 
 class _DialogueAdresseFavoriState extends State<_DialogueAdresseFavori> {
   final _ctrl = TextEditingController();
+  LieuTrouve? _lieu;
 
   @override
   void dispose() {
@@ -737,19 +754,21 @@ class _DialogueAdresseFavoriState extends State<_DialogueAdresseFavori> {
   void _valider() {
     final adresse = _ctrl.text.trim();
     if (adresse.isEmpty) return;
-    Navigator.pop(context, adresse);
+    final lieu = _lieu ?? lieuExact(adresse);
+    Navigator.pop(context, DestinationChoisie(adresse, lat: lieu?.lat, lng: lieu?.lng));
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      scrollable: true,
       title: Text('Adresse « ${widget.libelle} »'),
-      content: TextField(
-        controller: _ctrl,
+      content: ChampAdresseLieu(
+        controleur: _ctrl,
         autofocus: true,
-        textCapitalization: TextCapitalization.sentences,
-        inputFormatters: [LengthLimitingTextInputFormatter(_longueurMaxAdresse)],
-        onSubmitted: (_) => _valider(),
+        longueurMax: _longueurMaxAdresse,
+        onLieu: (lieu) => _lieu = lieu,
+        onValider: _valider,
         decoration: const InputDecoration(hintText: 'Ex : Hippodrome, Bamako'),
       ),
       actions: [

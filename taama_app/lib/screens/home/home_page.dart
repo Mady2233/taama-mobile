@@ -27,6 +27,7 @@ import '../../carte/fond_carte.dart';
 import '../../services/api_service.dart';
 import '../../services/config_app.dart';
 import '../../services/routing_service.dart';
+import '../../widgets/champ_adresse_lieu.dart';
 import '../courier_screen.dart';
 import '../course/suivi_course_page.dart';
 import '../portefeuille_screen.dart';
@@ -443,7 +444,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _ajouterAdresse() async {
-    final saisie = await showDialog<({String libelle, String adresse})>(
+    final saisie = await showDialog<({String libelle, String adresse, double? lat, double? lng})>(
       context: context,
       builder: (_) => const _DialogueNouvelleAdresse(),
     );
@@ -453,6 +454,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       await ApiService.enregistrerAdresseFavorite(
         libelle: saisie.libelle,
         adresse: saisie.adresse,
+        latitude: saisie.lat,
+        longitude: saisie.lng,
       );
       await _chargerSuggestions();
     } catch (e) {
@@ -536,6 +539,7 @@ class _DialogueNouvelleAdresseState extends State<_DialogueNouvelleAdresse> {
   final _formulaire = GlobalKey<FormState>();
   final _libelle = TextEditingController();
   final _adresse = TextEditingController();
+  LieuTrouve? _lieu;
 
   @override
   void dispose() {
@@ -549,12 +553,20 @@ class _DialogueNouvelleAdresseState extends State<_DialogueNouvelleAdresse> {
 
   void _valider() {
     if (!(_formulaire.currentState?.validate() ?? false)) return;
-    Navigator.pop(context, (libelle: _libelle.text.trim(), adresse: _adresse.text.trim()));
+    final adresse = _adresse.text.trim();
+    final lieu = _lieu ?? lieuExact(adresse);
+    Navigator.pop(context, (
+      libelle: _libelle.text.trim(),
+      adresse: adresse,
+      lat: lieu?.lat,
+      lng: lieu?.lng,
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      scrollable: true,
       title: const Text('Nouvelle adresse'),
       content: Form(
         key: _formulaire,
@@ -570,13 +582,13 @@ class _DialogueNouvelleAdresseState extends State<_DialogueNouvelleAdresse> {
               validator: _obligatoire,
             ),
             const SizedBox(height: 8),
-            TextFormField(
-              controller: _adresse,
-              maxLength: _longueurMaxAdresse,
-              textInputAction: TextInputAction.done,
+            ChampAdresseLieu(
+              controleur: _adresse,
+              longueurMax: _longueurMaxAdresse,
+              onLieu: (lieu) => _lieu = lieu,
+              onValider: _valider,
               decoration: const InputDecoration(labelText: 'Adresse'),
               validator: _obligatoire,
-              onFieldSubmitted: (_) => _valider(),
             ),
           ],
         ),
