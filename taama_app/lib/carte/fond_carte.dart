@@ -82,6 +82,7 @@ NetworkTileProvider fournisseurTuiles({http.Client? client, MapCachingProvider? 
 TileLayer coucheTuilesTaama({
   required String url,
   bool apercu = false,
+  bool hauteDensite = false,
   http.Client? client,
   MapCachingProvider? cache,
 }) =>
@@ -93,6 +94,11 @@ TileLayer coucheTuilesTaama({
       tileProvider: fournisseurTuiles(client: client, cache: cache),
       maxNativeZoom: 19,
       panBuffer: apercu ? 0 : 1,
+      // Écran haute densité : tuiles @2x du fournisseur, à la place de {r}
+      // dans l'adresse. Rues et bâtiments nets au lieu d'une image agrandie.
+      // Sans {r}, jamais : flutter_map simulerait la haute densité en
+      // chargeant quatre fois plus de tuiles.
+      retinaMode: hauteDensite && url.contains('{r}'),
       errorTileCallback: (_, erreur, __) => EtatFondCarte.signaler(erreur),
     );
 
@@ -112,7 +118,11 @@ class FondCarteTaama extends StatelessWidget {
       valueListenable: EtatFondCarte.refuse,
       builder: (context, refuse, _) => refuse
           ? FondCarteIndisponible(nuit: nuit)
-          : coucheTuilesTaama(url: CarteConfig.tuiles(nuit: nuit), apercu: apercu),
+          : coucheTuilesTaama(
+              url: CarteConfig.tuiles(nuit: nuit),
+              apercu: apercu,
+              hauteDensite: RetinaMode.isHighDensity(context),
+            ),
     );
   }
 }

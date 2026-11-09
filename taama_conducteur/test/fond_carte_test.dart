@@ -83,6 +83,27 @@ void main() {
     });
   });
 
+  group('haute densité', () {
+    const avecR = 'https://t/{z}/{x}/{y}{r}.png?key=SECRET123';
+    const sansR = 'https://t/{z}/{x}/{y}.png?key=SECRET123';
+    TileLayer couche(String url, {bool hauteDensite = false}) => coucheTuilesTaama(
+        url: url, hauteDensite: hauteDensite, cache: const DisabledMapCachingProvider());
+
+    test('écran haute densité et {r} dans l\'adresse : tuiles @2x du fournisseur', () {
+      expect(couche(avecR, hauteDensite: true).resolvedRetinaMode, RetinaMode.server);
+    });
+
+    test('jamais de haute densité simulée (quatre fois plus de tuiles)', () {
+      final c = couche(sansR, hauteDensite: true);
+      expect(c.resolvedRetinaMode, RetinaMode.disabled);
+      expect(c.zoomOffset, 0);
+    });
+
+    test('écran ordinaire : tuiles normales', () {
+      expect(couche(avecR).resolvedRetinaMode, RetinaMode.disabled);
+    });
+  });
+
   testWidgets('sans configuration : « Carte indisponible », aucune requête', (t) async {
     await t.pumpWidget(const MaterialApp(
       home: Scaffold(

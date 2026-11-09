@@ -34,7 +34,8 @@ export 'home_models.dart';
 export '../../widgets/invitation_identite.dart' show InvitationIdentite;
 
 const LatLng _centreBamako = LatLng(12.6392, -8.0029);
-const double _zoomInitial = 15;
+// Assez près pour voir les rues et les bâtiments autour du client.
+const double _zoomInitial = 16;
 
 /// La carte descend de cette hauteur SOUS l'arrondi de la feuille du bas.
 const double _carteSousFeuille = 40;

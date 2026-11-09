@@ -2,11 +2,14 @@
 /// code. Fichier identique dans taama_app et taama_conducteur.
 ///
 ///   flutter build … \
-///     --dart-define=MAP_TILES_LIGHT=https://…/{z}/{x}/{y}.png?key=… \
-///     --dart-define=MAP_TILES_DARK=https://…/{z}/{x}/{y}.png?key=… \
+///     --dart-define=MAP_TILES_LIGHT=https://…/{z}/{x}/{y}{r}.png?key=… \
+///     --dart-define=MAP_TILES_DARK=https://…/{z}/{x}/{y}{r}.png?key=… \
 ///     --dart-define="CARTE_ATTRIBUTION=© MapTiler © OpenStreetMap contributors" \
 ///     --dart-define=CARTE_REPERES_FOND=pharmacie,banque \
 ///     --dart-define=CARTE_QUARTIERS_FOND=tous
+///
+/// {r} (facultatif) : remplacé par « @2x » sur un écran haute densité
+/// (tuiles nettes), par rien ailleurs. Voir fond_carte.dart.
 ///
 /// Sans adresse de tuiles : aucune requête, la carte affiche « Carte
 /// indisponible pour le moment ». Une release sans ces valeurs est refusée
