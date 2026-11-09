@@ -17,7 +17,9 @@ import '../../services/config_app.dart';
 import '../../services/location_service.dart';
 import '../../services/routing_service.dart';
 import '../../utils/format.dart';
+import '../../utils/geometrie_trace.dart';
 import '../../widgets/dialogue_annulation_course.dart';
+import '../../widgets/taama_map.dart' show dureeGlissementPour;
 import '../../widgets/widget_sos.dart';
 import '../chat_screen.dart';
 import '../resultats_recherche_screen.dart';
@@ -87,6 +89,9 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
   LatLng? _positionDepart;
   LatLng? _positionDestination;
   LatLng? _positionChauffeur;
+  /// Glissement vers la dernière position : l'intervalle réel depuis la
+  /// précédente, pour un mouvement continu (dureeGlissementPour).
+  Duration? _glissementChauffeur;
   List<LatLng> _itineraire = [];
   int? _minutesAvantArrivee;
   double? _distanceKm;
@@ -288,9 +293,17 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       '${widget.demandeId}',
       (lat, lng) {
         if (!mounted) return;
+        final maintenant = DateTime.now();
+        final precedente = _dernierePositionLe;
+        final recue = LatLng(lat, lng);
         setState(() {
-          _positionChauffeur = LatLng(lat, lng);
-          _dernierePositionLe = DateTime.now();
+          // Sur le tracé (à moins de 30 m), le véhicule suit la route au lieu
+          // de couper les virages ; ailleurs, sa position réelle.
+          _positionChauffeur = projeterSurTrace(recue, _itineraire) ?? recue;
+          _glissementChauffeur = dureeGlissementPour(
+            precedente == null ? null : maintenant.difference(precedente),
+          );
+          _dernierePositionLe = maintenant;
         });
         unawaited(_mettreAJourItineraire());
       },
@@ -560,6 +573,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       positionClient: _positionDepart,
       positionDestination: _positionDestination,
       positionChauffeur: _positionChauffeur,
+      glissementChauffeur: _glissementChauffeur,
       itineraire: _itineraire,
       minutesAvantArrivee: _minutesAvantArrivee,
       distanceKm: _distanceKm,

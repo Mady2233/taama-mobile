@@ -11,9 +11,10 @@ class LocationService {
   static const Duration _intervalleEnvoi = Duration(seconds: 3);
   static const Duration _timeoutConnexion = Duration(seconds: 10);
   // Reconnexion : backoff exponentiel plafonné — récupère vite sur un simple
-  // blip réseau, sans marteler le serveur si la coupure dure.
+  // blip réseau, sans marteler le serveur si la coupure dure. Plafond à 10 s :
+  // au-delà, le marqueur resterait figé trop longtemps après le retour du réseau.
   static const Duration _delaiReconnexionInitial = Duration(seconds: 2);
-  static const Duration _delaiReconnexionMax = Duration(seconds: 20);
+  static const Duration _delaiReconnexionMax = Duration(seconds: 10);
 
   WebSocketChannel? _channel;
   StreamSubscription? _streamSubscription;
@@ -142,7 +143,8 @@ class LocationService {
       });
 
       _channel?.sink.add(message);
-      debugPrint('[LocationService] Position envoyée : ${position.latitude}, ${position.longitude}');
+      // Jamais de position dans les journaux d'une release (logcat).
+      if (kDebugMode) debugPrint('[LocationService] Position envoyée');
     } on TimeoutException {
       debugPrint('[LocationService] Timeout GPS — on réessaie au prochain tick');
     } catch (e) {

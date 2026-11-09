@@ -34,6 +34,7 @@ class VehiculeCarte {
     required this.position,
     this.estMoto = false,
     this.miseEnAvant = false,
+    this.glissement,
   });
 
   /// Identifiant stable : c'est lui qui permet d'animer le déplacement
@@ -44,6 +45,11 @@ class VehiculeCarte {
 
   /// Le véhicule de la course en cours, dessiné en accent.
   final bool miseEnAvant;
+
+  /// Durée du glissement vers [position] (voir [dureeGlissementPour]) : le
+  /// véhicule avance en continu, au rythme réel des positions reçues. Null :
+  /// glissement court par défaut (carte des chauffeurs proches).
+  final Duration? glissement;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,8 +221,10 @@ class _TaamaMapState extends State<TaamaMap> {
             tween: _TweenLatLng(end: v.position),
             duration: MediaQuery.disableAnimationsOf(context)
                 ? Duration.zero
-                : _dureeGlissement,
-            curve: Curves.easeInOut,
+                : v.glissement ?? _dureeGlissement,
+            // Rythme réel : vitesse constante, jamais d'arrêt entre deux
+            // positions. Sinon, court glissement amorti.
+            curve: v.glissement != null ? Curves.linear : Curves.easeInOut,
             builder: (_, position, __) => MarkerLayer(
               markers: [
                 Marker(
@@ -250,6 +258,16 @@ class _TaamaMapState extends State<TaamaMap> {
 
 /// Durée du glissement d'un véhicule d'une position reçue à la suivante.
 const Duration _dureeGlissement = Duration(milliseconds: 1000);
+
+/// Glissement d'un véhicule suivi : l'intervalle observé entre ses deux
+/// dernières positions (~5 s en roulant), borné. Un glissement d'1 s faisait
+/// avancer le véhicule 1 s puis l'arrêtait 4 s : l'effet de saut.
+Duration dureeGlissementPour(Duration? intervalle) {
+  const minimum = Duration(seconds: 1);
+  const maximum = Duration(seconds: 6);
+  if (intervalle == null || intervalle < minimum) return minimum;
+  return intervalle > maximum ? maximum : intervalle;
+}
 
 /// Au-delà, le saut est traité comme une position aberrante ou une reprise
 /// après coupure : le marqueur y va directement au lieu de glisser à travers

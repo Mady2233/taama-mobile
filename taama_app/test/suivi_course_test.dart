@@ -9,6 +9,7 @@ import 'package:taama_app/screens/course/suivi_course_page.dart';
 import 'package:taama_app/screens/course/suivi_course_screen.dart';
 import 'package:taama_app/services/routing_service.dart';
 import 'package:taama_app/utils/format.dart';
+import 'package:taama_app/utils/geometrie_trace.dart';
 import 'package:taama_app/widgets/taama_map.dart';
 
 const _chauffeur = ChauffeurCourse(nomCourt: 'Mady T.', plaque: 'AB 1234 MD', vehicule: 'Toyota Corolla');
@@ -233,6 +234,34 @@ void main() {
     test('saut de plus de 2 km (GPS aberrant) : directement à destination', () {
       const loin = LatLng(12.70, -8.0029); // ~6,8 km
       expect(interpolerPosition(a, loin, 0.3), loin);
+    });
+    test('durée : le rythme réel des positions, bornée entre 1 et 6 s', () {
+      expect(dureeGlissementPour(null), const Duration(seconds: 1));
+      expect(dureeGlissementPour(const Duration(milliseconds: 200)), const Duration(seconds: 1));
+      expect(dureeGlissementPour(const Duration(seconds: 5)), const Duration(seconds: 5));
+      expect(dureeGlissementPour(const Duration(seconds: 15)), const Duration(seconds: 6));
+    });
+  });
+
+  group('accroche à l\'itinéraire', () {
+    // Tracé vers le nord puis vers l'est (un virage), ~110 m par branche.
+    const trace = [LatLng(12.6392, -8.0029), LatLng(12.6402, -8.0029), LatLng(12.6402, -8.0019)];
+
+    test('à 10 m du tracé : ramené sur la route, au milieu du segment', () {
+      final p = projeterSurTrace(const LatLng(12.6397, -8.00281), trace)!;
+      expect(p.longitude, closeTo(-8.0029, 1e-9));
+      expect(p.latitude, closeTo(12.6397, 1e-6));
+    });
+    test('mesuré aux segments, pas aux points du tracé', () {
+      // Milieu d'un long segment, loin de ses deux extrémités : accroché.
+      const long = [LatLng(12.6392, -8.0029), LatLng(12.6492, -8.0029)]; // ~1,1 km
+      expect(projeterSurTrace(const LatLng(12.6442, -8.00281), long), isNotNull);
+    });
+    test('à plus de 30 m : position réelle (détour)', () {
+      expect(projeterSurTrace(const LatLng(12.6397, -8.0025), trace), isNull);
+    });
+    test('sans tracé : rien à accrocher', () {
+      expect(projeterSurTrace(const LatLng(12.6397, -8.0029), const []), isNull);
     });
   });
 

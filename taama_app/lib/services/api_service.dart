@@ -758,14 +758,19 @@ class ApiService {
     required double lng,
     String? typeTransport,
   }) async {
-    final params = {
-      'lat': lat.toString(),
-      'lng': lng.toString(),
-      if (typeTransport != null) 'type': typeTransport,
-    };
-    final uri = Uri.parse('$_baseUrl/trajets/conducteurs/proches/')
-        .replace(queryParameters: params);
-    final reponse = await http.get(uri, headers: _headers);
+    // POST : la position du client va dans le corps, jamais dans l'adresse
+    // (que le serveur écrit dans son journal d'accès).
+    final reponse = await http
+        .post(
+          Uri.parse('$_baseUrl/trajets/conducteurs/proches/'),
+          headers: _headers,
+          body: jsonEncode({
+            'lat': lat,
+            'lng': lng,
+            if (typeTransport != null) 'type': typeTransport,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse) as List<dynamic>;
   }
 }

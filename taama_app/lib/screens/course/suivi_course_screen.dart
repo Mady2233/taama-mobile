@@ -77,6 +77,7 @@ class SuiviCourseScreen extends StatelessWidget {
     this.positionClient,
     this.positionDestination,
     this.positionChauffeur,
+    this.glissementChauffeur,
     this.itineraire = const [],
     this.minutesAvantArrivee,
     this.distanceKm,
@@ -116,6 +117,10 @@ class SuiviCourseScreen extends StatelessWidget {
   final LatLng? positionClient;
   final LatLng? positionDestination;
   final LatLng? positionChauffeur;
+
+  /// Durée du glissement du véhicule vers [positionChauffeur] (voir
+  /// VehiculeCarte.glissement) ; null : glissement court par défaut.
+  final Duration? glissementChauffeur;
   final List<LatLng> itineraire;
 
   final int? minutesAvantArrivee;
@@ -183,6 +188,7 @@ class SuiviCourseScreen extends StatelessWidget {
                       id: 'course',
                       position: positionChauffeur!,
                       miseEnAvant: true,
+                      glissement: glissementChauffeur,
                     ),
                 ],
                 itineraire: itineraire,
