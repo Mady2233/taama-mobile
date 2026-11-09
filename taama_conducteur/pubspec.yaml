@@ -50,6 +50,8 @@ dependencies:
   cached_network_image: ^3.4.1
   audioplayers: ^6.1.0
   package_info_plus: ^9.0.1
+  # Mise à jour plein écran de Google Play. La 5.x exige Flutter 3.44.
+  in_app_update: ^4.2.5
 
 dev_dependencies:
   flutter_test:
