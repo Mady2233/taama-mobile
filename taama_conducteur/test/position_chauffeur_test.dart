@@ -5,6 +5,9 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:taama_conducteur/services/geometrie_itineraire.dart';
 import 'package:taama_conducteur/services/location_service.dart';
 import 'package:taama_conducteur/services/polling_premier_plan.dart';
 
@@ -48,6 +51,77 @@ void main() {
     test('seuil de déplacement propre au canal de course', () {
       expect(_envoyer(depuis: 5, metres: 10, metresMin: 10), isTrue);
       expect(_envoyer(depuis: 5, metres: 9, metresMin: 10), isFalse);
+    });
+  });
+
+  group('canal de course', () {
+    Position mesure({double precision = 8, double vitesse = 10, double cap = 90}) => Position(
+          latitude: 12.6392,
+          longitude: -8.0029,
+          timestamp: DateTime.fromMillisecondsSinceEpoch(1700000000000),
+          accuracy: precision,
+          altitude: 0,
+          altitudeAccuracy: 0,
+          heading: cap,
+          headingAccuracy: 0,
+          speed: vitesse,
+          speedAccuracy: 0,
+        );
+
+    test('mesure à plus de 50 m : gardée pour plus tard, sauf si rien n’est parti depuis 15 s', () {
+      expect(LocationService.mesureAssezPrecise(50, const Duration(seconds: 5)), isTrue);
+      expect(LocationService.mesureAssezPrecise(51, const Duration(seconds: 5)), isFalse);
+      expect(LocationService.mesureAssezPrecise(120, const Duration(seconds: 15)), isTrue);
+      expect(LocationService.mesureAssezPrecise(120, null), isTrue);
+    });
+
+    test('message : précision, cap, vitesse et heure de la mesure', () {
+      expect(LocationService.messagePosition(mesure()), {
+        'lat': 12.6392,
+        'lng': -8.0029,
+        'precision': 8.0,
+        'cap': 90.0,
+        'vitesse': 10.0,
+        't': 1700000000000,
+      });
+    });
+
+    test('à l’arrêt, pas de cap (le GPS renvoie souvent 0)', () {
+      expect(LocationService.messagePosition(mesure(vitesse: 0.5)).containsKey('cap'), isFalse);
+    });
+
+    test('un seul canal par course, oublié une fois arrêté', () {
+      final accueil = LocationService.pourCourse('41');
+      expect(identical(LocationService.pourCourse('41'), accueil), isTrue);
+      expect(LocationService.coursesSuivies, contains('41'));
+      accueil.arreter();
+      expect(LocationService.coursesSuivies, isNot(contains('41')));
+      expect(identical(LocationService.pourCourse('41'), accueil), isFalse);
+      LocationService.pourCourse('41').arreter();
+    });
+
+    test('aucun canal connecté : l’envoi HTTP « en ligne » continue', () {
+      expect(LocationService.canalDeCourseConnecte, isFalse);
+    });
+  });
+
+  group('écart à l’itinéraire', () {
+    // Ligne droite de ~1,1 km vers le nord, sans point intermédiaire.
+    const trace = [LatLng(12.6392, -8.0029), LatLng(12.6492, -8.0029)];
+
+    test('mesuré aux segments : au milieu d’une longue ligne droite, sur la route', () {
+      expect(distanceAuTrace(const LatLng(12.6442, -8.0029), trace), lessThan(1));
+      expect(mesureHorsTrace(const LatLng(12.6442, -8.0029), 5, trace), isFalse);
+    });
+
+    test('à ~110 m de la route : hors du tracé', () {
+      expect(distanceAuTrace(const LatLng(12.6442, -8.0019), trace), closeTo(109, 2));
+      expect(mesureHorsTrace(const LatLng(12.6442, -8.0019), 5, trace), isTrue);
+    });
+
+    test('mesure imprécise ou sans tracé : jamais un recalcul', () {
+      expect(mesureHorsTrace(const LatLng(12.6442, -8.0019), 31, trace), isFalse);
+      expect(mesureHorsTrace(const LatLng(12.6442, -8.0019), 5, const []), isFalse);
     });
   });
 

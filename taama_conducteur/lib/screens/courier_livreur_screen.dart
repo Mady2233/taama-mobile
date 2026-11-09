@@ -46,7 +46,9 @@ class EcranCourierLivreur extends StatefulWidget {
 class _EcranCourierLivreurState extends State<EcranCourierLivreur>
     with SingleTickerProviderStateMixin {
   late Map<String, dynamic> _livraison;
-  final LocationService _locationService = LocationService();
+  // Canal partagé de la livraison : tant qu'il est connecté, l'envoi HTTP
+  // « en ligne » de la position est suspendu (LocationService).
+  late final LocationService _locationService = LocationService.pourCourse(_salleGps);
   bool _enChargement = false;
   bool _gpsActif = false;
   bool _succes = false;
@@ -58,15 +60,15 @@ class _EcranCourierLivreurState extends State<EcranCourierLivreur>
 
   String get _statut => _livraison['statut']?.toString() ?? '';
 
+  String get _salleGps => _livraison['room_gps']?.toString() ?? 'courier_gps_${_livraison['id']}';
+
   @override
   void initState() {
     super.initState();
     _livraison = widget.livraison;
     // GPS seulement pour une livraison réellement en cours.
     if (_statutsActifs.contains(_statut)) {
-      _locationService.demarrerEnvoiPosition(
-        _livraison['room_gps']?.toString() ?? 'courier_gps_${_livraison['id']}',
-      );
+      _locationService.demarrerEnvoiPosition(_salleGps);
       _gpsActif = true;
     }
   }

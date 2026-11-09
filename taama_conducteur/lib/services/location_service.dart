@@ -45,6 +45,27 @@ class LocationService {
   // qui gère déjà ses erreurs de flux indépendamment.
   static const Duration _delaiReconnexionInitial = Duration(seconds: 2);
   static const Duration _delaiReconnexionMax = Duration(seconds: 20);
+  // Pendant une course, une mesure moins précise n'est pas diffusée au client
+  // (le véhicule sauterait), sauf si rien n'est parti depuis
+  // _intervalleHeartbeat : mieux vaut une position approximative qu'un
+  // marqueur figé.
+  static const double _precisionMaxCourseMetres = 50;
+
+  /// Un seul canal par course, quel que soit l'écran qui le demande (accueil,
+  /// navigation, livraison) : chaque position ne part qu'une fois, et le
+  /// client ne la reçoit jamais en double.
+  static final Map<String, LocationService> _parCourse = {};
+
+  static LocationService pourCourse(String demandeId) =>
+      _parCourse.putIfAbsent(demandeId, LocationService.new);
+
+  /// Courses dont le canal est ouvert.
+  static List<String> get coursesSuivies => List.of(_parCourse.keys);
+
+  /// Un canal de course connecté met déjà à jour la position du chauffeur
+  /// côté serveur : l'envoi HTTP « en ligne » est alors suspendu (données,
+  /// batterie), et reprend dès que le canal se ferme.
+  static bool get canalDeCourseConnecte => _parCourse.values.any((s) => s._connecte);
 
   WebSocketChannel? _channel;
   StreamSubscription? _streamSubscription;
@@ -89,6 +110,12 @@ class LocationService {
   bool get connecte => _connecte;
   bool get enLigne => _enLigne;
 
+  /// demarrerEnvoiPosition a déjà été appelé pour ce canal (même sans
+  /// succès, autorisation refusée par exemple) : ne pas le rappeler à chaque
+  /// rafraîchissement de l'accueil.
+  bool get envoiDemande => _envoiDemande;
+  bool _envoiDemande = false;
+
   /// Réglages Android de TOUS les suivis GPS du chauffeur (en ligne, course,
   /// navigation, livraison). geolocator n'ouvre qu'un seul flux par app : tant
   /// qu'il existe, un nouvel appel le renvoie et ignore les réglages passés.
@@ -130,6 +157,27 @@ class LocationService {
         metresParcourus >= metresMin &&
         depuisDernierEnvoi >= _intervalleMinimumEntreEnvois;
   }
+
+  /// Une mesure de précision [precisionMetres] part-elle sur le canal de
+  /// course ? Oui si elle est assez précise, ou si rien n'est parti depuis
+  /// [_intervalleHeartbeat] (ou jamais).
+  static bool mesureAssezPrecise(double precisionMetres, Duration? depuisDernierEnvoi) =>
+      precisionMetres <= _precisionMaxCourseMetres ||
+      depuisDernierEnvoi == null ||
+      depuisDernierEnvoi >= _intervalleHeartbeat;
+
+  /// Message d'une position sur le canal de course. Précision, cap, vitesse
+  /// et heure de la mesure en plus : le serveur les relaie au client s'ils
+  /// sont plausibles. Cap seulement en mouvement (à l'arrêt, le GPS renvoie
+  /// souvent 0).
+  static Map<String, Object> messagePosition(Position p) => {
+        'lat': p.latitude,
+        'lng': p.longitude,
+        if (p.accuracy > 0) 'precision': p.accuracy,
+        if (p.speed > 1.5 && p.heading >= 0) 'cap': p.heading,
+        if (p.speed >= 0) 'vitesse': p.speed,
+        't': p.timestamp.millisecondsSinceEpoch,
+      };
 
   /// Établit la connexion WebSocket avec timeout et gestion d'erreur.
   Future<bool> _connecter(String demandeId) async {
@@ -216,30 +264,55 @@ class LocationService {
   /// Côté CONDUCTEUR : démarre l'envoi de position GPS pendant une course —
   /// flux continu (pas un polling toutes les 3s) protégé par un service en
   /// foreground, pour continuer même écran verrouillé/app en arrière-plan.
+  ///
+  /// Idempotent : sur un canal déjà ouvert (par la navigation, par exemple),
+  /// ajoute seulement le flux GPS s'il manque.
   Future<void> demarrerEnvoiPosition(String demandeId) async {
-    if (!_arrete) return; // Déjà démarré (ou reconnexion en cours)
+    _envoiDemande = true;
+    if (_arrete) {
+      final ouvert = await _ouvrirCanal(demandeId);
+      if (!ouvert) return; // permissions refusées : rien n'a démarré
+    }
 
-    final permissionsOk = await _verifierPermissions();
-    if (!permissionsOk) return;
+    // Flux GPS d'envoi démarré même si la première connexion a échoué : il
+    // reprend dès la reconnexion (envoyerMesure n'envoie rien tant que le
+    // canal est coupé). Avant, un premier échec ne démarrait jamais le flux,
+    // et le client ne voyait plus le chauffeur de toute la course.
+    _streamPositionEnvoi ??= Geolocator.getPositionStream(
+      locationSettings: _parametresPositionArrierePlan(),
+    ).listen(
+      envoyerMesure,
+      onError: (e) => debugPrint('[LocationService] Erreur flux envoi : $e'),
+    );
+  }
 
+  /// Ouvre le canal d'envoi de [demandeId] (connexion, ou reconnexion
+  /// planifiée si elle échoue). Faux seulement si les permissions GPS sont
+  /// refusées. Verrou posé avant le premier await : deux appels rapprochés
+  /// n'ouvrent jamais deux connexions.
+  Future<bool> _ouvrirCanal(String demandeId) async {
     _arrete = false;
     _demandeIdActive = demandeId;
     _callbackPositionActif = null; // mode envoi : rien à réécouter après reconnexion
     _delaiReconnexion = _delaiReconnexionInitial;
 
-    final connexionOk = await _connecter(demandeId);
-    if (!connexionOk) {
-      _planifierReconnexion();
-      return;
+    final permissionsOk = await _verifierPermissions();
+    if (!permissionsOk) {
+      // Rien n'a démarré. Le canal reste connu (envoiDemande) : l'accueil ne
+      // redemande pas l'autorisation à chaque rafraîchissement.
+      _arrete = true;
+      _demandeIdActive = null;
+      return false;
     }
-    _ecouterEtatConnexion();
 
-    _streamPositionEnvoi = Geolocator.getPositionStream(
-      locationSettings: _parametresPositionArrierePlan(),
-    ).listen(
-      (position) => envoyerPosition(position.latitude, position.longitude),
-      onError: (e) => debugPrint('[LocationService] Erreur flux envoi : $e'),
-    );
+    if (_arrete) return false; // arreter() appelé pendant la vérification
+    final connexionOk = await _connecter(demandeId);
+    if (connexionOk) {
+      _ecouterEtatConnexion();
+    } else {
+      _planifierReconnexion();
+    }
+    return true;
   }
 
   /// Établit uniquement la connexion WebSocket d'envoi, SANS démarrer de
@@ -249,29 +322,15 @@ class LocationService {
   /// position via envoyerPosition() au lieu de refaire un 2e appel GPS.
   Future<bool> connecterPourEnvoi(String demandeId) async {
     if (!_arrete) return _connecte; // Déjà démarré (ou reconnexion en cours)
-
-    final permissionsOk = await _verifierPermissions();
-    if (!permissionsOk) return false;
-
-    _arrete = false;
-    _demandeIdActive = demandeId;
-    _callbackPositionActif = null;
-    _delaiReconnexion = _delaiReconnexionInitial;
-
-    final connexionOk = await _connecter(demandeId);
-    if (!connexionOk) {
-      _planifierReconnexion();
-      return false;
-    }
-    _ecouterEtatConnexion();
-    return true;
+    final ouvert = await _ouvrirCanal(demandeId);
+    return ouvert && _connecte;
   }
 
-  /// Envoie une position déjà obtenue par l'appelant — aucun appel GPS ici,
-  /// contrairement à _envoyerPositionActuelle(). À utiliser après
-  /// connecterPourEnvoi(), jamais après demarrerEnvoiPosition() (qui gère
-  /// déjà son propre envoi périodique).
-  void envoyerPosition(double lat, double lng) {
+  /// Envoie une position déjà obtenue par l'appelant — aucun appel GPS ici.
+  /// Plusieurs écrans peuvent la passer pour la même mesure (accueil et
+  /// navigation, sur le même canal partagé) : le seuil ci-dessous n'en laisse
+  /// partir qu'une.
+  void envoyerMesure(Position position) {
     if (!_connecte || _channel == null) return;
 
     // Le flux émet toutes les 5 s, même à l'arrêt : pas d'envoi au client ni de
@@ -280,20 +339,22 @@ class LocationService {
     final precedentLat = _derniereLatWs;
     final precedentLng = _derniereLngWs;
     final dernierEnvoi = _dernierEnvoiWsLe;
+    final depuis = dernierEnvoi == null ? null : maintenant.difference(dernierEnvoi);
+    if (!mesureAssezPrecise(position.accuracy, depuis)) return;
     if (!doitEnvoyerPosition(
       ageMesure: Duration.zero,
-      depuisDernierEnvoi: dernierEnvoi == null ? null : maintenant.difference(dernierEnvoi),
+      depuisDernierEnvoi: depuis,
       metresParcourus: precedentLat == null || precedentLng == null
           ? null
-          : Geolocator.distanceBetween(precedentLat, precedentLng, lat, lng),
+          : Geolocator.distanceBetween(precedentLat, precedentLng, position.latitude, position.longitude),
       metresMin: 10,
     )) {
       return;
     }
-    _derniereLatWs = lat;
-    _derniereLngWs = lng;
+    _derniereLatWs = position.latitude;
+    _derniereLngWs = position.longitude;
     _dernierEnvoiWsLe = maintenant;
-    _channel?.sink.add(jsonEncode({'lat': lat, 'lng': lng}));
+    _channel?.sink.add(jsonEncode(messagePosition(position)));
   }
 
   /// Côté CONDUCTEUR : démarre le suivi GPS "en ligne" (indépendant d'une
@@ -390,6 +451,10 @@ class LocationService {
       _mesureRecueLe = maintenant;
     }
 
+    // En course, le canal WebSocket met déjà la position à jour côté serveur.
+    // Rien n'est noté comme envoyé : l'envoi reprend dès que le canal se ferme.
+    if (canalDeCourseConnecte) return;
+
     final precedente = _derniereEnvoyee;
     final dernierEnvoi = _dernierEnvoiLe;
     if (!doitEnvoyerPosition(
@@ -411,7 +476,8 @@ class LocationService {
         lat: position.latitude,
         lng: position.longitude,
       );
-      debugPrint('[LocationService] Position poussée : ${position.latitude}, ${position.longitude}');
+      // Jamais de position dans les journaux d'une release (logcat).
+      if (kDebugMode) debugPrint('[LocationService] Position poussée');
     } catch (e) {
       debugPrint('[LocationService] Erreur envoi position REST : $e');
     }
@@ -555,6 +621,8 @@ class LocationService {
 
   /// Arrête proprement l'envoi/écoute et ferme le WebSocket.
   void arreter() {
+    _parCourse.removeWhere((_, service) => identical(service, this));
+    _envoiDemande = false;
     _arrete = true;
     _timerReconnexion?.cancel();
     _timerReconnexion = null;

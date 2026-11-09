@@ -37,6 +37,7 @@ import '../theme/couleurs_taama.dart';
 import '../services/annulations_course.dart';
 import '../services/location_service.dart';
 import '../services/api_service.dart';
+import '../services/geometrie_itineraire.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../carte/fond_carte.dart';
 
@@ -123,12 +124,15 @@ class EcranNavigation extends StatefulWidget {
 
 class _EcranNavigationState extends State<EcranNavigation> {
   final MapController _mapController = MapController();
-  final LocationService _locationService = LocationService();
+  // Canal partagé de la course (accueil, navigation) : fermé seulement quand la
+  // course se termine ou est annulée, jamais en quittant cet écran.
+  late final LocationService _locationService = LocationService.pourCourse(widget.demandeId.toString());
   final FlutterTts _tts = FlutterTts();
 
   LatLng? _positionConducteur;
   LatLng? _positionClient;
-  LatLng? _positionDernierRecalcul;
+  int _mesuresHorsTrace = 0;
+  DateTime? _dernierRecalculLe;
   List<LatLng> _itineraire = [];
 
   // Instructions de navigation extraites des "steps" OSRM
@@ -220,7 +224,8 @@ class _EcranNavigationState extends State<EcranNavigation> {
   void dispose() {
     _abonnementAnnulation?.cancel();
     _positionStream?.cancel();
-    _locationService.arreter();
+    // Le canal de la course n'est pas fermé ici : la course continue, l'accueil
+    // garde la position du chauffeur à jour pour le client.
     _tts.stop();
     _mapController.dispose();
     super.dispose();
@@ -356,22 +361,10 @@ class _EcranNavigationState extends State<EcranNavigation> {
         }
       }
     } catch (e) {
-      debugPrint('[Navigation] Erreur géocodage : $e');
+      // Type seul : l'adresse cherchée figurerait dans le message.
+      debugPrint('[Navigation] Erreur géocodage : ${e.runtimeType}');
     }
     return null;
-  }
-
-  /// Ne recalcule l'itinéraire que si le conducteur s'est écarté de plus de
-  /// 50m de la route tracée — évite de spammer OSRM à chaque tick de 3s.
-  bool _estHorsItineraire() {
-    if (_itineraire.isEmpty || _positionConducteur == null) return false;
-    const Distance distance = Distance();
-    double distanceMin = double.infinity;
-    for (final point in _itineraire) {
-      final d = distance(_positionConducteur!, point);
-      if (d < distanceMin) distanceMin = d;
-    }
-    return distanceMin > 50;
   }
 
   String _texteInstruction(String type, String modifier) {
@@ -494,7 +487,9 @@ class _EcranNavigationState extends State<EcranNavigation> {
       }
       if (mounted) setState(() => _erreurItineraire = true);
     } catch (e) {
-      debugPrint('[Navigation] Erreur calcul itinéraire OSRM : $e');
+      // Type seul : le message d'une erreur réseau contient l'adresse appelée,
+      // donc la position du chauffeur et du client.
+      debugPrint('[Navigation] Erreur calcul itinéraire OSRM : ${e.runtimeType}');
       if (mounted) setState(() => _erreurItineraire = true);
     }
   }
@@ -705,7 +700,7 @@ class _EcranNavigationState extends State<EcranNavigation> {
   /// Quitte l'écran SANS terminer la course (elle reste en cours ; on peut
   /// revenir via « Naviguer »).
   void _quitter() {
-    _locationService.arreter();
+    // Canal de la course gardé ouvert : elle continue (voir dispose).
     _positionStream?.cancel();
     Navigator.pop(context);
   }
@@ -813,15 +808,22 @@ class _EcranNavigationState extends State<EcranNavigation> {
       });
 
       // Réutilise cette même position pour le client — pas de 2e requête
-      // GPS séparée pour ça.
-      _locationService.envoyerPosition(position.latitude, position.longitude);
+      // GPS séparée pour ça (canal partagé : jamais envoyée deux fois).
+      _locationService.envoyerMesure(position);
 
-      // Le flux émet aussi à l'arrêt : un seul recalcul par endroit, jamais une
-      // requête d'itinéraire toutes les 5 s pour un chauffeur immobile.
-      final dernierCalcul = _positionDernierRecalcul;
-      if (_estHorsItineraire() &&
-          (dernierCalcul == null || const Distance()(dernierCalcul, nouvellePosition) >= 10)) {
-        _positionDernierRecalcul = nouvellePosition;
+      // Recalcul seulement après [mesuresHorsTraceAvantRecalcul] mesures
+      // précises consécutives hors du tracé, et jamais plus souvent que
+      // [intervalleMinRecalcul] : un écart du GPS ne relance plus OSRM, et un
+      // vrai détour ne l'appelle plus toutes les 5 s.
+      _mesuresHorsTrace = mesureHorsTrace(nouvellePosition, position.accuracy, _itineraire)
+          ? _mesuresHorsTrace + 1
+          : 0;
+      final dernierCalcul = _dernierRecalculLe;
+      final maintenant = DateTime.now();
+      if (_mesuresHorsTrace >= mesuresHorsTraceAvantRecalcul &&
+          (dernierCalcul == null || maintenant.difference(dernierCalcul) >= intervalleMinRecalcul)) {
+        _dernierRecalculLe = maintenant;
+        _mesuresHorsTrace = 0;
         await _calculerItineraire();
       }
 

@@ -75,8 +75,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
   bool _sansProfil = false; // 403 : compte sans profil chauffeur
   String? _erreurDemandes; // dernier rafraîchissement des demandes en échec
 
-  // Une position GPS est envoyée en continu pour chaque demande "en route"
-  final Map<int, LocationService> _servicesLocalisation = {};
+  // Une position GPS est envoyée en continu pour chaque demande "en route",
+  // sur le canal partagé de la course (LocationService.pourCourse).
 
   // Position GPS envoyée en continu tant que le conducteur est "disponible",
   // même sans course en cours (canal général "disponibilite").
@@ -119,8 +119,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     WidgetsBinding.instance.removeObserver(this);
     ConfigApp.paiementActif.removeListener(_surChangementPaiement);
     _polling.suspendre();
-    for (final service in _servicesLocalisation.values) {
-      service.arreter();
+    for (final cle in LocationService.coursesSuivies) {
+      // Les livraisons (« courier_gps_… ») sont arrêtées par leur propre écran.
+      if (int.tryParse(cle) != null) LocationService.pourCourse(cle).arreter();
     }
     _serviceLocalisationGenerale.arreterSuiviPositionEnLigne();
     _carte.dispose();
@@ -188,18 +189,16 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
 
       for (final id in idsEnRoute) {
         // Hors écran, le service de position ne peut pas démarrer : au retour.
-        if (!_servicesLocalisation.containsKey(id) && appVisible()) {
-          final service = LocationService();
-          service.demarrerEnvoiPosition('$id');
-          _servicesLocalisation[id] = service;
-        }
+        // Sur un canal déjà ouvert par la navigation, ajoute seulement le flux
+        // GPS qui lui manque ; une seule demande par course.
+        final service = LocationService.pourCourse('$id');
+        if (!service.envoiDemande && appVisible()) service.demarrerEnvoiPosition('$id');
       }
 
-      final idsATerminer = _servicesLocalisation.keys
-          .where((id) => !idsEnRoute.contains(id))
-          .toList();
-      for (final id in idsATerminer) {
-        _servicesLocalisation.remove(id)?.arreter();
+      for (final cle in LocationService.coursesSuivies) {
+        final id = int.tryParse(cle);
+        // Les livraisons (« courier_gps_… ») sont gérées par leur propre écran.
+        if (id != null && !idsEnRoute.contains(id)) LocationService.pourCourse(cle).arreter();
       }
     } catch (e) {
       debugPrint('[SuiviPosition] Erreur synchronisation : $e');
