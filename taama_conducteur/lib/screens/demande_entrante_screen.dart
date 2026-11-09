@@ -28,6 +28,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import '../services/api_service.dart';
 import '../services/demande_entrante_navigator.dart';
+import '../services/prix_ajustable.dart';
 import '../services/sonnerie_service.dart';
 import '../theme/couleurs_taama.dart';
 import '../utils/format.dart';
@@ -81,6 +82,22 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   int _secondesRestantes = _dureeCompteARebours;
   Timer? _timerCompteARebours;
 
+  // ─── Prix ajustable (limites envoyées par le serveur) ───
+  // Null : ni − ni +, seulement « Accepter » au prix standard.
+  PrixAjustable? _prixAjustable;
+  // Prix de la course choisi, AVANT promo (ce que reçoit le serveur).
+  int? _prixChoisi;
+  // Prix proposé, en attente de la réponse du client.
+  bool _enAttenteClient = false;
+  int _secondesClient = 0;
+  Timer? _timerAttente;
+  bool _verificationEnCours = false;
+  // Fin d'attente sans course (refus ou délai) : message et bouton Fermer.
+  String? _issueAttente;
+  // Le client voit 30 s, le serveur expire à 40 s : au-delà de cette marge,
+  // l'écran conclut seul, même sans réponse du réseau.
+  static const int _attenteMaxSecondes = 50;
+
   LatLng? _positionActuelle;
   int? _etaMinutes;
   double? _distanceKm;
@@ -126,6 +143,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   @override
   void dispose() {
     _timerCompteARebours?.cancel();
+    _timerAttente?.cancel();
     _anneau.dispose();
     _entree.dispose();
     _pulse.dispose();
@@ -159,6 +177,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
 
       setState(() {
         _demande = actuelle.first;
+        _initialiserPrix(actuelle.first);
         _chargement = false;
       });
       _demarrerCompteARebours();
@@ -171,7 +190,10 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       // garde anti-double-accept reste de toute façon côté serveur
       // (select_for_update dans accepter_demande).
       if (_demande != null) {
-        setState(() => _chargement = false);
+        setState(() {
+          _initialiserPrix(_demande!);
+          _chargement = false;
+        });
         _demarrerCompteARebours();
         _calculerPositionEtEta();
       } else {
@@ -208,6 +230,30 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
     _timerCompteARebours?.cancel();
     _anneau.stop();
   }
+
+  void _initialiserPrix(Map<String, dynamic> demande) {
+    _prixAjustable = PrixAjustable.depuisJson(demande['prix_ajustable']);
+    _prixChoisi = _prixAjustable?.standard;
+  }
+
+  int? get _prixEstime => num.tryParse(_demande?['prix_estime']?.toString() ?? '')?.toInt();
+
+  /// Réduction promo du client (prix standard moins ce qu'il paie) : le
+  /// chauffeur voit toujours le montant qu'il encaissera.
+  int get _reduction {
+    final limites = _prixAjustable;
+    final estime = _prixEstime;
+    if (limites == null || estime == null) return 0;
+    return math.max(0, limites.standard - estime);
+  }
+
+  int? get _prixAffiche {
+    final choisi = _prixChoisi;
+    if (_prixAjustable == null || choisi == null) return _prixEstime;
+    return math.max(0, choisi - _reduction);
+  }
+
+  bool get _prixModifie => _prixAjustable != null && _prixChoisi != _prixAjustable!.standard;
 
   double? get _departLat => (_demande?['depart_lat'] as num?)?.toDouble();
   double? get _departLng => (_demande?['depart_lng'] as num?)?.toDouble();
@@ -308,21 +354,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       // forcément à null, donc je ne dois pas m'y fier ici.
       final demandeAcceptee = await ApiService.accepterDemande(widget.demandeId);
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => EcranNavigation(
-            demandeId: widget.demandeId,
-            destination: demandeAcceptee['destination']?.toString() ?? '',
-            positionClient: (_departLat != null && _departLng != null)
-                ? LatLng(_departLat!, _departLng!)
-                : null,
-            destinationLat: (demandeAcceptee['destination_lat'] as num?)?.toDouble(),
-            destinationLng: (demandeAcceptee['destination_lng'] as num?)?.toDouble(),
-            telephoneClient: demandeAcceptee['client_telephone']?.toString(),
-            arrets: extraireArrets(demandeAcceptee['arrets']),
-          ),
-        ),
-      );
+      _ouvrirNavigation(demandeAcceptee);
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.statusCode == 409) {
@@ -351,6 +383,129 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
         SnackBar(content: Text(_messageErreurLisible(e))),
       );
     }
+  }
+
+  /// Course acceptée (au prix standard, ou au prix proposé une fois le client
+  /// d'accord) : navigation vers le client. La demande passée est celle du
+  /// serveur après acceptation : elle seule porte client_telephone.
+  void _ouvrirNavigation(Map<String, dynamic> demandeAcceptee) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => EcranNavigation(
+          demandeId: widget.demandeId,
+          destination: demandeAcceptee['destination']?.toString() ?? '',
+          positionClient: (_departLat != null && _departLng != null)
+              ? LatLng(_departLat!, _departLng!)
+              : null,
+          destinationLat: (demandeAcceptee['destination_lat'] as num?)?.toDouble(),
+          destinationLng: (demandeAcceptee['destination_lng'] as num?)?.toDouble(),
+          telephoneClient: demandeAcceptee['client_telephone']?.toString(),
+          arrets: extraireArrets(demandeAcceptee['arrets']),
+        ),
+      ),
+    );
+  }
+
+  /// Envoie le prix choisi (≠ standard) : la course reste réservée à ce
+  /// chauffeur jusqu'à la réponse du client, attendue ensuite à l'écran.
+  Future<void> _proposer() async {
+    final prix = _prixChoisi;
+    if (_enTraitement || prix == null) return;
+    SonnerieService.instance.arreter();
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _enTraitement = true;
+      _acceptationEnCours = true;
+    });
+    _arreterCompteARebours();
+
+    try {
+      final reponse = await ApiService.proposerPrix(widget.demandeId, prix);
+      if (!mounted) return;
+      final restantes = ((reponse['contre_offre'] as Map?)?['secondes_restantes'] as num?)?.toInt();
+      setState(() {
+        _enAttenteClient = true;
+        _acceptationEnCours = false;
+        _secondesClient = restantes ?? 30;
+      });
+      _demarrerAttente();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode == 404) {
+        _fermer();
+        return;
+      }
+      // Prix refusé par le serveur (limites changées, déjà deux propositions…) :
+      // retour au prix standard, la course reste acceptable normalement.
+      setState(() {
+        _enTraitement = false;
+        _acceptationEnCours = false;
+        _prixAjustable = null;
+        _prixChoisi = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _enTraitement = false;
+        _acceptationEnCours = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_messageErreurLisible(e))));
+    }
+  }
+
+  /// Compte à rebours du client et vérification toutes les 3 s : course
+  /// acceptée → navigation ; course partie (refus, délai) → message.
+  void _demarrerAttente() {
+    _timerAttente?.cancel();
+    var secondes = 0;
+    _timerAttente = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      secondes++;
+      if (_secondesClient > 0) setState(() => _secondesClient--);
+      if (secondes % 3 == 0) _verifierReponseClient();
+      if (secondes >= _attenteMaxSecondes) {
+        _finAttente('Pas de réponse du client : la course passe à un autre chauffeur.');
+      }
+    });
+  }
+
+  Future<void> _verifierReponseClient() async {
+    if (_verificationEnCours || !_enAttenteClient) return;
+    _verificationEnCours = true;
+    try {
+      final demandes = await ApiService.mesDemandesAssignees();
+      if (!mounted || !_enAttenteClient) return;
+      final actuelle = demandes
+          .cast<Map<String, dynamic>>()
+          .where((d) => d['id'] == widget.demandeId)
+          .firstOrNull;
+      if (actuelle == null) {
+        _finAttente('Le client garde le prix standard : la course passe à un autre chauffeur.');
+      } else if (actuelle['statut'] == 'en_route') {
+        _timerAttente?.cancel();
+        _ouvrirNavigation(actuelle);
+      }
+    } catch (e) {
+      // Réseau instable : nouvelle vérification au prochain tour.
+      debugPrint('[DemandeEntrante] Vérification de la réponse du client : ${e.runtimeType}');
+    } finally {
+      _verificationEnCours = false;
+    }
+  }
+
+  void _finAttente(String message) {
+    _timerAttente?.cancel();
+    if (!mounted) return;
+    DemandeEntranteNavigator.marquerRefusee(widget.demandeId);
+    setState(() {
+      _enAttenteClient = false;
+      _enTraitement = false;
+      _issueAttente = message;
+    });
   }
 
   /// Message affiché au conducteur pour une erreur réseau/connexion —
@@ -409,8 +564,9 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      // Pas de retour arrière accidentel pendant le traitement d'un tap.
-      canPop: !_enTraitement,
+      // Pas de retour arrière accidentel pendant le traitement d'un tap, ni
+      // pendant l'attente de la réponse du client (au plus 50 s).
+      canPop: !_enTraitement && !_enAttenteClient,
       child: Scaffold(
         backgroundColor: CouleursTaama.indigo,
         body: _chargement
@@ -614,7 +770,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   Widget _panneau(Map<String, dynamic> demande) {
     final destination = demande['destination']?.toString() ?? '';
     final typeTransport = demande['type_transport']?.toString() ?? '';
-    final prix = num.tryParse(demande['prix_estime']?.toString() ?? '');
+    final prix = _prixAffiche;
     final reduit = MediaQuery.disableAnimationsOf(context);
 
     return Container(
@@ -673,6 +829,20 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                   ),
                 ],
               ),
+              // Prix ajustable : seulement si le serveur en a envoyé les limites.
+              if (_prixAjustable != null && _prixChoisi != null && !_enAttenteClient && _issueAttente == null) ...[
+                const SizedBox(height: 10),
+                _SelecteurPrix(
+                  libelle: _libelleEcart,
+                  pas: _prixAjustable!.pas,
+                  surBaisser: _enTraitement || !_prixAjustable!.peutBaisser(_prixChoisi!)
+                      ? null
+                      : () => setState(() => _prixChoisi = _prixAjustable!.baisser(_prixChoisi!)),
+                  surMonter: _enTraitement || !_prixAjustable!.peutMonter(_prixChoisi!)
+                      ? null
+                      : () => setState(() => _prixChoisi = _prixAjustable!.monter(_prixChoisi!)),
+                ),
+              ],
               const SizedBox(height: 14),
 
               // Badges
@@ -737,11 +907,100 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                 ),
               ),
               const SizedBox(height: 18),
-              _buildBoutons(),
+              if (_issueAttente != null)
+                _buildIssueAttente()
+              else if (_enAttenteClient)
+                _buildAttenteClient()
+              else
+                _buildBoutons(),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  String get _libelleEcart {
+    final limites = _prixAjustable;
+    final choisi = _prixChoisi;
+    if (limites == null || choisi == null || choisi == limites.standard) return 'Prix standard';
+    final ecart = choisi - limites.standard;
+    return '${ecart > 0 ? '+' : '−'}${formaterFcfa(ecart.abs())} sur le prix standard';
+  }
+
+  Widget _buildAttenteClient() {
+    final reduit = MediaQuery.disableAnimationsOf(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: CouleursTaama.indigo.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: reduit
+                    ? const Icon(Icons.hourglass_top_rounded, size: 20, color: CouleursTaama.terreCuite)
+                    : const CircularProgressIndicator(strokeWidth: 2.5, color: CouleursTaama.terreCuite),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'En attente de la réponse du client',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: CouleursTaama.indigo),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _secondesClient > 0
+                ? 'Il a encore $_secondesClient s pour accepter ${formaterFcfa(_prixAffiche ?? 0)}.'
+                : 'Réponse attendue d’un instant à l’autre…',
+            style: const TextStyle(fontSize: 14, color: CouleursTaama.grisTexte),
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: (_secondesClient / 30).clamp(0.0, 1.0),
+              minHeight: 6,
+              color: CouleursTaama.terreCuite,
+              backgroundColor: CouleursTaama.terreCuite.withValues(alpha: 0.15),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIssueAttente() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          _issueAttente!,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: CouleursTaama.indigo),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 56,
+          child: ElevatedButton(
+            onPressed: _fermer,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: CouleursTaama.indigo,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            ),
+            child: const Text('Fermer', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+          ),
+        ),
+      ],
     );
   }
 
@@ -797,7 +1056,8 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
             child: SizedBox(
               height: 60,
               child: ElevatedButton(
-                onPressed: _enTraitement ? null : _accepter,
+                // Prix changé : le client doit d'abord accepter ce prix.
+                onPressed: _enTraitement ? null : (_prixModifie ? _proposer : _accepter),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green.shade600,
                   disabledBackgroundColor: Colors.green.shade300,
@@ -811,13 +1071,13 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                         height: 22,
                         child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                       )
-                    : const Row(
+                    : Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.check_circle_rounded, size: 24),
-                          SizedBox(width: 8),
-                          Text('Accepter',
-                              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+                          Icon(_prixModifie ? Icons.send_rounded : Icons.check_circle_rounded, size: 24),
+                          const SizedBox(width: 8),
+                          Text(_prixModifie ? 'Proposer ce prix' : 'Accepter',
+                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
                         ],
                       ),
               ),
@@ -830,6 +1090,52 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
 }
 
 // ─── Widgets ───
+
+/// − et + autour de l'écart au prix standard. Un bouton à sa limite (ou
+/// pendant un envoi) est grisé : son action existe, le serveur ne l'accepterait
+/// simplement pas.
+class _SelecteurPrix extends StatelessWidget {
+  const _SelecteurPrix({
+    required this.libelle,
+    required this.pas,
+    required this.surBaisser,
+    required this.surMonter,
+  });
+
+  final String libelle;
+  final int pas;
+  final VoidCallback? surBaisser;
+  final VoidCallback? surMonter;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        IconButton.filledTonal(
+          onPressed: surBaisser,
+          tooltip: 'Baisser le prix de ${formaterFcfa(pas)}',
+          iconSize: 26,
+          style: IconButton.styleFrom(minimumSize: const Size(52, 52)),
+          icon: const Icon(Icons.remove_rounded),
+        ),
+        Expanded(
+          child: Text(
+            libelle,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: CouleursTaama.indigo),
+          ),
+        ),
+        IconButton.filledTonal(
+          onPressed: surMonter,
+          tooltip: 'Monter le prix de ${formaterFcfa(pas)}',
+          iconSize: 26,
+          style: IconButton.styleFrom(minimumSize: const Size(52, 52)),
+          icon: const Icon(Icons.add_rounded),
+        ),
+      ],
+    );
+  }
+}
 
 /// Grand anneau du compte à rebours : fluide, blanc → or → rouge.
 class _AnneauCompteARebours extends StatelessWidget {

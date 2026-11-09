@@ -419,6 +419,20 @@ class ApiService {
     return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
+  /// Propose un autre prix que le prix standard (pas de 100 F, limites
+  /// envoyées par le serveur dans `prix_ajustable`). [prix] : prix de la
+  /// course avant promo. Renvoie la demande, en attente de la réponse du client.
+  static Future<Map<String, dynamic>> proposerPrix(int demandeId, int prix) async {
+    final reponse = await http
+        .post(
+          Uri.parse('$_baseUrl/trajets/demandes/$demandeId/proposer-prix/'),
+          headers: _headers,
+          body: jsonEncode({'prix': prix}),
+        )
+        .timeout(const Duration(seconds: 12));
+    return _traiterReponse(reponse) as Map<String, dynamic>;
+  }
+
   static Future<void> refuserDemande(int demandeId) async {
     final reponse = await http
         .post(Uri.parse('$_baseUrl/trajets/demandes/$demandeId/refuser/'), headers: _headers)
