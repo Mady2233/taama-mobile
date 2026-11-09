@@ -407,6 +407,9 @@ class ApiService {
         if (dateHeurePlanifiee != null)
           'date_heure_planifiee': dateHeurePlanifiee.toIso8601String(),
         if (codePromo != null && codePromo.isNotEmpty) 'code_promo': codePromo,
+        // Cette version sait afficher le prix proposé par un chauffeur
+        // (CarteContreOffre) : sans ce champ, le serveur n'en propose jamais.
+        'contre_offre': true,
       }),
     );
     // Cas particulier AVANT _traiterReponse (qui ne garde qu'un message
@@ -751,6 +754,29 @@ class ApiService {
       headers: {'Content-Type': 'application/json'},
     );
     return _traiterReponse(reponse) as List<dynamic>;
+  }
+
+  /// Réponse du client au prix proposé par le chauffeur. Null : réponse
+  /// enregistrée. Sinon le code du 409, qui n'est pas une panne : la
+  /// proposition n'est plus valable (délai dépassé, déjà répondue, chauffeur
+  /// plus libre) et la page recharge la course.
+  static Future<String?> repondreContreOffre(int demandeId, {required bool accepter}) async {
+    final reponse = await http
+        .post(
+          Uri.parse('$_baseUrl/trajets/demandes/$demandeId/contre-offre/repondre/'),
+          headers: _headers,
+          body: jsonEncode({'decision': accepter ? 'accepter' : 'refuser'}),
+        )
+        .timeout(const Duration(seconds: 12));
+    if (reponse.statusCode == 409) {
+      try {
+        return (jsonDecode(reponse.body) as Map)['code']?.toString() ?? 'CONTRE_OFFRE_CLOSE';
+      } catch (_) {
+        return 'CONTRE_OFFRE_CLOSE';
+      }
+    }
+    _traiterReponse(reponse);
+    return null;
   }
 
   static Future<List<dynamic>> conducteursProches({

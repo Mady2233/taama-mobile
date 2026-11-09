@@ -1424,8 +1424,8 @@ class _BlocTrajet extends StatelessWidget {
                   children: [
                     Text(
                       paiementActif
-                          ? 'Prix fixe · portefeuille Taama'
-                          : 'Prix fixe · paiement en espèces au chauffeur',
+                          ? 'Prix annoncé · portefeuille Taama'
+                          : 'Prix annoncé · paiement en espèces au chauffeur',
                       style: const TextStyle(
                         fontSize: 11,
                         color: TaamaColors.onNightFaint,

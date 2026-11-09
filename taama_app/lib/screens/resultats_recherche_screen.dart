@@ -761,7 +761,7 @@ class _EcranDemandeInstantaneeState
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
-                              'Prix fixé à l’avance · payé en espèces au chauffeur',
+                              'Prix annoncé avant la course · payé en espèces au chauffeur',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.85), fontSize: 11.5),

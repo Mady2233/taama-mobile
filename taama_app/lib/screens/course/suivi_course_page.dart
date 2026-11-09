@@ -16,8 +16,10 @@ import '../../services/api_service.dart';
 import '../../services/config_app.dart';
 import '../../services/location_service.dart';
 import '../../services/routing_service.dart';
+import '../../theme/taama_theme.dart';
 import '../../utils/format.dart';
 import '../../utils/geometrie_trace.dart';
+import '../../widgets/carte_contre_offre.dart';
 import '../../widgets/dialogue_annulation_course.dart';
 import '../../widgets/taama_map.dart' show dureeGlissementPour;
 import '../../widgets/widget_sos.dart';
@@ -86,6 +88,14 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
   bool _paiementEnCours = false;
   bool _noteEnCours = false;
 
+  /// Prix proposé par le chauffeur, en attente de ma réponse (statut
+  /// 'contre_offre') ; null sinon.
+  ContreOffreClient? _contreOffre;
+  int _secondesContreOffre = 0;
+  Timer? _timerContreOffre;
+  /// true : « Accepter » en cours d'envoi ; false : « Refuser » ; null : rien.
+  bool? _reponseContreOffre;
+
   LatLng? _positionDepart;
   LatLng? _positionDestination;
   LatLng? _positionChauffeur;
@@ -135,6 +145,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timerPolling?.cancel();
+    _timerContreOffre?.cancel();
     _arreterSuiviPosition();
     super.dispose();
   }
@@ -159,6 +170,9 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
     _enPremierPlan = false;
     _timerPolling?.cancel();
     _timerPolling = null;
+    // Recalé sur le serveur au retour (_rafraichir).
+    _timerContreOffre?.cancel();
+    _timerContreOffre = null;
     if (_suiviPositionDemarre) _arreterSuiviPosition();
   }
 
@@ -225,7 +239,12 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
         _annulationGratuiteSecondes = (demande['annulation_gratuite_secondes'] as num?)?.toInt();
         _penaliteAnnulationTardive = (demande['penalite_annulation_tardive'] as num?)?.toInt() ?? 0;
         _dejaNote = demande['deja_note'] as bool? ?? false;
+        _contreOffre = nouveauStatut == 'contre_offre'
+            ? ContreOffreClient.depuisJson(demande['contre_offre'])
+            : null;
+        _secondesContreOffre = _contreOffre?.secondesRestantes ?? 0;
       });
+      _synchroniserMinuterieContreOffre();
 
       // La course a été annulée (par le chauffeur, un opérateur, ou par
       // l'utilisateur lui-même ailleurs) : SuiviCourseScreen ne modélise
@@ -558,7 +577,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
   }
 
   Widget _ecran(BuildContext context, bool paiementActif) {
-    return SuiviCourseScreen(
+    final ecran = SuiviCourseScreen(
       statut: _statut,
       chauffeur: _chauffeur,
       mapController: _mapController,
@@ -599,5 +618,75 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       onNoter: _noter,
       onTerminer: () => Navigator.of(context).popUntil((route) => route.isFirst),
     );
+
+    // Prix proposé par un chauffeur : la course attend ma réponse, par-dessus
+    // l'écran de recherche.
+    final offre = _contreOffre;
+    if (offre == null) return ecran;
+    return Stack(
+      children: [
+        ecran,
+        const Positioned.fill(child: ColoredBox(color: TaamaColors.voile)),
+        Positioned(
+          left: TaamaSpacing.lg,
+          right: TaamaSpacing.lg,
+          bottom: 0,
+          child: SafeArea(
+            top: false,
+            minimum: const EdgeInsets.only(bottom: TaamaSpacing.lg),
+            child: CarteContreOffre(
+              offre: offre,
+              secondesRestantes: _secondesContreOffre,
+              reponseEnCours: _reponseContreOffre,
+              onAccepter: () => _repondreContreOffre(accepter: true),
+              onRefuser: () => _repondreContreOffre(accepter: false),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Décompte local entre deux rafraîchissements (recalé sur le serveur à
+  /// chacun) ; arrêté dès qu'il n'y a plus de proposition.
+  void _synchroniserMinuterieContreOffre() {
+    if (_contreOffre == null) {
+      _timerContreOffre?.cancel();
+      _timerContreOffre = null;
+      return;
+    }
+    _timerContreOffre ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _secondesContreOffre <= 0) return;
+      setState(() => _secondesContreOffre--);
+    });
+  }
+
+  Future<void> _repondreContreOffre({required bool accepter}) async {
+    final offre = _contreOffre;
+    if (offre == null || _reponseContreOffre != null) return;
+    setState(() => _reponseContreOffre = accepter);
+    final prixStandard = formaterFcfa(offre.prixActuel);
+    try {
+      final code = await ApiService.repondreContreOffre(widget.demandeId, accepter: accepter);
+      if (!mounted) return;
+      final message = switch (code) {
+        null => accepter ? null : 'Nous cherchons un autre chauffeur au prix de $prixStandard.',
+        'CHAUFFEUR_INDISPONIBLE' => 'Ce chauffeur n’est plus disponible : nous en cherchons un autre au prix de $prixStandard.',
+        'CONTRE_OFFRE_EXPIREE' => 'Délai dépassé : nous cherchons un autre chauffeur au prix de $prixStandard.',
+        _ => 'Cette proposition n’est plus valable.',
+      };
+      if (message != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      await _rafraichir();
+    } catch (e) {
+      debugPrint('[SuiviCoursePage] Réponse au prix proposé : ${e.runtimeType}');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Réponse non envoyée : vérifie ta connexion et réessaie.')),
+      );
+    } finally {
+      if (mounted) setState(() => _reponseContreOffre = null);
+    }
   }
 }
