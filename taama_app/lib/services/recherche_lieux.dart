@@ -1,5 +1,5 @@
-// Suggestions de destinations, sans réseau : quartiers, localités et repères de
-// Bamako déjà embarqués dans l'app (lib/donnees/). Aucune data consommée, et la
+// Suggestions de destinations, sans réseau : quartiers, localités, repères et rues
+// de Bamako déjà embarqués dans l'app (lib/donnees/). Aucune data consommée, et la
 // politique d'usage de Nominatim interdit de l'appeler à chaque lettre.
 //
 // Tolère les orthographes courantes (Kalabancoura, Magnanbougou, Kinzambougou) et
@@ -10,8 +10,31 @@ import 'dart:math' as math;
 
 import '../donnees/carte_bamako.dart';
 import '../donnees/localites_bamako.dart';
+import '../donnees/rues_bamako.dart';
 
 const int _longueurMinSaisie = 1;
+
+/// Au-delà, un seul point de la voie ne dit pas où aller (une avenue traverse le
+/// quartier) : le client précise le point sur la carte avant toute estimation.
+const int longueurAPreciserMetres = 400;
+
+/// Rang des rues : après les quartiers, localités et repères.
+const int _rangRue = 6;
+
+/// Une saisie avec un numéro (« rue 312 ») : jamais de faute de frappe tolérée
+/// sur une rue, sinon « Rue 313 » proposerait la Rue 312.
+final RegExp _chiffre = RegExp(r'\d');
+
+// Abréviations courantes, développées avant la recherche.
+final RegExp _rueCollee = RegExp(r'^(?:r|rue)(?=\d)');
+const Map<String, String> _abreviations = {'av': 'avenue', 'bd': 'boulevard', 'boul': 'boulevard', 'rte': 'route'};
+
+/// « r312 », « rue312 » → « rue 312 » ; « av kasse » → « avenue kasse ». Prend
+/// un texte déjà passé par [normaliserLieu].
+String _developperAbreviations(String normalise) {
+  final mots = normalise.replaceFirst(_rueCollee, 'rue ').split(' ');
+  return mots.map((m) => _abreviations[m] ?? m).join(' ');
+}
 
 /// En dessous, chercher une orthographe à l'intérieur d'un nom ne donne que du bruit.
 const int _longueurMinOrthographeDansLeNom = 4;
@@ -37,11 +60,12 @@ class LieuTrouve {
     required this.adresse,
     required this.lat,
     required this.lng,
+    this.aPreciser = false,
   });
 
   final String nom;
 
-  /// « Quartier », « Banque · Badalabougou »…
+  /// « Quartier », « Banque · Badalabougou », « Voie · Hamdallaye »…
   final String detail;
 
   /// Texte envoyé au serveur et lu par le chauffeur : « Ecobank, Badalabougou »
@@ -49,6 +73,10 @@ class LieuTrouve {
   final String adresse;
   final double lat;
   final double lng;
+
+  /// Voie trop longue pour un seul point (voir [longueurAPreciserMetres]) : le
+  /// point exact se confirme sur la carte avant toute estimation.
+  final bool aPreciser;
 }
 
 class _Entree {
@@ -63,6 +91,8 @@ class _Entree {
     this.lng,
     this.categorie, {
     this.localite = false,
+    this.quartierRue,
+    this.longueurRue = 0,
   });
 
   final String nom;
@@ -83,6 +113,17 @@ class _Entree {
 
   /// Ville, village ou hameau du Grand Bamako, absent de la carte.
   final bool localite;
+
+  /// Quartier de rattachement d'une rue ; null pour tout le reste.
+  final String? quartierRue;
+
+  /// Longueur de la rue dans ce quartier, en mètres.
+  final int longueurRue;
+
+  bool get rue => quartierRue != null;
+
+  /// Quartier ou localité : ce qu'on cherche quand on tape un nom de zone.
+  bool get zone => categorie == null && !rue;
 }
 
 /// Rapport entre un lieu et la saisie, du plus fort au plus faible.
@@ -205,6 +246,8 @@ final List<_Entree> _index = () {
     double lng,
     CategorieRepere? categorie, {
     bool localite = false,
+    String? quartierRue,
+    int longueurRue = 0,
   }) {
     final normalise = normaliserLieu(nom);
     final mots = normalise.split(' ');
@@ -219,6 +262,8 @@ final List<_Entree> _index = () {
       lng,
       categorie,
       localite: localite,
+      quartierRue: quartierRue,
+      longueurRue: longueurRue,
     );
   }
 
@@ -227,6 +272,8 @@ final List<_Entree> _index = () {
     for (final l in localitesBamako) entree(l.nom, 2, l.lat, l.lng, null, localite: true),
     for (final r in reperesBamako)
       entree(r.nom, 2 + (importanceRepere[r.categorie] ?? 3), r.lat, r.lng, r.categorie),
+    for (final r in ruesBamako)
+      entree(r.nom, _rangRue, r.lat, r.lng, null, quartierRue: r.quartier, longueurRue: r.longueur),
   ].where((e) => e.normalise.isNotEmpty).toList();
 }();
 
@@ -256,7 +303,7 @@ _Rapport? _rapport(_Entree e, String saisie, List<String> mots, String cle) {
   if (e.normalise.startsWith(saisie)) return _Rapport.debutDuNom;
   final debutPhonetique = cle.length >= 2 &&
       (e.cle.startsWith(cle) || e.clesMots.any((mot) => mot.startsWith(cle)));
-  if (debutPhonetique && e.categorie == null) return _Rapport.zoneAutreOrthographe;
+  if (debutPhonetique && e.zone) return _Rapport.zoneAutreOrthographe;
   if (mots.every((m) => e.mots.any((mot) => mot.startsWith(m)))) return _Rapport.motsDuNom;
   if (e.normalise.contains(saisie)) return _Rapport.dansLeNom;
   if (debutPhonetique) return _Rapport.autreOrthographe;
@@ -267,6 +314,18 @@ _Rapport? _rapport(_Entree e, String saisie, List<String> mots, String cle) {
 }
 
 LieuTrouve _versLieu(_Entree e) {
+  final quartierRue = e.quartierRue;
+  if (quartierRue != null) {
+    final aPreciser = e.longueurRue > longueurAPreciserMetres;
+    return LieuTrouve(
+      nom: e.nom,
+      detail: aPreciser ? 'Voie · $quartierRue · point à préciser sur la carte' : 'Voie · $quartierRue',
+      adresse: '${e.nom}, $quartierRue',
+      lat: e.lat,
+      lng: e.lng,
+      aPreciser: aPreciser,
+    );
+  }
   final categorie = e.categorie;
   if (categorie == null) {
     return LieuTrouve(
@@ -290,16 +349,18 @@ LieuTrouve _versLieu(_Entree e) {
 /// Suggestions pour [saisie], les plus pertinentes d'abord. Une seule lettre : les
 /// quartiers et localités qui commencent par elle, sans les repères.
 List<LieuTrouve> rechercherLieux(String saisie, {int max = 8}) {
-  final normalise = normaliserLieu(saisie);
-  if (normalise.length < _longueurMinSaisie) return const [];
+  final brut = normaliserLieu(saisie);
+  if (brut.length < _longueurMinSaisie) return const [];
+  final normalise = _developperAbreviations(brut);
   final mots = normalise.split(' ');
   final cle = clePhonetique(normalise);
+  final avecNumero = _chiffre.hasMatch(normalise);
 
   final trouves = <(_Rapport, _Entree)>[];
   final restants = <_Entree>[];
-  if (normalise.length == 1) {
+  if (brut.length == 1) {
     for (final e in _index) {
-      if (e.categorie == null && e.normalise.startsWith(normalise)) {
+      if (e.zone && e.normalise.startsWith(normalise)) {
         trouves.add((_Rapport.debutDuNom, e));
       }
     }
@@ -315,14 +376,16 @@ List<LieuTrouve> rechercherLieux(String saisie, {int max = 8}) {
   }
 
   // Fautes de frappe : un quartier bien écrit n'en attire pas un autre à sa place, et
-  // les repères ne sont cherchés ainsi que si rien d'autre n'a été trouvé.
-  if (!trouves.any((t) => t.$2.categorie == null)) {
+  // les repères et les rues ne sont cherchés ainsi que si rien d'autre n'a été
+  // trouvé ; jamais une rue quand la saisie porte un numéro.
+  if (!trouves.any((t) => t.$2.zone)) {
     final rienTrouve = trouves.isEmpty;
     for (final e in restants) {
-      if (e.categorie != null && !rienTrouve) continue;
+      if (!e.zone && !rienTrouve) continue;
+      if (e.rue && avecNumero) continue;
       final fautes = _fautes(e, cle);
       if (fautes == null) continue;
-      final lien = e.categorie == null && fautes == 1
+      final lien = e.zone && fautes == 1
           ? _Rapport.zoneUneFaute
           : (fautes == 1 ? _Rapport.uneFaute : _Rapport.deuxFautes);
       trouves.add((lien, e));
@@ -349,11 +412,12 @@ List<LieuTrouve> rechercherLieux(String saisie, {int max = 8}) {
 }
 
 /// Le lieu qui porte exactement ce nom, s'il est sans ambiguïté. Null si plusieurs
-/// endroits portent ce nom (21 Ecobank) : mieux vaut géocoder que deviner.
+/// endroits portent ce nom (21 Ecobank) : mieux vaut géocoder que deviner. Jamais
+/// une rue : un nom de voie tapé sans la choisir ne dit pas où sur la voie.
 LieuTrouve? lieuExact(String nom) {
   final normalise = normaliserLieu(nom);
   if (normalise.isEmpty) return null;
-  final memes = _index.where((e) => e.normalise == normalise).toList();
+  final memes = _index.where((e) => !e.rue && e.normalise == normalise).toList();
   if (memes.isEmpty) return null;
   final premier = memes.first;
   final limite = _ecartMemeLieu * _ecartMemeLieu;

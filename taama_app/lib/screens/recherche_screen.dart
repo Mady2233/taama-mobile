@@ -24,6 +24,7 @@ import '../services/api_service.dart';
 import '../services/recherche_lieux.dart';
 import '../theme/taama_theme.dart';
 import '../widgets/champ_adresse_lieu.dart';
+import 'preciser_point_rue.dart';
 
 const int _longueurMaxAdresse = 120;
 
@@ -135,8 +136,12 @@ class _EcranRechercheState extends State<EcranRecherche> {
     Navigator.pop(context, DestinationChoisie(d, lat: lieu?.lat, lng: lieu?.lng));
   }
 
-  void _choisirLieu(LieuTrouve lieu) {
-    Navigator.pop(context, DestinationChoisie(lieu.adresse, lat: lieu.lat, lng: lieu.lng));
+  /// Une longue voie se précise d'abord sur la carte ; revenir sans confirmer
+  /// laisse le client sur la recherche.
+  Future<void> _choisirLieu(LieuTrouve lieu) async {
+    final choisi = await preciserSiNecessaire(context, lieu);
+    if (choisi == null || !mounted) return;
+    Navigator.pop(context, DestinationChoisie(choisi.adresse, lat: choisi.lat, lng: choisi.lng));
   }
 
   /// Un favori enregistré depuis une suggestion garde ses coordonnées.

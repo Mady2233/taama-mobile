@@ -140,6 +140,53 @@ void main() {
     });
   });
 
+  group('rues', () {
+    List<LieuTrouve> rue428(String saisie) =>
+        rechercherLieux(saisie).where((l) => l.nom == 'Rue 428').toList();
+
+    test('une rue numérotée, dans chacun de ses quartiers', () {
+      final lieux = rue428('rue 428');
+      expect(lieux.map((l) => l.detail).toSet().length, greaterThan(1));
+      expect(lieux.map((l) => l.adresse), contains('Rue 428, Hamdallaye'));
+    });
+
+    test('écritures courantes : r428, rue428', () {
+      expect(rue428('r428'), isNotEmpty);
+      expect(rue428('rue428'), isNotEmpty);
+    });
+
+    test('abréviations : av, bd, rte', () {
+      expect(rechercherLieux('av kasse').map((l) => l.nom), contains('Avenue Kasse Keita'));
+      expect(rechercherLieux('rte koulikoro').map((l) => l.nom), contains('Route de Koulikoro'));
+    });
+
+    test('un numéro mal tapé ne propose jamais une autre rue', () {
+      expect(rue428('rue 4289'), isEmpty);
+      expect(rechercherLieux('rue 4289').where((l) => l.detail.startsWith('Voie')), isEmpty);
+    });
+
+    test('une lettre : jamais une rue', () {
+      expect(rechercherLieux('r').where((l) => l.detail.startsWith('Voie')), isEmpty);
+    });
+
+    test('un quartier passe avant une rue qui porte son nom', () {
+      expect(rechercherLieux('hamdallaye').first.detail, 'Quartier');
+    });
+
+    test('voie longue : point à préciser sur la carte ; voie courte : son point', () {
+      final lieux = rue428('rue 428');
+      final niarela = lieux.singleWhere((l) => l.adresse == 'Rue 428, Niaréla');
+      final hamdallaye = lieux.singleWhere((l) => l.adresse == 'Rue 428, Hamdallaye');
+      expect(niarela.aPreciser, isTrue);
+      expect(niarela.detail, contains('point à préciser sur la carte'));
+      expect(hamdallaye.aPreciser, isFalse);
+    });
+
+    test('un nom de rue tapé sans le choisir : jamais deviné', () {
+      expect(lieuExact('Rue 428'), isNull);
+    });
+  });
+
   group('clePhonetique', () {
     String cle(String texte) => clePhonetique(normaliserLieu(texte));
 
@@ -227,6 +274,32 @@ void main() {
 
       expect(resultats.single?.nom, 'Quinzambougou');
       expect(resultats.single?.lat, isNotNull);
+    });
+
+    testWidgets('voie courte : choisie avec son point', (t) async {
+      final resultats = await ouvrir(t);
+      await t.enterText(find.byType(TextField).first, 'rue 428');
+      await t.pump();
+
+      await t.tap(find.text('Voie · Hamdallaye'));
+      await t.pumpAndSettle();
+
+      expect(resultats.single?.nom, 'Rue 428, Hamdallaye');
+      expect(resultats.single?.lat, isNotNull);
+    });
+
+    testWidgets('voie longue : la carte s’ouvre pour préciser le point', (t) async {
+      final resultats = await ouvrir(t);
+      await t.enterText(find.byType(TextField).first, 'rue 428');
+      await t.pump();
+
+      await t.tap(find.text('Voie · Niaréla · point à préciser sur la carte'));
+      await t.pump();
+      await t.pump(const Duration(seconds: 1));
+
+      expect(find.text('Où exactement, Rue 428 ?'), findsOneWidget);
+      expect(find.text('Confirmer la destination'), findsOneWidget);
+      expect(resultats, isEmpty); // rien n'est choisi tant que le point n'est pas confirmé
     });
 
     testWidgets('adresse « Domicile » : les suggestions apparaissent aussi', (t) async {

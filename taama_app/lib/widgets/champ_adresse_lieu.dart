@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../screens/preciser_point_rue.dart';
 import '../services/recherche_lieux.dart';
 import '../theme/taama_theme.dart';
 
@@ -46,12 +47,16 @@ class _ChampAdresseLieuState extends State<ChampAdresseLieu> {
     setState(() => _suggestions = rechercherLieux(texte, max: _maxSuggestions));
   }
 
-  void _choisir(LieuTrouve lieu) {
+  /// Une longue voie se précise d'abord sur la carte : une adresse enregistrée
+  /// (domicile, travail) garde ainsi le bon point.
+  Future<void> _choisir(LieuTrouve lieu) async {
+    final choisi = await preciserSiNecessaire(context, lieu);
+    if (choisi == null || !mounted) return;
     widget.controleur.value = TextEditingValue(
-      text: lieu.adresse,
-      selection: TextSelection.collapsed(offset: lieu.adresse.length),
+      text: choisi.adresse,
+      selection: TextSelection.collapsed(offset: choisi.adresse.length),
     );
-    widget.onLieu(lieu);
+    widget.onLieu(choisi);
     setState(() => _suggestions = const []);
   }
 

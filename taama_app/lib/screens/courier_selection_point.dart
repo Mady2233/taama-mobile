@@ -36,10 +36,17 @@ class EcranSelectionPointCourier extends StatefulWidget {
     super.key,
     required this.estCollecte,
     this.pointInitial,
+    this.titre,
+    this.libelleConfirmation,
   });
 
   final bool estCollecte;
   final PointCourier? pointInitial;
+
+  /// Titre et bouton : ceux de la livraison par défaut. Une destination de
+  /// course (rue à préciser) passe les siens.
+  final String? titre;
+  final String? libelleConfirmation;
 
   @override
   State<EcranSelectionPointCourier> createState() => _EcranSelectionPointCourierState();
@@ -298,7 +305,7 @@ class _EcranSelectionPointCourierState extends State<EcranSelectionPointCourier>
                             boxShadow: TaamaShadows.floating,
                           ),
                           child: Text(
-                            widget.estCollecte ? 'Où récupérer le colis ?' : 'Où livrer le colis ?',
+                            widget.titre ?? (widget.estCollecte ? 'Où récupérer le colis ?' : 'Où livrer le colis ?'),
                             style: TaamaText.body.copyWith(fontWeight: FontWeight.w800),
                           ),
                         ),
@@ -400,7 +407,8 @@ class _EcranSelectionPointCourierState extends State<EcranSelectionPointCourier>
                           ),
                         ),
                         child: Text(
-                          widget.estCollecte ? 'Confirmer la collecte' : 'Confirmer la livraison',
+                          widget.libelleConfirmation ??
+                              (widget.estCollecte ? 'Confirmer la collecte' : 'Confirmer la livraison'),
                           style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                         ),
                       ),
