@@ -76,6 +76,32 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # Polices de la charte (TaamaFonts) : Sora pour les titres, Manrope pour le
+  # texte. Licence SIL OFL (fichiers OFL-*.txt, affichés dans les licences de
+  # l'app). Graisses fixes tirées des polices variables de Google Fonts,
+  # réduites aux caractères utiles : ~270 Ko en tout. Les lettres bambara
+  # ɛ ɔ ɲ absentes de ces polices viennent de la police du téléphone.
+  assets:
+    - assets/fonts/OFL-Sora.txt
+    - assets/fonts/OFL-Manrope.txt
+  fonts:
+    - family: Sora
+      fonts:
+        - asset: assets/fonts/Sora-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Sora-ExtraBold.ttf
+          weight: 800
+    - family: Manrope
+      fonts:
+        - asset: assets/fonts/Manrope-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Manrope-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Manrope-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Manrope-ExtraBold.ttf
+          weight: 800
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

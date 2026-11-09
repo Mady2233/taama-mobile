@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/config_app.dart';
+import '../theme/taama_theme.dart';
+import '../widgets/taama/marque_taama.dart';
 import 'connexion_screen.dart';
 
 class EcranOnboarding extends StatefulWidget {
@@ -24,37 +26,34 @@ class _EcranOnboardingState extends State<EcranOnboarding>
       if (!page.paiement || ConfigApp.paiementActif.value) page,
   ];
 
-  final List<_OnboardingData> _toutesLesPages = [
+  final List<_OnboardingData> _toutesLesPages = const [
     _OnboardingData(
-      illustration: '🗺️',
-      gradient: [const Color(0xFF1C2B4A), const Color(0xFF2D4A7A)],
+      icone: Icons.map_rounded,
+      icones: [Icons.two_wheeler_rounded, Icons.directions_car_rounded, Icons.inventory_2_rounded],
+      accent: TaamaColors.routeNight,
       titreFr: 'Bamako à portée\nde main',
       titreBambara: 'Bamako bɛ e bolo\nla',
       descFr: 'Trouve un conducteur disponible\nprès de toi en quelques secondes.',
       descBambara: 'Sɔrɔ sigilen min bɛ i\nkɔrɔ joona.',
-      emoji1: '🚗', emoji2: '🏍️', emoji3: '📦',
-      accentColor: const Color(0xFF4A9EFF),
     ),
     _OnboardingData(
-      illustration: '💳',
-      gradient: [const Color(0xFFC8623D), const Color(0xFFD4844A)],
+      icone: Icons.account_balance_wallet_rounded,
+      icones: [Icons.phone_android_rounded, Icons.payments_rounded, Icons.check_circle_rounded],
+      accent: TaamaColors.star,
       paiement: true,
       titreFr: 'Paiement sécurisé\nvia Mobile Money',
       titreBambara: 'Sɔngɔ san ka ɲɛ\nMobile Money fɛ',
       descFr: 'Recharge ton compte Taama\navec Orange Money, Moov ou Wave.',
       descBambara: 'I ka Taama compte\nkɛnɛya Orange, Moov\nwala Wave fɛ.',
-      emoji1: '📱', emoji2: '💰', emoji3: '✅',
-      accentColor: const Color(0xFFFFD700),
     ),
     _OnboardingData(
-      illustration: '🛡️',
-      gradient: [const Color(0xFF1B5E20), const Color(0xFF2E7D32)],
+      icone: Icons.shield_rounded,
+      icones: [Icons.verified_user_rounded, Icons.my_location_rounded, Icons.sos_rounded],
+      accent: TaamaColors.accentMint,
       titreFr: 'Voyagez en\ntoute sécurité',
       titreBambara: 'Taa k\'i kɛnɛya\nla hɛrɛ la',
       descFr: 'Conducteurs vérifiés, suivi GPS\nen temps réel et bouton SOS.',
       descBambara: 'Sigilanw sɛbɛnnen,\nGPS lajɛlen ani\nSOS bouton.',
-      emoji1: '✅', emoji2: '📍', emoji3: '🆘',
-      accentColor: const Color(0xFF69F0AE),
     ),
   ];
 
@@ -99,323 +98,254 @@ class _EcranOnboardingState extends State<EcranOnboarding>
     );
   }
 
+  void _suivant() {
+    if (_pageActuelle < _pages.length - 1) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    } else {
+      _terminer();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final derniere = _pageActuelle == _pages.length - 1;
+    final accent = _pages[_pageActuelle].accent;
     return Scaffold(
-      body: Stack(
-        children: [
-          // Pages
-          PageView.builder(
-            controller: _pageController,
-            itemCount: _pages.length,
-            onPageChanged: (index) {
-              setState(() => _pageActuelle = index);
-              _animController.reset();
-              _animController.forward();
-            },
-            itemBuilder: (context, index) =>
-                _buildPage(_pages[index]),
-          ),
-
-          // Bouton passer (skip)
-          Positioned(
-            top: 56, right: 20,
-            child: TextButton(
-              onPressed: _terminer,
-              child: Text(
-                'Passer',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
-                  fontSize: 14,
-                ),
-              ),
-            ),
-          ),
-
-          // Indicateurs + bouton bas
-          Positioned(
-            bottom: 0, left: 0, right: 0,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(32, 24, 32, 48),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    Colors.black.withValues(alpha: 0.4),
-                  ],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
-              ),
-              child: Column(
-                children: [
-                  // Points indicateurs
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(_pages.length, (i) {
-                      final estActif = i == _pageActuelle;
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        margin: const EdgeInsets.symmetric(horizontal: 4),
-                        width: estActif ? 28 : 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: estActif
-                              ? Colors.white
-                              : Colors.white.withValues(alpha: 0.4),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      );
-                    }),
+      backgroundColor: TaamaColors.navy,
+      body: FondMarque(
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Bouton passer (skip)
+              Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 8, 12, 0),
+                  child: TextButton(
+                    onPressed: _terminer,
+                    style: TextButton.styleFrom(
+                      foregroundColor: TaamaColors.onNavyMuted,
+                      minimumSize: const Size(48, 48),
+                      textStyle: TaamaText.body.copyWith(fontSize: 14, fontWeight: FontWeight.w700),
+                    ),
+                    child: const Text('Passer'),
                   ),
-                  const SizedBox(height: 24),
+                ),
+              ),
 
-                  // Bouton suivant / commencer
-                  GestureDetector(
-                    onTap: () {
-                      if (_pageActuelle < _pages.length - 1) {
-                        _pageController.nextPage(
-                          duration: const Duration(milliseconds: 400),
-                          curve: Curves.easeInOut,
+              // Pages
+              Expanded(
+                child: PageView.builder(
+                  controller: _pageController,
+                  itemCount: _pages.length,
+                  onPageChanged: (index) {
+                    setState(() => _pageActuelle = index);
+                    _animController.reset();
+                    _animController.forward();
+                  },
+                  itemBuilder: (context, index) => FadeTransition(
+                    opacity: _fadeAnim,
+                    child: _PageOnboarding(data: _pages[index]),
+                  ),
+                ),
+              ),
+
+              // Indicateurs + bouton bas
+              Padding(
+                padding: const EdgeInsets.fromLTRB(28, 8, 28, 28),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(_pages.length, (i) {
+                        final estActif = i == _pageActuelle;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          width: estActif ? 28 : 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: estActif ? accent : TaamaColors.textOnDark.withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
                         );
-                      } else {
-                        _terminer();
-                      }
-                    },
-                    child: Container(
+                      }),
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
                       width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            _pageActuelle < _pages.length - 1
-                                ? 'Suivant'
-                                : 'Commencer',
-                            style: TextStyle(
-                              color: _pages[_pageActuelle].gradient[0],
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Icon(
-                            _pageActuelle < _pages.length - 1
-                                ? Icons.arrow_forward
-                                : Icons.rocket_launch,
-                            color: _pages[_pageActuelle].gradient[0],
-                          ),
-                        ],
+                      height: 56,
+                      child: FilledButton(
+                        onPressed: _suivant,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: TaamaColors.surface,
+                          foregroundColor: TaamaColors.navy,
+                          textStyle: TaamaText.body.copyWith(fontSize: 16.5, fontWeight: FontWeight.w800),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(derniere ? 'Commencer' : 'Suivant'),
+                            const SizedBox(width: 8),
+                            Icon(derniere ? Icons.check_rounded : Icons.arrow_forward_rounded, size: 20),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
+}
 
-  Widget _buildPage(_OnboardingData data) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: data.gradient,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Stack(
-        children: [
-          // Cercles décoratifs
-          Positioned(
-            top: -80, right: -60,
-            child: Container(
-              width: 280, height: 280,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.06),
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: 150, left: -80,
-            child: Container(
-              width: 200, height: 200,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withValues(alpha: 0.04),
-              ),
-            ),
-          ),
+class _PageOnboarding extends StatelessWidget {
+  const _PageOnboarding({required this.data});
 
-          // Contenu
-          Positioned.fill(
-            child: FadeTransition(
-              opacity: _fadeAnim,
-              child: SafeArea(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    return SingleChildScrollView(
-                      physics: const NeverScrollableScrollPhysics(),
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minHeight: constraints.maxHeight - 160,
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(32, 60, 32, 20),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              // Grande illustration emoji
-                              Container(
-                                width: 140, height: 140,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.white.withValues(alpha: 0.15),
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.2),
-                                    width: 2,
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    data.illustration,
-                                    style: const TextStyle(fontSize: 60),
-                                  ),
-                                ),
-                              ),
+  final _OnboardingData data;
 
-                              const SizedBox(height: 16),
-
-                              // Emojis secondaires animés
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [data.emoji1, data.emoji2, data.emoji3]
-                                    .map((e) => Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8),
-                                          child: Text(e,
-                                              style: const TextStyle(fontSize: 26)),
-                                        ))
-                                    .toList(),
-                              ),
-
-                              const SizedBox(height: 20),
-
-                              // Titre français
-                              Text(
-                                data.titreFr,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w900,
-                                  height: 1.2,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-
-                              const SizedBox(height: 8),
-
-                              // Titre Bambara (plus petit, italique)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  data.titreBambara,
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.8),
-                                    fontSize: 13,
-                                    fontStyle: FontStyle.italic,
-                                    height: 1.3,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-
-                              const SizedBox(height: 14),
-
-                              // Description française
-                              Text(
-                                data.descFr,
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.85),
-                                  fontSize: 14,
-                                  height: 1.4,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-
-                              const SizedBox(height: 6),
-
-                              // Description Bambara
-                              Text(
-                                data.descBambara,
-                                style: TextStyle(
-                                  color: data.accentColor.withValues(alpha: 0.9),
-                                  fontSize: 12,
-                                  fontStyle: FontStyle.italic,
-                                  height: 1.3,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, contraintes) => SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: contraintes.maxHeight),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Illustration : grande icône dans un halo de la couleur de la page
+              Container(
+                width: 168,
+                height: 168,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [data.accent.withValues(alpha: 0.35), data.accent.withValues(alpha: 0)],
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Container(
+                  width: 112,
+                  height: 112,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: TaamaColors.textOnDark.withValues(alpha: 0.10),
+                    border: Border.all(color: data.accent.withValues(alpha: 0.6), width: 2),
+                  ),
+                  child: Icon(data.icone, size: 54, color: TaamaColors.textOnDark),
                 ),
               ),
-            ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (final icone in data.icones)
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 6),
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: data.accent.withValues(alpha: 0.16),
+                      ),
+                      child: Icon(icone, size: 22, color: data.accent),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 28),
+
+              // Titre français
+              Text(
+                data.titreFr,
+                textAlign: TextAlign.center,
+                style: TaamaText.title.copyWith(
+                  fontSize: 30,
+                  height: 1.15,
+                  color: TaamaColors.textOnDark,
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Titre bambara
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                decoration: BoxDecoration(
+                  color: TaamaColors.textOnDark.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(TaamaRadius.sm),
+                ),
+                child: Text(
+                  data.titreBambara,
+                  textAlign: TextAlign.center,
+                  style: TaamaText.body.copyWith(
+                    fontSize: 13,
+                    fontStyle: FontStyle.italic,
+                    height: 1.3,
+                    color: TaamaColors.onNavyMuted,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Description française
+              Text(
+                data.descFr,
+                textAlign: TextAlign.center,
+                style: TaamaText.body.copyWith(
+                  fontSize: 15.5,
+                  height: 1.45,
+                  fontWeight: FontWeight.w600,
+                  color: TaamaColors.textOnDark.withValues(alpha: 0.88),
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Description bambara
+              Text(
+                data.descBambara,
+                textAlign: TextAlign.center,
+                style: TaamaText.body.copyWith(
+                  fontSize: 12.5,
+                  fontStyle: FontStyle.italic,
+                  height: 1.35,
+                  color: data.accent,
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
 class _OnboardingData {
-  final String illustration;
-  final List<Color> gradient;
+  final IconData icone;
+  final List<IconData> icones;
+  final Color accent;
   final String titreFr;
   final String titreBambara;
   final String descFr;
   final String descBambara;
-  final String emoji1, emoji2, emoji3;
-  final Color accentColor;
 
   /// Page liée au paiement dans l'app : masquée en mode gratuit.
   final bool paiement;
 
   const _OnboardingData({
-    required this.illustration,
-    required this.gradient,
+    required this.icone,
+    required this.icones,
+    required this.accent,
     required this.titreFr,
     required this.titreBambara,
     required this.descFr,
     required this.descBambara,
-    required this.emoji1,
-    required this.emoji2,
-    required this.emoji3,
-    required this.accentColor,
     this.paiement = false,
   });
 }

@@ -84,8 +84,8 @@ class TaamaShadows {
   ];
 }
 
-/// Polices de la v4 (accueil). Si elles ne sont pas encore déclarées dans
-/// pubspec.yaml, Flutter retombe sans erreur sur la police par défaut.
+/// Polices de la charte, embarquées dans l'app (pubspec.yaml, assets/fonts).
+/// Manrope est aussi la police par défaut de tout texte (TaamaTheme).
 class TaamaFonts {
   TaamaFonts._();
   static const String display = 'Sora'; // titres
@@ -133,7 +133,7 @@ class TaamaTheme {
       onSurface: TaamaColors.textPrimary,
     );
 
-    final base = ThemeData(useMaterial3: true, colorScheme: scheme);
+    final base = ThemeData(useMaterial3: true, colorScheme: scheme, fontFamily: TaamaFonts.body);
 
     return base.copyWith(
       scaffoldBackgroundColor: TaamaColors.background,

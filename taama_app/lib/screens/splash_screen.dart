@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../theme/couleurs_taama.dart';
+import '../theme/taama_theme.dart';
 import '../services/api_service.dart';
 import '../services/mise_a_jour.dart';
+import '../widgets/taama/marque_taama.dart';
 import 'mise_a_jour_requise_page.dart';
 import 'onboarding_screen.dart';
 import 'connexion_screen.dart';
@@ -147,142 +148,60 @@ class _EcranSplashState extends State<EcranSplash>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: TaamaColors.navy,
       body: AnimatedBuilder(
         animation: Listenable.merge([
           _logoController, _textController, _bgController
         ]),
         builder: (context, _) {
-          return Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Color.lerp(
-                    Colors.white,
-                    const Color(0xFF1C2B4A),
-                    _bgOpacity.value,
-                  )!,
-                  Color.lerp(
-                    Colors.white,
-                    const Color(0xFF3D2B6B),
-                    _bgOpacity.value,
-                  )!,
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
+          return FondMarque(
+            intensite: _bgOpacity.value,
             child: Stack(
               children: [
-                // Cercles décoratifs animés
-                Positioned(
-                  top: -100 + (100 * _bgOpacity.value),
-                  right: -80 + (80 * _bgOpacity.value),
-                  child: Opacity(
-                    opacity: _bgOpacity.value * 0.15,
-                    child: Container(
-                      width: 300, height: 300,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: -80 + (80 * _bgOpacity.value),
-                  left: -60 + (60 * _bgOpacity.value),
-                  child: Opacity(
-                    opacity: _bgOpacity.value * 0.1,
-                    child: Container(
-                      width: 250, height: 250,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: CouleursTaama.terreCuite,
-                      ),
-                    ),
-                  ),
-                ),
-
-                // Contenu central
+                // Logo, nom et promesse au centre
                 Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Logo animé
                       Opacity(
                         opacity: _logoOpacity.value,
                         child: Transform.scale(
                           scale: _logoScale.value,
-                          child: Container(
-                            width: 120, height: 120,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(28),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.3),
-                                width: 2,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.2),
-                                  blurRadius: 30,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(26),
-                              child: CustomPaint(
-                                painter: _LogoPainter(),
-                                size: const Size(120, 120),
-                              ),
-                            ),
-                          ),
+                          child: const LogoTaama(taille: 112),
                         ),
                       ),
                       const SizedBox(height: 28),
-
-                      // Texte animé
                       SlideTransition(
                         position: _textSlide,
                         child: FadeTransition(
                           opacity: _textOpacity,
                           child: Column(
                             children: [
-                              const Text(
-                                'taama',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 48,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: -1,
-                                ),
-                              ),
-                              Text(
-                                'Covoiturage à Bamako',
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w300,
-                                  letterSpacing: 1,
-                                ),
-                              ),
+                              const NomTaama(taille: 52),
                               const SizedBox(height: 6),
-                              // Slogan en Bambara
+                              Text(
+                                'VTC et moto-taxi à Bamako',
+                                style: TaamaText.body.copyWith(
+                                  fontSize: 16,
+                                  color: TaamaColors.onNavyMuted,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              // Slogan en bambara
                               Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 6),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
                                 decoration: BoxDecoration(
-                                  color: CouleursTaama.terreCuite
-                                      .withValues(alpha: 0.8),
-                                  borderRadius: BorderRadius.circular(20),
+                                  color: TaamaColors.textOnDark.withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(TaamaRadius.pill),
+                                  border: Border.all(color: TaamaColors.textOnDark.withValues(alpha: 0.14)),
                                 ),
                                 child: Text(
-                                  '"An b\'a sɔrɔ — On y arrive ensemble"',
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.95),
-                                    fontSize: 12,
+                                  '« An b\'a sɔrɔ » — On y arrive ensemble',
+                                  style: TaamaText.body.copyWith(
+                                    fontSize: 12.5,
                                     fontStyle: FontStyle.italic,
+                                    color: TaamaColors.textOnDark,
                                   ),
                                 ),
                               ),
@@ -294,33 +213,23 @@ class _EcranSplashState extends State<EcranSplash>
                   ),
                 ),
 
-                // Loader en bas
+                // Chargement en bas
                 Positioned(
-                  bottom: 60,
-                  left: 0, right: 0,
+                  bottom: 56,
+                  left: 0,
+                  right: 0,
                   child: FadeTransition(
                     opacity: _textOpacity,
-                    child: Column(
-                      children: [
-                        SizedBox(
-                          width: 40,
-                          child: LinearProgressIndicator(
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.2),
-                            valueColor: const AlwaysStoppedAnimation(
-                                Colors.white),
-                            borderRadius: BorderRadius.circular(2),
-                          ),
+                    child: Center(
+                      child: SizedBox(
+                        width: 48,
+                        child: LinearProgressIndicator(
+                          minHeight: 3,
+                          backgroundColor: TaamaColors.textOnDark.withValues(alpha: 0.15),
+                          valueColor: const AlwaysStoppedAnimation(TaamaColors.accentMint),
+                          borderRadius: BorderRadius.circular(2),
                         ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Chargement...',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.5),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -331,49 +240,4 @@ class _EcranSplashState extends State<EcranSplash>
       ),
     );
   }
-}
-
-// Dessine le logo Taama sur le splash
-class _LogoPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final sx = size.width / 512;
-    final sy = size.height / 512;
-
-    final paint = Paint()
-      ..color = CouleursTaama.terreCuite
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 28 * sx
-      ..strokeCap = StrokeCap.round;
-
-    final path = Path()
-      ..moveTo(110 * sx, 230 * sy)
-      ..cubicTo(
-        128 * sx, 278 * sy,
-        200 * sx, 296 * sy,
-        256 * sx, 344 * sy,
-      )
-      ..cubicTo(
-        312 * sx, 296 * sy,
-        384 * sx, 278 * sy,
-        402 * sx, 230 * sy,
-      );
-    canvas.drawPath(path, paint);
-
-    canvas.drawCircle(
-      Offset(110 * sx, 230 * sy), 22 * sx,
-      Paint()..color = Colors.white.withValues(alpha: 0.9),
-    );
-    canvas.drawCircle(
-      Offset(402 * sx, 230 * sy), 22 * sx,
-      Paint()..color = Colors.white.withValues(alpha: 0.9),
-    );
-    canvas.drawCircle(
-      Offset(256 * sx, 344 * sy), 18 * sx,
-      Paint()..color = CouleursTaama.or,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_) => false;
 }

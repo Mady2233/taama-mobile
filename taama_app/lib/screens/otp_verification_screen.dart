@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
+import '../theme/taama_theme.dart';
 import 'accueil_screen.dart';
 
 /// Deuxième écran : Vérification du code OTP
@@ -73,80 +74,107 @@ class _EcranVerificationOTPState extends State<EcranVerificationOTP> {
     }
   }
 
+  /// « 76000000 » → « +223 76 00 00 00 », espaces insécables (jamais coupé en
+  /// fin de ligne) ; tout autre format reste tel quel.
+  String get _numeroAffiche {
+    final chiffres = widget.numeroTelephone.replaceAll(RegExp(r'\D'), '');
+    if (chiffres.length != 8) return widget.numeroTelephone;
+    return ['+223', for (var i = 0; i < 8; i += 2) chiffres.substring(i, i + 2)].join(String.fromCharCode(0xA0));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: TaamaColors.background,
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        title: const Text('Vérification'),
-        backgroundColor: Colors.transparent,
-        elevation: 0, // Pour un design plat et dynamique
+        backgroundColor: TaamaColors.background,
+        foregroundColor: TaamaColors.textPrimary,
+        elevation: 0,
+        scrolledUnderElevation: 0,
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                'Code de vérification',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: TaamaColors.primarySoft,
+                    borderRadius: BorderRadius.circular(TaamaRadius.lg),
+                  ),
+                  child: const Icon(Icons.sms_rounded, size: 30, color: TaamaColors.primary),
+                ),
               ),
+              const SizedBox(height: 20),
+              Text('Code de vérification', style: TaamaText.title.copyWith(fontSize: 26)),
               const SizedBox(height: 8),
               // J'affiche le numéro pour confirmer à l'utilisateur
-              Text(
-                'Un code à 6 chiffres a été envoyé au ${widget.numeroTelephone}',
-                style: const TextStyle(fontSize: 16, color: Colors.grey),
+              Text.rich(
+                TextSpan(
+                  text: 'Entre le code à 6 chiffres envoyé au ',
+                  children: [
+                    TextSpan(
+                      text: _numeroAffiche,
+                      style: TaamaText.body.copyWith(fontSize: 15, fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+                style: TaamaText.muted.copyWith(fontSize: 15, fontWeight: FontWeight.w600, height: 1.4),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 28),
               // Mon champ de saisie OTP personnalisé
               TextField(
                 controller: _otpController,
                 keyboardType: TextInputType.number,
                 textAlign: TextAlign.center,
                 maxLength: 6, // Je limite à 6 chiffres max
-                style: const TextStyle(
-                    fontSize: 28, letterSpacing: 16, fontWeight: FontWeight.bold),
+                autofocus: true,
+                style: TaamaText.title.copyWith(fontSize: 30, letterSpacing: 14),
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly
                 ], // Uniquement des chiffres autorisés
                 decoration: InputDecoration(
-                  counterText: "", // Je cache le compteur "0/4" pour un look pro
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+                  counterText: '', // Je cache le compteur « 0/6 »
+                  hintText: '······',
+                  hintStyle: TaamaText.title.copyWith(fontSize: 30, letterSpacing: 14, color: TaamaColors.border),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 20),
+                ),
+                onSubmitted: (_) => _verifierEtContinuer(),
+              ),
+              // Espacement fixe (pas de Spacer) : dans un SingleChildScrollView,
+              // le contenu défile au lieu de déborder quand le clavier s'ouvre.
+              const SizedBox(height: 24),
+              SizedBox(
+                height: 56,
+                child: FilledButton(
+                  onPressed: _enChargement ? null : _verifierEtContinuer,
+                  style: FilledButton.styleFrom(
+                    textStyle: TaamaText.body.copyWith(fontSize: 16.5, fontWeight: FontWeight.w800),
                   ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Colors.amber, width: 2),
-                  ),
+                  child: _enChargement
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2.5, color: TaamaColors.textOnDark),
+                        )
+                      : const Text('Vérifier et commencer'),
                 ),
               ),
-              // Spacer() remplacé par un espacement fixe : à l'intérieur
-              // d'un SingleChildScrollView, Spacer() n'a pas de hauteur
-              // bornée dans laquelle s'étendre. Le SingleChildScrollView est
-              // nécessaire pour que le contenu défile au lieu de déborder
-              // (bandes jaune/noir) quand le clavier numérique s'ouvre et
-              // réduit l'espace disponible.
-              const SizedBox(height: 32),
-              ElevatedButton(
-                onPressed: _enChargement ? null : _verifierEtContinuer,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _enChargement ? null : () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  foregroundColor: TaamaColors.primary,
+                  minimumSize: const Size(0, 48),
+                  textStyle: TaamaText.body.copyWith(fontSize: 14.5, fontWeight: FontWeight.w800),
                 ),
-                child: _enChargement
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Text(
-                        'Vérifier et Commencer',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
+                child: const Text('Modifier le numéro'),
               ),
             ],
           ),

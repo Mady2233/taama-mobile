@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:firebase_core/firebase_core.dart';
 import 'carte/journal_sans_cle.dart';
 import 'config/api_config.dart';
@@ -24,6 +26,13 @@ void main() {
     // bien été pris en compte au build ?) — à retrouver dans les logs.
     debugPrint('ApiConfig.baseUrl = ${ApiConfig.baseUrl}');
     debugPrint('ApiConfig.wsUrl   = ${ApiConfig.wsUrl}');
+
+    // Licences des polices embarquées (SIL OFL), dans la page des licences.
+    LicenseRegistry.addLicense(() async* {
+      for (final (police, fichier) in const [('Sora', 'OFL-Sora.txt'), ('Manrope', 'OFL-Manrope.txt')]) {
+        yield LicenseEntryWithLineBreaks([police], await rootBundle.loadString('assets/fonts/$fichier'));
+      }
+    });
 
     // J'initialise Firebase avant de lancer l'app
     try {
