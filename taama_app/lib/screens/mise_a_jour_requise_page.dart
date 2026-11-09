@@ -1,7 +1,7 @@
 // lib/screens/mise_a_jour_requise_page.dart
 //
-// Logique de l'écran « Mise à jour requise » : ouvrir le Play Store, ou relancer
-// le démarrage (la version minimale a pu baisser entre-temps).
+// Logique de l'écran « Mise à jour requise » : lancer la mise à jour de Google
+// Play (sinon sa fiche), ou relancer le démarrage.
 
 import 'package:flutter/material.dart';
 
@@ -17,12 +17,26 @@ class PageMiseAJourRequise extends StatefulWidget {
 }
 
 class _PageMiseAJourRequiseState extends State<PageMiseAJourRequise> {
-  bool _playStoreIndisponible = false;
+  bool _enCours = false;
+  AvisMiseAJour? _avis;
 
   Future<void> _mettreAJour() async {
-    final ouvert = await MiseAJour.ouvrirPlayStore();
-    if (!mounted) return;
-    setState(() => _playStoreIndisponible = !ouvert);
+    if (_enCours) return;
+    setState(() {
+      _enCours = true;
+      _avis = null;
+    });
+    try {
+      final issue = await MiseAJour.mettreAJour();
+      if (!mounted) return;
+      setState(() => _avis = switch (issue) {
+            IssueMiseAJour.lancee => null,
+            IssueMiseAJour.annulee => AvisMiseAJour.annulee,
+            IssueMiseAJour.impossible => AvisMiseAJour.playStoreIndisponible,
+          });
+    } finally {
+      if (mounted) setState(() => _enCours = false);
+    }
   }
 
   void _reessayer() {
@@ -33,6 +47,7 @@ class _PageMiseAJourRequiseState extends State<PageMiseAJourRequise> {
   Widget build(BuildContext context) => EcranMiseAJourRequise(
         onMettreAJour: _mettreAJour,
         onReessayer: _reessayer,
-        playStoreIndisponible: _playStoreIndisponible,
+        enCours: _enCours,
+        avis: _avis,
       );
 }
