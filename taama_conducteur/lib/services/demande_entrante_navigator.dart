@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../screens/demande_entrante_screen.dart';
+import 'sonnerie_notification.dart';
 import 'sonnerie_service.dart';
 
 /// Clé de navigation globale, câblée sur le MaterialApp (voir main.dart) —
@@ -59,6 +60,9 @@ class DemandeEntranteNavigator {
     if (_idAffiche == demandeId || _idsRefuses.contains(demandeId)) return;
     _idAffiche = demandeId;
 
+    // Téléphone déverrouillé, l'écran s'ouvre : la sonnerie de la
+    // notification s'arrête, celle de l'app prend le relais (jamais deux).
+    unawaited(SonnerieNotification.arreter(demandeId));
     if (sonner) SonnerieService.instance.demarrer();
     try {
       await navState.push(

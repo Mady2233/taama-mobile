@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'annulations_course.dart';
 import 'api_service.dart';
 import 'demande_entrante_navigator.dart';
+import 'sonnerie_notification.dart';
 
 /// Canal Android général (messages, annulations…). Référencé également côté
 /// backend (envoyer_notification, trajets/notifications.py) et dans
@@ -42,16 +43,41 @@ final AndroidNotificationChannel _canalDemandesCourse = AndroidNotificationChann
   vibrationPattern: Int64List.fromList([0, 600, 300, 600, 300, 600]),
 );
 
-/// Handler de messages FCM reçus alors que l'app est en arrière-plan ou
-/// tuée. Doit être une fonction top-level (pas une méthode de classe) avec
-/// cette annotation exacte — exigé par le plugin firebase_messaging pour
-/// pouvoir relancer un isolate Dart dédié en dehors du cycle de vie normal
-/// de l'app. Ne fait rien de plus ici : pour un message avec un bloc
-/// `notification` (toujours le cas, voir envoyer_notification côté
-/// backend), Android affiche déjà la notification système — avec le son du
-/// canal indiqué par le backend — sans code Dart.
+/// Handler de messages FCM reçus alors que l'app est en arrière-plan, tuée,
+/// ou le téléphone verrouillé. Doit être une fonction top-level (pas une
+/// méthode de classe) avec cette annotation exacte — exigé par le plugin
+/// firebase_messaging pour pouvoir relancer un isolate Dart dédié en dehors
+/// du cycle de vie normal de l'app.
+///
+/// Android a déjà affiché la notification de FCM (bloc `notification`, voir
+/// envoyer_notification côté backend), qui ne sonne qu'une fois. Pour une
+/// nouvelle demande, elle est remplacée par une sonnerie en boucle
+/// (SonnerieNotification) ; une demande annulée coupe la sonnerie. Tout
+/// échec laisse la notification de FCM telle quelle.
 @pragma('vm:entry-point')
-Future<void> gestionnaireMessageArrierePlan(RemoteMessage message) async {}
+Future<void> gestionnaireMessageArrierePlan(RemoteMessage message) async {
+  final type = message.data['type'];
+  final demandeId = int.tryParse(message.data['demande_id']?.toString() ?? '');
+  if (demandeId == null || (type != 'nouvelle_demande' && type != 'demande_annulee')) return;
+  try {
+    final plugin = FlutterLocalNotificationsPlugin();
+    await plugin.initialize(
+      const InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher')),
+    );
+    if (type == 'nouvelle_demande') {
+      await SonnerieNotification.sonner(
+        plugin,
+        demandeId: demandeId,
+        titre: message.notification?.title,
+        texte: message.notification?.body,
+      );
+    } else {
+      await SonnerieNotification.arreter(demandeId, plugin: plugin);
+    }
+  } catch (_) {
+    // La notification de FCM reste affichée : elle sonne au moins une fois.
+  }
+}
 
 /// Gère tout ce qui concerne les notifications push :
 /// - Demande de permission à l'utilisateur
@@ -84,11 +110,23 @@ class NotificationService {
     if (!kIsWeb) {
       const parametresAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
       const parametres = InitializationSettings(android: parametresAndroid);
-      await _notificationsLocales.initialize(parametres);
+      // Toucher la sonnerie d'une demande (app en arrière-plan) : l'écran de
+      // la demande s'ouvre, sans resonner.
+      await _notificationsLocales.initialize(
+        parametres,
+        onDidReceiveNotificationResponse: (reponse) => _ouvrirDemandeTouchee(reponse.payload),
+      );
       final android = _notificationsLocales.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       await android?.createNotificationChannel(_canalNotificationsTaama);
       await android?.createNotificationChannel(_canalDemandesCourse);
+      await android?.createNotificationChannel(SonnerieNotification.canal);
+
+      // App tuée, relancée par un toucher sur cette sonnerie.
+      final lancement = await _notificationsLocales.getNotificationAppLaunchDetails();
+      if (lancement?.didNotificationLaunchApp ?? false) {
+        _ouvrirDemandeTouchee(lancement?.notificationResponse?.payload);
+      }
     }
 
     // 2bis. Handler des messages reçus app en arrière-plan/tuée (voir
@@ -157,6 +195,12 @@ class NotificationService {
   static bool _estNouvelleDemande(Map<String, dynamic> donnees) =>
       donnees['type'] == 'nouvelle_demande';
 
+  static void _ouvrirDemandeTouchee(String? payload) {
+    final demandeId = SonnerieNotification.demandeDepuisPayload(payload);
+    if (demandeId == null) return;
+    DemandeEntranteNavigator.afficherSiNecessaire(demandeId, sonner: false);
+  }
+
   /// Ouvre l'écran de demande entrante si ces données FCM correspondent à
   /// une nouvelle demande instantanée assignée — que l'app soit au premier
   /// plan (onMessage), relancée depuis l'arrière-plan (onMessageOpenedApp)
@@ -168,7 +212,10 @@ class NotificationService {
   }) {
     if (donnees['type'] == 'demande_annulee') {
       final id = int.tryParse(donnees['demande_id']?.toString() ?? '');
-      if (id != null) AnnulationsCourse.signaler(id);
+      if (id != null) {
+        AnnulationsCourse.signaler(id);
+        SonnerieNotification.arreter(id);
+      }
       return;
     }
     if (!_estNouvelleDemande(donnees)) return;
