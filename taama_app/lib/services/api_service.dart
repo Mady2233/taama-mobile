@@ -178,6 +178,35 @@ class ApiService {
 
   // ─── Adresses favorites ───────────────────────────────────────────────────
 
+  // ─── Vérification d'identité (facultative) ────────────────────────────────
+
+  static Future<Map<String, dynamic>> verificationIdentite() async {
+    final reponse = await http
+        .get(Uri.parse('$_baseUrl/comptes/verification-identite/'), headers: _headers)
+        .timeout(const Duration(seconds: 12));
+    return _traiterReponse(reponse) as Map<String, dynamic>;
+  }
+
+  /// Envoie (ou remplace) la photo de la pièce. Aucune adresse de fichier
+  /// n'est jamais renvoyée : seulement le nouveau statut.
+  static Future<Map<String, dynamic>> envoyerPieceIdentite(String chemin) async {
+    final requete = http.MultipartRequest(
+      'POST',
+      Uri.parse('$_baseUrl/comptes/verification-identite/'),
+    )
+      // Content-Type posé par MultipartRequest (avec sa frontière).
+      ..headers.addAll(_headers..remove('Content-Type'))
+      ..files.add(await http.MultipartFile.fromPath('piece', chemin));
+    final reponse = await requete
+        .send()
+        .then(http.Response.fromStream)
+        .timeout(const Duration(seconds: 12));
+    if (reponse.statusCode == 429) {
+      throw Exception('Trop d’envois pour l’instant. Réessaie dans une heure.');
+    }
+    return _traiterReponse(reponse) as Map<String, dynamic>;
+  }
+
   static Future<List<dynamic>> mesAdressesFavorites() async {
     final reponse = await http.get(Uri.parse('$_baseUrl/comptes/mes-adresses/'), headers: _headers);
     return _traiterReponse(reponse) as List<dynamic>;

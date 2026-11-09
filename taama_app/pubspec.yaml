@@ -48,6 +48,8 @@ dependencies:
   url_launcher: ^6.3.1
   share_plus: ^11.0.0
   package_info_plus: ^9.0.1
+  # Pièce d'identité (facultative) : même version que l'app chauffeur.
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:

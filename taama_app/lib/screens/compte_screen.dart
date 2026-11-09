@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/verification_identite.dart';
 import '../services/api_service.dart';
 import '../services/config_app.dart';
 import '../services/politique_confidentialite.dart';
@@ -12,6 +13,7 @@ import 'mes_conversations_client_screen.dart';
 import 'mes_reservations_screen.dart';
 import 'portefeuille_screen.dart';
 import 'profil_screen.dart';
+import 'verification_identite_page.dart';
 
 /// Écran Compte (v4). Logique inchangée (profil, déconnexion, suppression de
 /// compte, portefeuille en mode payant) ; habillage TaamaColors/TaamaText,
@@ -84,6 +86,16 @@ class _EcranCompteState extends State<EcranCompte> {
     messager.showSnackBar(SnackBar(content: Text(messageFinal)));
   }
 
+  /// Statut de la vérification (facultative), null tant qu'il est inconnu.
+  String? get _libelleIdentite =>
+      switch (statutIdentiteDepuis(_profil?['verification_identite'])) {
+        StatutIdentite.nonSoumis => 'Facultatif',
+        StatutIdentite.enAttente => 'En cours de vérification',
+        StatutIdentite.approuve => 'Vérifiée',
+        StatutIdentite.refuse => 'Refusée : envoie une autre photo',
+        null => null,
+      };
+
   String get _nomComplet {
     final prenom = _profil?['first_name']?.toString() ?? '';
     final nom = _profil?['last_name']?.toString() ?? '';
@@ -127,6 +139,16 @@ class _EcranCompteState extends State<EcranCompte> {
                             MaterialPageRoute(
                                 builder: (_) => const MesConversationsClientScreen()),
                           )),
+                  _item(Icons.verified_user_outlined, 'Vérifier mon identité',
+                      () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const PageVerificationIdentite()),
+                        );
+                        _charger();
+                      },
+                      sousTitre: _libelleIdentite),
                 ]),
               ),
               const SizedBox(height: 16),
@@ -259,7 +281,8 @@ class _EcranCompteState extends State<EcranCompte> {
     );
   }
 
-  Widget _item(IconData icone, String label, VoidCallback onTap, {Color? couleur}) {
+  Widget _item(IconData icone, String label, VoidCallback onTap,
+      {Color? couleur, String? sousTitre}) {
     final c = couleur ?? TaamaColors.primary;
     return ListTile(
       leading: CircleAvatar(
@@ -267,6 +290,9 @@ class _EcranCompteState extends State<EcranCompte> {
         child: Icon(icone, color: c, size: 20),
       ),
       title: Text(label, style: TaamaText.body.copyWith(fontWeight: FontWeight.w700)),
+      subtitle: sousTitre == null
+          ? null
+          : Text(sousTitre, style: TaamaText.muted.copyWith(fontSize: 12.5)),
       trailing: const Icon(Icons.chevron_right_rounded, color: TaamaColors.textSecondary),
       onTap: onTap,
     );

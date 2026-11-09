@@ -22,6 +22,7 @@ import 'package:latlong2/latlong.dart';
 import '../../theme/taama_theme.dart';
 import '../../utils/format.dart';
 import '../../widgets/couche_carte_taama.dart';
+import '../../widgets/invitation_identite.dart';
 import '../../widgets/photo_avatar.dart';
 import '../../widgets/taama/anime_en_boucle.dart';
 import '../../widgets/taama/couche_conducteurs_animes.dart';
@@ -30,6 +31,7 @@ import '../../widgets/taama/tuile_service.dart';
 import 'home_models.dart';
 
 export 'home_models.dart';
+export '../../widgets/invitation_identite.dart' show InvitationIdentite;
 
 const LatLng _centreBamako = LatLng(12.6392, -8.0029);
 const double _zoomInitial = 15;
@@ -61,6 +63,9 @@ class HomeScreen extends StatefulWidget {
     this.derniereCourse,
     this.courseActive,
     this.onReprendreCourse,
+    this.invitationIdentite,
+    this.onVerifierIdentite,
+    this.onMasquerInvitationIdentite,
     required this.onChercherDestination,
     required this.onSuggestion,
     required this.onAjouterAdresse,
@@ -98,6 +103,11 @@ class HomeScreen extends StatefulWidget {
   /// Course non terminée à reprendre (null s'il n'y en a pas).
   final CourseActive? courseActive;
   final ValueChanged<CourseActive>? onReprendreCourse;
+
+  /// Invitation à faire vérifier son identité (facultative), null : rien.
+  final InvitationIdentite? invitationIdentite;
+  final VoidCallback? onVerifierIdentite;
+  final VoidCallback? onMasquerInvitationIdentite;
 
   final VoidCallback onChercherDestination;
   final ValueChanged<SuggestionDestination> onSuggestion;
@@ -425,6 +435,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             if (!widget.paiementActif) ...[
               const SizedBox(height: 14),
               _apparition(0.9, const _BandeauEspeces()),
+            ],
+            if (widget.invitationIdentite != null &&
+                widget.onVerifierIdentite != null &&
+                widget.onMasquerInvitationIdentite != null) ...[
+              const SizedBox(height: 14),
+              _apparition(
+                0.95,
+                BandeauInvitationIdentite(
+                  invitation: widget.invitationIdentite!,
+                  onOuvrir: widget.onVerifierIdentite!,
+                  onMasquer: widget.onMasquerInvitationIdentite!,
+                ),
+              ),
             ],
           ],
         ),

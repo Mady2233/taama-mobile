@@ -22,8 +22,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../carte/fond_carte.dart';
+import '../../models/verification_identite.dart';
 import '../../services/api_service.dart';
 import '../../services/config_app.dart';
 import '../../services/routing_service.dart';
@@ -35,6 +37,7 @@ import '../profil_screen.dart';
 import '../recherche_screen.dart';
 import '../../services/recherche_lieux.dart';
 import '../resultats_recherche_screen.dart';
+import '../verification_identite_page.dart';
 import 'home_screen.dart';
 
 /// Validité du cache des temps de trajet OSRM des favoris.
@@ -42,6 +45,10 @@ const Duration _dureeCacheOsrm = Duration(minutes: 5);
 
 /// Fréquence de rafraîchissement des chauffeurs proches (écran visible).
 const Duration _intervalleConducteurs = Duration(seconds: 20);
+
+/// Statut (`StatutIdentite.name`) pour lequel l'invitation à vérifier son
+/// identité a été fermée sur ce téléphone.
+const String _cleInvitationIdentiteMasquee = 'invitation_identite_masquee';
 
 const int _longueurMaxLibelle = 40;
 const int _longueurMaxAdresse = 200;
@@ -90,6 +97,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   LatLng? _positionClient;
   CourseActive? _courseActive;
   Timer? _minuteurConducteurs;
+  // Vérification d'identité (facultative) : statut lu dans mon-profil/, et
+  // statut pour lequel le client a fermé l'invitation (elle revient si le
+  // statut change, par exemple après un refus).
+  StatutIdentite? _statutIdentite;
+  String? _invitationMasqueePour;
 
   final Map<String, _EntreeCacheDuree> _cacheDurees = {};
 
@@ -222,12 +234,48 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _chargerProfil() async {
     try {
       final profil = await ApiService.monProfil();
+      final prefs = await SharedPreferences.getInstance();
       if (!mounted) return;
       final prenom = (profil['first_name'] as String?)?.trim();
-      setState(() => _prenom = (prenom == null || prenom.isEmpty) ? null : prenom);
+      setState(() {
+        _prenom = (prenom == null || prenom.isEmpty) ? null : prenom;
+        _statutIdentite = statutIdentiteDepuis(profil['verification_identite']);
+        _invitationMasqueePour = prefs.getString(_cleInvitationIdentiteMasquee);
+      });
     } catch (e) {
       _journal('Erreur chargement profil : $e');
     }
+  }
+
+  /// Seulement sans pièce ou après un refus, et pas si le client l'a fermée
+  /// pour ce même statut. Statut inconnu (ancien serveur) : rien.
+  InvitationIdentite? get _invitationIdentite {
+    final invitation = switch (_statutIdentite) {
+      StatutIdentite.nonSoumis => InvitationIdentite.aVerifier,
+      StatutIdentite.refuse => InvitationIdentite.aRenvoyer,
+      _ => null,
+    };
+    return invitation == null || _invitationMasqueePour == _statutIdentite!.name ? null : invitation;
+  }
+
+  Future<void> _masquerInvitationIdentite() async {
+    final statut = _statutIdentite;
+    if (statut == null) return;
+    setState(() => _invitationMasqueePour = statut.name);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_cleInvitationIdentiteMasquee, statut.name);
+    } catch (e) {
+      _journal('Mémoire de l’invitation impossible : $e');
+    }
+  }
+
+  Future<void> _ouvrirVerificationIdentite() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const PageVerificationIdentite()),
+    );
+    if (mounted) _chargerProfil();
   }
 
   Future<void> _chargerSolde() async {
@@ -497,6 +545,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       chargementConducteurs: _chargementConducteurs,
       courseActive: _courseActive,
       onReprendreCourse: _reprendreCourse,
+      invitationIdentite: _invitationIdentite,
+      onVerifierIdentite: _ouvrirVerificationIdentite,
+      onMasquerInvitationIdentite: _masquerInvitationIdentite,
       // ⚠️ Endpoint dernière course pas encore créé : carte masquée.
       derniereCourse: null,
       onChercherDestination: () => _ouvrirRecherche(),
