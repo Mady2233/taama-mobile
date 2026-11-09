@@ -68,4 +68,17 @@ void main() {
     await ouvrir(t, prix: 125000, ecart: 20000, largeur: 300);
     expect(t.takeException(), isNull);
   });
+
+  testWidgets('offre du client : l’écart s’y rapporte', (t) async {
+    await t.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SelecteurPrix(
+          prix: 1350, ecart: 100, pas: 100, surBaisser: () {}, surMonter: () {},
+          libelleReference: 'l’offre du client',
+        ),
+      ),
+    ));
+    await t.pumpAndSettle();
+    expect(find.text('+${formaterFcfa(100)} sur l’offre du client'), findsOneWidget);
+  });
 }

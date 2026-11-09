@@ -233,19 +233,27 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   }
 
   void _initialiserPrix(Map<String, dynamic> demande) {
-    _prixAjustable = PrixAjustable.depuisJson(demande['prix_ajustable']);
-    _prixChoisi = _prixAjustable?.standard;
+    // Apps récentes : `contre_proposition` (référence = offre du client) ;
+    // `prix_ajustable` reste pour les serveurs d'avant la négociation.
+    _prixAjustable = PrixAjustable.depuisJson(demande['contre_proposition'] ?? demande['prix_ajustable']);
+    _prixChoisi = _prixAjustable?.reference;
   }
+
+  int? get _prixOffert => num.tryParse(_demande?['prix_offert']?.toString() ?? '')?.toInt();
+  int? get _prixStandard => num.tryParse(_demande?['prix_standard']?.toString() ?? '')?.toInt();
+
+  /// Le client a offert un autre prix que le standard.
+  bool get _offreClient => _prixOffert != null && _prixStandard != null && _prixOffert != _prixStandard;
 
   int? get _prixEstime => num.tryParse(_demande?['prix_estime']?.toString() ?? '')?.toInt();
 
-  /// Réduction promo du client (prix standard moins ce qu'il paie) : le
+  /// Réduction promo du client (prix de référence moins ce qu'il paie) : le
   /// chauffeur voit toujours le montant qu'il encaissera.
   int get _reduction {
     final limites = _prixAjustable;
     final estime = _prixEstime;
     if (limites == null || estime == null) return 0;
-    return math.max(0, limites.standard - estime);
+    return math.max(0, limites.reference - estime);
   }
 
   int? get _prixAffiche {
@@ -254,7 +262,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
     return math.max(0, choisi - _reduction);
   }
 
-  bool get _prixModifie => _prixAjustable != null && _prixChoisi != _prixAjustable!.standard;
+  bool get _prixModifie => _prixAjustable != null && _prixChoisi != _prixAjustable!.reference;
 
   double? get _departLat => (_demande?['depart_lat'] as num?)?.toDouble();
   double? get _departLng => (_demande?['depart_lng'] as num?)?.toDouble();
@@ -792,20 +800,21 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
               // Prix ajustable (le serveur en a envoyé les limites) : le prix
               // au centre, − et + de chaque côté. Sinon, le prix seul.
               if (ajustable && prix != null) ...[
-                const Row(
+                Row(
                   children: [
                     Text(
-                      'Prix de la course',
-                      style: TextStyle(color: CouleursTaama.grisTexte, fontWeight: FontWeight.w800, fontSize: 13),
+                      _offreClient ? 'Le client propose' : 'Prix de la course',
+                      style: const TextStyle(color: CouleursTaama.grisTexte, fontWeight: FontWeight.w800, fontSize: 13),
                     ),
-                    Spacer(),
-                    _PastilleEspeces(),
+                    const Spacer(),
+                    const _PastilleEspeces(),
                   ],
                 ),
                 const SizedBox(height: 8),
                 SelecteurPrix(
                   prix: prix,
-                  ecart: _prixChoisi! - _prixAjustable!.standard,
+                  ecart: _prixChoisi! - _prixAjustable!.reference,
+                  libelleReference: _offreClient ? 'l’offre du client' : 'le prix standard',
                   pas: _prixAjustable!.pas,
                   surBaisser: _enTraitement || !_prixAjustable!.peutBaisser(_prixChoisi!)
                       ? null
@@ -835,6 +844,14 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                     const _PastilleEspeces(),
                   ],
                 ),
+              // L'offre du client, avec le standard en référence.
+              if (_offreClient) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '${ajustable ? '' : 'Offre du client · '}standard ${formaterFcfa(_prixStandard!)}',
+                  style: const TextStyle(color: CouleursTaama.grisTexte, fontWeight: FontWeight.w700, fontSize: 12.5),
+                ),
+              ],
               const SizedBox(height: 14),
 
               // Badges
@@ -1064,8 +1081,17 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                         children: [
                           Icon(_prixModifie ? Icons.send_rounded : Icons.check_circle_rounded, size: 24),
                           const SizedBox(width: 8),
-                          Text(_prixModifie ? 'Proposer ce prix' : 'Accepter',
-                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                _prixModifie
+                                    ? 'Proposer ce prix'
+                                    : (_prixAffiche != null ? 'Accepter · ${formaterFcfa(_prixAffiche!)}' : 'Accepter'),
+                                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
               ),

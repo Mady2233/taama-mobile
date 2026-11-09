@@ -19,6 +19,7 @@ class SelecteurPrix extends StatelessWidget {
     required this.pas,
     required this.surBaisser,
     required this.surMonter,
+    this.libelleReference = 'le prix standard',
   });
 
   /// Montant affiché au centre : ce que le chauffeur encaissera.
@@ -33,6 +34,9 @@ class SelecteurPrix extends StatelessWidget {
   /// Null : bouton grisé.
   final VoidCallback? surBaisser;
   final VoidCallback? surMonter;
+
+  /// Ce à quoi l'écart se rapporte : « le prix standard », « l'offre du client ».
+  final String libelleReference;
 
   static const TextStyle _stylePrix = TextStyle(
     color: CouleursTaama.terreCuite,
@@ -78,7 +82,7 @@ class SelecteurPrix extends StatelessWidget {
                   const SizedBox(height: 6),
                   AnimatedSwitcher(
                     duration: reduit ? Duration.zero : const Duration(milliseconds: 200),
-                    child: _Ecart(key: ValueKey(ecart), ecart: ecart),
+                    child: _Ecart(key: ValueKey(ecart), ecart: ecart, libelleReference: libelleReference),
                   ),
                 ],
               ),
@@ -99,15 +103,16 @@ class SelecteurPrix extends StatelessWidget {
 /// « Prix standard », ou l'écart dans une pastille : terre cuite à la hausse,
 /// indigo à la baisse.
 class _Ecart extends StatelessWidget {
-  const _Ecart({super.key, required this.ecart});
+  const _Ecart({super.key, required this.ecart, required this.libelleReference});
 
   final int ecart;
+  final String libelleReference;
 
   @override
   Widget build(BuildContext context) {
     if (ecart == 0) {
-      return const Text(
-        'Prix standard',
+      return Text(
+        libelleReference == 'le prix standard' ? 'Prix standard' : 'Offre du client',
         style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: CouleursTaama.grisTexte),
       );
     }
@@ -126,7 +131,7 @@ class _Ecart extends StatelessWidget {
           const SizedBox(width: 4),
           Flexible(
             child: Text(
-              '${hausse ? '+' : '−'}${formaterFcfa(ecart.abs())} sur le prix standard',
+              '${hausse ? '+' : '−'}${formaterFcfa(ecart.abs())} sur $libelleReference',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: couleur),

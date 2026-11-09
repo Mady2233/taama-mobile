@@ -47,4 +47,21 @@ void main() {
       expect(auMinimum.peutMonter(500), isTrue);
     });
   });
+
+  group('offre du client', () {
+    test('la référence est l’offre : le − et le + en partent', () {
+      final p = PrixAjustable.depuisJson({...limites, 'reference': 1250})!;
+      expect((p.reference, p.standard), (1250, 1450));
+      expect(p.peutBaisser(p.reference), isFalse);
+      expect(p.monter(p.reference), 1350);
+    });
+
+    test('sans référence (ancien serveur) : le standard', () {
+      expect(PrixAjustable.depuisJson(limites)!.reference, 1450);
+    });
+
+    test('référence hors des limites : ignorée', () {
+      expect(PrixAjustable.depuisJson({...limites, 'reference': 1150}), isNull);
+    });
+  });
 }

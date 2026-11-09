@@ -4,16 +4,20 @@
 // limites viennent du serveur (`prix_ajustable` de la demande) ; l'app ne fait
 // que se déplacer entre elles, et le serveur revérifie le prix envoyé.
 
-/// Limites d'un autre prix : prix standard, minimum, maximum et pas (100 F).
-/// Montants de la course AVANT promo, en francs entiers.
+/// Limites d'un autre prix : prix de référence (l'offre du client, sinon le
+/// standard), prix standard, minimum, maximum et pas (100 F). Montants de la
+/// course AVANT promo, en francs entiers.
 class PrixAjustable {
   const PrixAjustable({
     required this.standard,
     required this.min,
     required this.max,
     required this.pas,
-  });
+    int? reference,
+  }) : reference = reference ?? standard;
 
+  /// Le prix que le chauffeur accepte tel quel : point de départ du − et du +.
+  final int reference;
   final int standard;
   final int min;
   final int max;
@@ -29,9 +33,12 @@ class PrixAjustable {
     final min = lire('min');
     final max = lire('max');
     final pas = lire('pas');
-    if (standard == null || min == null || max == null || pas == null || pas <= 0) return null;
+    // `reference` : apps récentes (contre_proposition) ; absent : le standard.
+    final reference = lire('reference') ?? standard;
+    if (standard == null || reference == null || min == null || max == null || pas == null || pas <= 0) return null;
     if (min > standard || max < standard || (min == standard && max == standard)) return null;
-    return PrixAjustable(standard: standard, min: min, max: max, pas: pas);
+    if (reference < min || reference > max) return null;
+    return PrixAjustable(standard: standard, min: min, max: max, pas: pas, reference: reference);
   }
 
   bool peutBaisser(int prix) => prix - pas >= min;
