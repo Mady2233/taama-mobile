@@ -14,6 +14,7 @@ import '../theme/taama_theme.dart';
 import '../utils/format.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../carte/fond_carte.dart';
+import '../widgets/choix_offre.dart';
 import '../widgets/widget_choix_vehicule.dart';
 import 'course/suivi_course_page.dart';
 import 'recherche_screen.dart';
@@ -329,6 +330,16 @@ class _EcranDemandeInstantaneeState
     );
     if (choix == null || !mounted) return;
 
+    // Offre du client : seulement si le serveur en a envoyé les limites pour
+    // ce service (négociation allumée). Feuille fermée : rien n'est commandé.
+    int? prixOffert;
+    final service = services.where((s) => s.id == choix['type_service']).firstOrNull;
+    final limites = service?.offre;
+    if (service != null && limites != null) {
+      prixOffert = await afficherChoixOffre(context, nomService: service.nom, limites: limites);
+      if (prixOffert == null || !mounted) return;
+    }
+
     // Envoyé tel quel si non-vide, même si _verifierCodePromo n'a jamais été
     // appuyé — le serveur re-valide intégralement et rejette toute la
     // demande si le code est invalide (jamais une réduction silencieusement
@@ -341,6 +352,7 @@ class _EcranDemandeInstantaneeState
       typeServiceId: choix['type_service'] as int,
       prixAffiche: choix['prix_estime'] as int?,
       codePromo: codePromo,
+      prixOffert: prixOffert,
     );
   }
 
@@ -358,6 +370,7 @@ class _EcranDemandeInstantaneeState
     required int typeServiceId,
     required int? prixAffiche,
     required String? codePromo,
+    int? prixOffert,
     bool dejaRelance = false,
   }) async {
     setState(() => _enChargement = true);
@@ -367,6 +380,7 @@ class _EcranDemandeInstantaneeState
         devisId: devisId,
         typeServiceId: typeServiceId,
         codePromo: codePromo,
+        prixOffert: prixOffert,
       );
       if (!mounted) return;
 
@@ -398,7 +412,7 @@ class _EcranDemandeInstantaneeState
         await _soumettre(
           devisId: e.nouveauDevisId, typeServiceId: typeServiceId,
           prixAffiche: e.nouveauPrix,
-          codePromo: codePromo, dejaRelance: true,
+          codePromo: codePromo, prixOffert: prixOffert, dejaRelance: true,
         );
         return;
       }
@@ -428,7 +442,7 @@ class _EcranDemandeInstantaneeState
         await _soumettre(
           devisId: e.nouveauDevisId, typeServiceId: typeServiceId,
           prixAffiche: e.nouveauPrix,
-          codePromo: codePromo, dejaRelance: true,
+          codePromo: codePromo, prixOffert: prixOffert, dejaRelance: true,
         );
       } else if (mounted) {
         await _recalculerEstimation();
@@ -761,7 +775,7 @@ class _EcranDemandeInstantaneeState
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
-                              'Prix annoncé avant la course · payé en espèces au chauffeur',
+                              'Ton prix, accepté avant la course · payé en espèces au chauffeur',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.85), fontSize: 11.5),

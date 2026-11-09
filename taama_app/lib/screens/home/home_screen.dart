@@ -1166,7 +1166,7 @@ class _BandeauEspeces extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Prix annoncé avant la course, payé en espèces',
+                  'Ton prix, accepté avant la course · payé en espèces',
                   style: TaamaText.title.copyWith(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 2),

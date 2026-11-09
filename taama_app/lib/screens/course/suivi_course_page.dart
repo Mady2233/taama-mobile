@@ -240,7 +240,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
         _penaliteAnnulationTardive = (demande['penalite_annulation_tardive'] as num?)?.toInt() ?? 0;
         _dejaNote = demande['deja_note'] as bool? ?? false;
         _contreOffre = nouveauStatut == 'contre_offre'
-            ? ContreOffreClient.depuisJson(demande['contre_offre'])
+            ? ContreOffreClient.depuisJson(demande['contre_offre'], demande: demande)
             : null;
         _secondesContreOffre = _contreOffre?.secondesRestantes ?? 0;
       });
@@ -638,6 +638,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
               offre: offre,
               secondesRestantes: _secondesContreOffre,
               reponseEnCours: _reponseContreOffre,
+              paiement: ConfigApp.paiementActif.value ? 'Portefeuille' : 'Espèces',
               onAccepter: () => _repondreContreOffre(accepter: true),
               onRefuser: () => _repondreContreOffre(accepter: false),
             ),

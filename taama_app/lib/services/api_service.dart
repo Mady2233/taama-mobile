@@ -425,6 +425,7 @@ class ApiService {
     required int typeServiceId,
     DateTime? dateHeurePlanifiee,
     String? codePromo,
+    int? prixOffert,
   }) async {
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/demandes/creer/'),
@@ -439,8 +440,10 @@ class ApiService {
         // Cette version sait afficher le prix proposé par un chauffeur
         // (CarteContreOffre) : sans ce champ, le serveur n'en propose jamais.
         'contre_offre': true,
+        // Offre du client (limites du serveur, revérifiée par lui).
+        if (prixOffert != null) 'prix_offert': prixOffert,
       }),
-    );
+    ).timeout(const Duration(seconds: 12));
     // Cas particulier AVANT _traiterReponse (qui ne garde qu'un message
     // texte, perdant nouveau_devis_id/nouveau_prix) : un devis expiré porte
     // un nouveau devis tout prêt dans le corps de la réponse 409.

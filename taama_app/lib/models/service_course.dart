@@ -20,6 +20,10 @@ class ServiceCourse {
   final int? devisId;
   final Map<String, dynamic>? detail;
 
+  /// Ce que le client peut offrir pour ce devis (limites du serveur). Null si
+  /// la négociation est coupée ou impossible : la course est au prix du devis.
+  final OffreLimites? offre;
+
   const ServiceCourse({
     required this.id,
     required this.nom,
@@ -34,6 +38,7 @@ class ServiceCourse {
     this.distanceKm,
     this.devisId,
     this.detail,
+    this.offre,
   });
 
   /// Parse défensif : un champ manquant ou mal typé retombe sur une valeur
@@ -65,8 +70,46 @@ class ServiceCourse {
       distanceKm: (json['distance_km'] as num?)?.toDouble(),
       devisId: (json['devis_id'] as num?)?.toInt(),
       detail: json['detail'] as Map<String, dynamic>?,
+      offre: OffreLimites.depuisJson(json['offre']),
     );
   }
+}
+
+/// Limites d'une offre du client, envoyées par le serveur avec le devis
+/// (`offre` de POST /trajets/estimer/). L'app ne fait que se déplacer entre
+/// elles, par pas ; le serveur revérifie l'offre à la commande.
+class OffreLimites {
+  const OffreLimites({required this.standard, required this.min, required this.max, required this.pas});
+
+  final int standard;
+  final int min;
+  final int max;
+  final int pas;
+
+  /// Null si absentes ou incohérentes : pas de choix d'offre, jamais un
+  /// prix inventé.
+  static OffreLimites? depuisJson(Object? brut) {
+    if (brut is! Map) return null;
+    int? lire(String cle) => (brut[cle] as num?)?.toInt();
+    final standard = lire('standard');
+    final min = lire('min');
+    final max = lire('max');
+    final pas = lire('pas');
+    if (standard == null || min == null || max == null || pas == null || pas <= 0) return null;
+    if (min > standard || max < standard || (min == standard && max == standard)) return null;
+    if ((standard - min) % pas != 0 || (max - standard) % pas != 0) return null;
+    return OffreLimites(standard: standard, min: min, max: max, pas: pas);
+  }
+
+  bool peutBaisser(int prix) => prix - pas >= min;
+  bool peutMonter(int prix) => prix + pas <= max;
+
+  /// Quelques montants proposés d'un toucher : le minimum, un pas sous le
+  /// standard, le standard, un pas au-dessus. Dans les limites, sans doublon.
+  List<int> get raccourcis => {min, standard - pas, standard, standard + pas}
+      .where((p) => p >= min && p <= max)
+      .toList()
+    ..sort();
 }
 
 /// Services concernés par le choix de l'écran précédent ('Voiture'/'Moto',

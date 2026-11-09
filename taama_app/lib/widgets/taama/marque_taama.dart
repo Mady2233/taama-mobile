@@ -145,7 +145,7 @@ class _Halo extends StatelessWidget {
 
 /// Ce que Taama garantit vraiment (jamais de chiffre inventé).
 const List<(IconData, String)> promessesTaama = [
-  (Icons.sell_rounded, 'Prix annoncé avant la course'),
+  (Icons.sell_rounded, 'Ton prix, accepté avant la course'),
   (Icons.verified_user_rounded, 'Chauffeurs vérifiés'),
   (Icons.near_me_rounded, 'Suivi en direct'),
 ];

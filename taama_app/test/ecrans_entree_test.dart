@@ -43,7 +43,7 @@ void main() {
     testWidgets('positionnement et promesses vraies', (t) async {
       await _ouvrir(t, const EcranConnexion());
       expect(find.text('VTC et moto-taxi à Bamako'), findsOneWidget);
-      for (final promesse in ['Prix annoncé avant la course', 'Chauffeurs vérifiés', 'Suivi en direct']) {
+      for (final promesse in ['Ton prix, accepté avant la course', 'Chauffeurs vérifiés', 'Suivi en direct']) {
         expect(find.text(promesse), findsOneWidget);
       }
     });

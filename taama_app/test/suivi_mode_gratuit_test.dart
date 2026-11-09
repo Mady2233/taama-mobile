@@ -36,7 +36,7 @@ void main() {
   testWidgets('course terminée, mode gratuit : espèces, ni solde ni portefeuille ni Payer',
       (t) async {
     await _suivi(t, statut: StatutCourse.terminee, paiementActif: false);
-    expect(find.text('Prix annoncé · paiement en espèces au chauffeur'), findsOneWidget);
+    expect(find.text('Prix convenu · paiement en espèces au chauffeur'), findsOneWidget);
     expect(find.textContaining('Solde'), findsNothing);
     expect(find.textContaining('portefeuille'), findsNothing);
     expect(find.textContaining('Payer'), findsNothing);
@@ -51,12 +51,12 @@ void main() {
   testWidgets('pendant la course, mode gratuit : aucun « Solde insuffisant »', (t) async {
     await _suivi(t, statut: StatutCourse.enRoute, paiementActif: false);
     expect(find.textContaining('Solde'), findsNothing);
-    expect(find.text('Prix annoncé · paiement en espèces au chauffeur'), findsOneWidget);
+    expect(find.text('Prix convenu · paiement en espèces au chauffeur'), findsOneWidget);
   });
 
   testWidgets('mode payant : portefeuille et paiement inchangés', (t) async {
     await _suivi(t, statut: StatutCourse.terminee, paiementActif: true);
-    expect(find.text('Prix annoncé · portefeuille Taama'), findsOneWidget);
+    expect(find.text('Prix convenu · portefeuille Taama'), findsOneWidget);
     expect(find.textContaining('Solde insuffisant'), findsWidgets);
     expect(find.text('Terminer'), findsNothing, reason: 'non payée, non notée');
   });
