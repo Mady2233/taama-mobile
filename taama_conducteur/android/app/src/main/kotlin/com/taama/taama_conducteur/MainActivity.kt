@@ -30,12 +30,11 @@ class MainActivity : FlutterActivity() {
         val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val muette = audio.ringerMode != AudioManager.RINGER_MODE_NORMAL ||
             audio.getStreamVolume(AudioManager.STREAM_RING) == 0
-        val economie = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val energie = getSystemService(Context.POWER_SERVICE) as PowerManager
+        // Pas de « ! » en début de ligne après « as PowerManager » : Kotlin le
+        // lirait comme la suite du type (erreur de compilation).
+        val energie = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val economie = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             !energie.isIgnoringBatteryOptimizations(packageName)
-        } else {
-            false
-        }
         return mapOf("sonnerieMuette" to muette, "economieBatterie" to economie)
     }
 
