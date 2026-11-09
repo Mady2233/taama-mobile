@@ -995,6 +995,7 @@ class _LieuxEnregistres extends StatelessWidget {
             fond: Colors.white,
             couleur: TaamaColors.primary,
             bordure: true,
+            pastille: true,
             onTap: onAjouter,
           ),
         ],
@@ -1011,6 +1012,7 @@ class _Puce extends StatelessWidget {
     required this.couleur,
     required this.onTap,
     this.bordure = false,
+    this.pastille = false,
   });
 
   final IconData icone;
@@ -1019,6 +1021,9 @@ class _Puce extends StatelessWidget {
   final Color couleur;
   final VoidCallback onTap;
   final bool bordure;
+
+  /// Icône blanche dans une pastille pleine (puce d'ajout).
+  final bool pastille;
 
   @override
   Widget build(BuildContext context) {
@@ -1035,12 +1040,30 @@ class _Puce extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 44, maxWidth: 220),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
+            padding: EdgeInsets.only(left: pastille ? 8 : 14, right: 14),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icone, size: 16, color: couleur),
-                const SizedBox(width: 6),
+                if (pastille)
+                  Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: couleur,
+                      boxShadow: [
+                        BoxShadow(
+                          color: couleur.withValues(alpha: 0.30),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Icon(icone, size: 18, color: TaamaColors.textOnDark),
+                  )
+                else
+                  Icon(icone, size: 16, color: couleur),
+                SizedBox(width: pastille ? 8 : 6),
                 Flexible(
                   child: Text(
                     texte,

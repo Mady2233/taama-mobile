@@ -33,6 +33,7 @@ import '../services/sonnerie_service.dart';
 import '../theme/couleurs_taama.dart';
 import '../utils/format.dart';
 import '../widgets/couche_carte_taama.dart';
+import '../widgets/selecteur_prix.dart';
 import '../carte/fond_carte.dart';
 import 'navigation_screen.dart';
 
@@ -772,6 +773,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
     final typeTransport = demande['type_transport']?.toString() ?? '';
     final prix = _prixAffiche;
     final reduit = MediaQuery.disableAnimationsOf(context);
+    final ajustable = _prixAjustable != null && _prixChoisi != null && !_enAttenteClient && _issueAttente == null;
 
     return Container(
       decoration: const BoxDecoration(
@@ -787,53 +789,23 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Prix
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: prix == null
-                        ? const Text('—', style: _stylePrix)
-                        : TweenAnimationBuilder<double>(
-                            tween: Tween(begin: reduit ? prix.toDouble() : 0, end: prix.toDouble()),
-                            duration: const Duration(milliseconds: 900),
-                            curve: Curves.easeOutCubic,
-                            builder: (context, v, _) => FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: Alignment.centerLeft,
-                              child: Text(formaterFcfa(v.round()), style: _stylePrix),
-                            ),
-                          ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
+              // Prix ajustable (le serveur en a envoyé les limites) : le prix
+              // au centre, − et + de chaque côté. Sinon, le prix seul.
+              if (ajustable && prix != null) ...[
+                const Row(
+                  children: [
+                    Text(
+                      'Prix de la course',
+                      style: TextStyle(color: CouleursTaama.grisTexte, fontWeight: FontWeight.w800, fontSize: 13),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.payments_rounded, size: 16, color: Colors.green.shade700),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Espèces',
-                          style: TextStyle(
-                            color: Colors.green.shade700,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              // Prix ajustable : seulement si le serveur en a envoyé les limites.
-              if (_prixAjustable != null && _prixChoisi != null && !_enAttenteClient && _issueAttente == null) ...[
-                const SizedBox(height: 10),
-                _SelecteurPrix(
-                  libelle: _libelleEcart,
+                    Spacer(),
+                    _PastilleEspeces(),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SelecteurPrix(
+                  prix: prix,
+                  ecart: _prixChoisi! - _prixAjustable!.standard,
                   pas: _prixAjustable!.pas,
                   surBaisser: _enTraitement || !_prixAjustable!.peutBaisser(_prixChoisi!)
                       ? null
@@ -842,7 +814,27 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                       ? null
                       : () => setState(() => _prixChoisi = _prixAjustable!.monter(_prixChoisi!)),
                 ),
-              ],
+              ] else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: prix == null
+                          ? const Text('—', style: _stylePrix)
+                          : TweenAnimationBuilder<double>(
+                              tween: Tween(begin: reduit ? prix.toDouble() : 0, end: prix.toDouble()),
+                              duration: const Duration(milliseconds: 900),
+                              curve: Curves.easeOutCubic,
+                              builder: (context, v, _) => FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(formaterFcfa(v.round()), style: _stylePrix),
+                              ),
+                            ),
+                    ),
+                    const _PastilleEspeces(),
+                  ],
+                ),
               const SizedBox(height: 14),
 
               // Badges
@@ -922,14 +914,6 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
         ),
       ),
     );
-  }
-
-  String get _libelleEcart {
-    final limites = _prixAjustable;
-    final choisi = _prixChoisi;
-    if (limites == null || choisi == null || choisi == limites.standard) return 'Prix standard';
-    final ecart = choisi - limites.standard;
-    return '${ecart > 0 ? '+' : '−'}${formaterFcfa(ecart.abs())} sur le prix standard';
   }
 
   Widget _buildAttenteClient() {
@@ -1095,48 +1079,33 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
 
 // ─── Widgets ───
 
-/// − et + autour de l'écart au prix standard. Un bouton à sa limite (ou
-/// pendant un envoi) est grisé : son action existe, le serveur ne l'accepterait
-/// simplement pas.
-class _SelecteurPrix extends StatelessWidget {
-  const _SelecteurPrix({
-    required this.libelle,
-    required this.pas,
-    required this.surBaisser,
-    required this.surMonter,
-  });
-
-  final String libelle;
-  final int pas;
-  final VoidCallback? surBaisser;
-  final VoidCallback? surMonter;
+/// Mode de paiement de la course.
+class _PastilleEspeces extends StatelessWidget {
+  const _PastilleEspeces();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        IconButton.filledTonal(
-          onPressed: surBaisser,
-          tooltip: 'Baisser le prix de ${formaterFcfa(pas)}',
-          iconSize: 26,
-          style: IconButton.styleFrom(minimumSize: const Size(52, 52)),
-          icon: const Icon(Icons.remove_rounded),
-        ),
-        Expanded(
-          child: Text(
-            libelle,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: CouleursTaama.indigo),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.green.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.payments_rounded, size: 16, color: Colors.green.shade700),
+          const SizedBox(width: 4),
+          Text(
+            'Espèces',
+            style: TextStyle(
+              color: Colors.green.shade700,
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
           ),
-        ),
-        IconButton.filledTonal(
-          onPressed: surMonter,
-          tooltip: 'Monter le prix de ${formaterFcfa(pas)}',
-          iconSize: 26,
-          style: IconButton.styleFrom(minimumSize: const Size(52, 52)),
-          icon: const Icon(Icons.add_rounded),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
