@@ -26,8 +26,10 @@ import '../services/demande_entrante_navigator.dart';
 import '../services/location_service.dart';
 import '../services/polling_premier_plan.dart';
 import '../services/sonnerie_service.dart';
+import '../services/verification_sonnerie.dart';
 import '../theme/couleurs_taama.dart';
 import '../utils/format.dart';
+import '../widgets/alerte_sonnerie.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../widgets/widget_avatar_conducteur.dart';
 import 'connexion_screen.dart';
@@ -89,6 +91,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
   LatLng? _positionChauffeur;
   bool _basculeEnCours = false;
 
+  // Ce qui empêcherait une demande de sonner (affiché en ligne seulement).
+  List<ProblemeSonnerie> _problemesSonnerie = const [];
+
   @override
   void initState() {
     super.initState();
@@ -99,6 +104,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     _rafraichirTout();
     _localiser();
     _polling.demarrer();
+    _verifierSonnerie();
   }
 
   @override
@@ -106,6 +112,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     switch (etat) {
       case AppLifecycleState.resumed:
         _polling.reprendre();
+        // Retour des réglages du téléphone : l'alerte se met à jour.
+        _verifierSonnerie();
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
       case AppLifecycleState.detached:
@@ -440,6 +448,20 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     return false;
   }
 
+  Future<void> _verifierSonnerie() async {
+    final problemes = await VerificationSonnerie.verifier();
+    if (!mounted) return;
+    setState(() => _problemesSonnerie = problemes);
+  }
+
+  Future<void> _reglerSonnerie(ProblemeSonnerie probleme) async {
+    final ouvert = await VerificationSonnerie.corriger(probleme);
+    if (!mounted || ouvert) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Les réglages ne se sont pas ouverts : ouvre-les depuis le téléphone.'),
+    ));
+  }
+
   Future<void> _basculerDisponibilite() async {
     try {
       if (_profil?['disponible'] != true) {
@@ -451,6 +473,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
       setState(() => _profil?['disponible'] = nouvelleDisponibilite);
 
       if (nouvelleDisponibilite) {
+        unawaited(_verifierSonnerie());
         // Conducteur passe en ligne → démarre le suivi GPS
         await _serviceLocalisationGenerale.demarrerSuiviPositionEnLigne();
         debugPrint('[GPS] Suivi de position démarré');
@@ -885,6 +908,10 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
                       onTap: _surToggle,
                     ),
                     const SizedBox(height: 12),
+                    if (disponible && _problemesSonnerie.isNotEmpty) ...[
+                      AlerteSonnerie(problemes: _problemesSonnerie, onRegler: _reglerSonnerie),
+                      const SizedBox(height: 12),
+                    ],
                     _BandeauProfil(profil: _profil!),
                     const SizedBox(height: 16),
                   ],
