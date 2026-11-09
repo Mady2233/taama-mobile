@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/couleurs_taama.dart';
 import '../services/api_service.dart';
+import '../services/mise_a_jour.dart';
+import 'mise_a_jour_requise_page.dart';
 import 'onboarding_screen.dart';
 import 'connexion_screen.dart';
 import 'accueil_screen.dart';
@@ -90,6 +92,14 @@ class _EcranSplashState extends State<EcranSplash>
 
     // Restaure la barre de statut
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+    // Version trop ancienne : l'app s'arrête ici, jamais pendant une course.
+    if (await MiseAJour.doitBloquer()) {
+      if (!mounted) return;
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PageMiseAJourRequise()));
+      return;
+    }
+    if (!mounted) return;
 
     // Vérifie si déjà connecté
     if (ApiService.estConnecte) {

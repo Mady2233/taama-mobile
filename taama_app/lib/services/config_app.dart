@@ -1,11 +1,13 @@
-// État d'affichage lu sur le serveur (GET /api/config-app/) : aujourd'hui,
-// seulement « le paiement dans l'app est-il actif ? ». Fichier identique dans
-// taama_app et taama_conducteur.
+// État d'affichage lu sur le serveur (GET /api/config-app/) : « le paiement
+// dans l'app est-il actif ? » et le plus petit numéro de build encore accepté
+// par app (mise à jour obligatoire, voir mise_a_jour.dart). Fichier identique
+// dans taama_app et taama_conducteur.
 //
 // Fail-closed : tant que le serveur n'a JAMAIS confirmé paiement_actif=true,
 // portefeuille, solde, recharge et « Payer » restent masqués. Serveur
 // injoignable : on garde la dernière valeur confirmée (le serveur refuse de
-// toute façon un paiement en mode gratuit), gratuite par défaut.
+// toute façon un paiement en mode gratuit), gratuite par défaut. Même règle
+// pour les versions minimales : la dernière valeur confirmée est gardée.
 
 import 'dart:async';
 import 'dart:convert';
@@ -23,7 +25,15 @@ class ConfigApp {
   /// redémarrer l'app quand la réponse du serveur arrive.
   static final ValueNotifier<bool> paiementActif = ValueNotifier(false);
 
+  /// Plus petit numéro de build encore accepté, par app (« client »,
+  /// « chauffeur »). Vide tant que le serveur n'a rien dit.
+  static final ValueNotifier<Map<String, int>> versionsMin = ValueNotifier(const {});
+
   static const String _cle = 'config_app_paiement_actif';
+  static const String _cleVersions = 'config_app_versions_min';
+
+  /// Rafraîchissement lancé au démarrage, attendu par l'écran de démarrage.
+  static Future<void>? _rafraichissement;
 
   /// Au démarrage, AVANT runApp : la dernière valeur confirmée, sans réseau
   /// (aucun délai d'ouverture).
@@ -31,14 +41,31 @@ class ConfigApp {
     try {
       final prefs = preferences ?? await SharedPreferences.getInstance();
       paiementActif.value = prefs.getBool(_cle) ?? false;
+      versionsMin.value = _lireVersions(prefs.getString(_cleVersions));
     } catch (_) {
       paiementActif.value = false;
+      versionsMin.value = const {};
     }
   }
 
   /// Interroge le serveur (sans attendre au démarrage : appelé sans await).
   /// Toute réponse inattendue ou erreur réseau laisse la valeur actuelle.
-  static Future<void> rafraichir({http.Client? client, SharedPreferences? preferences}) async {
+  static Future<void> rafraichir({http.Client? client, SharedPreferences? preferences}) =>
+      _rafraichissement = _rafraichir(client: client, preferences: preferences);
+
+  /// Attend le rafraîchissement en cours, au plus [delai] : passé ce délai, la
+  /// dernière valeur confirmée fait foi.
+  static Future<void> attendreRafraichissement({Duration delai = const Duration(seconds: 4)}) async {
+    final enCours = _rafraichissement;
+    if (enCours == null) return;
+    try {
+      await enCours.timeout(delai);
+    } catch (_) {
+      // Délai dépassé : on décide avec ce qui est connu.
+    }
+  }
+
+  static Future<void> _rafraichir({http.Client? client, SharedPreferences? preferences}) async {
     final c = client ?? http.Client();
     try {
       final reponse = await c
@@ -46,15 +73,40 @@ class ConfigApp {
           .timeout(const Duration(seconds: 12));
       if (reponse.statusCode != 200) return;
       final donnees = jsonDecode(reponse.body);
-      if (donnees is! Map || donnees['paiement_actif'] is! bool) return;
-      final actif = donnees['paiement_actif'] as bool;
-      paiementActif.value = actif;
+      if (donnees is! Map) return;
       final prefs = preferences ?? await SharedPreferences.getInstance();
-      await prefs.setBool(_cle, actif);
+      if (donnees['paiement_actif'] is bool) {
+        final actif = donnees['paiement_actif'] as bool;
+        paiementActif.value = actif;
+        await prefs.setBool(_cle, actif);
+      }
+      if (donnees['version_min'] is Map) {
+        final versions = _lireVersions(donnees['version_min']);
+        versionsMin.value = versions;
+        await prefs.setString(_cleVersions, jsonEncode(versions));
+      }
     } catch (_) {
       // Injoignable, délai dépassé, réponse illisible : rien ne change.
     } finally {
       if (client == null) c.close();
     }
+  }
+
+  /// Seulement les numéros entiers positifs ; tout le reste est ignoré.
+  static Map<String, int> _lireVersions(Object? brut) {
+    Object? donnees = brut;
+    if (brut is String) {
+      try {
+        donnees = jsonDecode(brut);
+      } catch (_) {
+        return const {};
+      }
+    }
+    if (donnees is! Map) return const {};
+    return {
+      for (final entree in donnees.entries)
+        if (entree.key is String && entree.value is int && (entree.value as int) >= 0)
+          entree.key as String: entree.value as int,
+    };
   }
 }
