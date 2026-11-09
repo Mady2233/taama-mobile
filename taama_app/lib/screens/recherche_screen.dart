@@ -24,6 +24,7 @@ import '../services/api_service.dart';
 import '../services/recherche_lieux.dart';
 import '../theme/taama_theme.dart';
 import '../widgets/champ_adresse_lieu.dart';
+import 'courier_selection_point.dart';
 import 'preciser_point_rue.dart';
 
 const int _longueurMaxAdresse = 120;
@@ -144,6 +145,33 @@ class _EcranRechercheState extends State<EcranRecherche> {
     Navigator.pop(context, DestinationChoisie(choisi.adresse, lat: choisi.lat, lng: choisi.lng));
   }
 
+  /// Destination placée à la main sur la carte (centrée sur le client) : le
+  /// point confirmé part avec ses coordonnées, l'adresse lue sur la carte.
+  Future<void> _choisirSurCarte() async {
+    final point = await Navigator.push<PointCourier>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const EcranSelectionPointCourier(
+          estCollecte: false,
+          titre: 'Où allez-vous ?',
+          libelleConfirmation: 'Confirmer la destination',
+        ),
+      ),
+    );
+    if (point == null || !mounted) return;
+    Navigator.pop(
+      context,
+      DestinationChoisie(point.adresse, lat: point.position.latitude, lng: point.position.longitude),
+    );
+  }
+
+  Widget _ligneCarte() => _LigneLieu(
+        icone: Icons.map_rounded,
+        titre: 'Choisir sur la carte',
+        sousTitre: 'Placer la destination à la main',
+        onTap: _choisirSurCarte,
+      );
+
   /// Un favori enregistré depuis une suggestion garde ses coordonnées.
   void _validerFavori(Map<String, dynamic> favori) {
     final adresse = favori['adresse']?.toString() ?? '';
@@ -258,6 +286,8 @@ class _EcranRechercheState extends State<EcranRecherche> {
               children: _ctrl.text.trim().isNotEmpty
                   ? _contenuSuggestions(_ctrl.text.trim())
                   : [
+                _ligneCarte(),
+                const SizedBox(height: 16),
                 _sectionFavoris(),
                 if (_recentes.isNotEmpty) ...[
                   const SizedBox(height: 22),
@@ -310,6 +340,7 @@ class _EcranRechercheState extends State<EcranRecherche> {
             onTap: () => _choisirLieu(lieu),
           ),
         ),
+      Padding(padding: const EdgeInsets.only(bottom: 8), child: _ligneCarte()),
       _LigneLieu(
         icone: Icons.edit_location_alt_rounded,
         titre: 'Utiliser « $saisie »',

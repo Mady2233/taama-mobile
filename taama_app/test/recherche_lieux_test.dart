@@ -302,6 +302,23 @@ void main() {
       expect(resultats, isEmpty); // rien n'est choisi tant que le point n'est pas confirmé
     });
 
+    testWidgets('choisir sur la carte : sans saisie comme pendant la saisie', (t) async {
+      final resultats = await ouvrir(t);
+      expect(find.text('Choisir sur la carte'), findsOneWidget);
+
+      await t.enterText(find.byType(TextField).first, 'zzzz');
+      await t.pump();
+      expect(find.text('Choisir sur la carte'), findsOneWidget);
+
+      await t.tap(find.text('Choisir sur la carte'));
+      await t.pump();
+      await t.pump(const Duration(seconds: 1));
+
+      expect(find.text('Où allez-vous ?'), findsOneWidget);
+      expect(find.text('Confirmer la destination'), findsOneWidget);
+      expect(resultats, isEmpty); // rien n'est choisi tant que le point n'est pas confirmé
+    });
+
     testWidgets('adresse « Domicile » : les suggestions apparaissent aussi', (t) async {
       await ouvrir(t);
       await t.tap(find.text('Domicile'));
