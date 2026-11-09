@@ -859,6 +859,10 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                     _Badge(icone: Icons.schedule_rounded, texte: '~$_etaMinutes min'),
                   if (typeTransport.isNotEmpty)
                     _Badge(icone: Icons.directions_car_filled_rounded, texte: typeTransport),
+                  // Pièce d'identité vérifiée par Taama : un booléen du serveur,
+                  // jamais la pièce. Absent ou faux : rien n'est affiché.
+                  if (_demande?['client_verifie'] == true)
+                    const _Badge(icone: Icons.verified_user_rounded, texte: 'Client vérifié'),
                 ],
               ),
               const SizedBox(height: 16),
