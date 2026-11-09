@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
-import '../utils/format.dart';
+import '../theme/couleurs_taama.dart';
 import '../widgets/dialogue_suppression_compte.dart';
 import '../widgets/widget_avatar_conducteur.dart';
 import 'connexion_screen.dart';
+import 'mes_courses_page.dart';
 
 /// Écran de profil côté conducteur : téléphone, nom modifiable, infos du
 /// véhicule modifiables par le conducteur lui-même (type, marque, modèle,
@@ -24,7 +25,6 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
   bool _chargement = true;
   Map<String, dynamic>? _compte; // Infos du compte utilisateur (téléphone, nom)
   Map<String, dynamic>? _chauffeur; // Infos du profil chauffeur (véhicule, plaque...)
-  List<Map<String, dynamic>> _historique = [];
 
   final TextEditingController _prenomController = TextEditingController();
   final TextEditingController _nomController = TextEditingController();
@@ -93,24 +93,11 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
     try {
       final compte = await ApiService.monProfil();
       final chauffeur = await ApiService.monProfilChauffeur();
-      final reservations = await ApiService.historiqueReservationsChauffeur();
-      final demandes = await ApiService.historiqueDemandesChauffeur();
-
-      final combine = <Map<String, dynamic>>[
-        ...reservations.map((r) => {...r as Map<String, dynamic>, '_type': 'reservation'}),
-        ...demandes.map((d) => {...d as Map<String, dynamic>, '_type': 'demande'}),
-      ];
-      combine.sort((a, b) {
-        final dateA = DateTime.tryParse(a['cree_le'] ?? '') ?? DateTime(2000);
-        final dateB = DateTime.tryParse(b['cree_le'] ?? '') ?? DateTime(2000);
-        return dateB.compareTo(dateA);
-      });
 
       if (!mounted) return;
       setState(() {
         _compte = compte;
         _chauffeur = chauffeur;
-        _historique = combine;
         _prenomController.text = compte['first_name'] ?? '';
         _nomController.text = compte['last_name'] ?? '';
       });
@@ -328,41 +315,6 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
       );
     } finally {
       if (mounted) setState(() => _enregistrementVehicule = false);
-    }
-  }
-
-  (IconData, String, String, Color) _infosEntree(Map<String, dynamic> entree) {
-    if (entree['_type'] == 'reservation') {
-      final trajet = entree['trajet_propose'];
-      final statut = entree['statut']?.toString() ?? '';
-      final couleur = switch (statut) {
-        'confirmee' => Colors.green,
-        'refusee' => Colors.red,
-        'annulee' => Colors.grey,
-        _ => Colors.orange,
-      };
-      final prix = formaterFcfaApi(trajet['prix_par_place']);
-      return (
-        Icons.event_seat,
-        '${trajet['depart']} → ${trajet['arrivee']}',
-        prix == null ? 'Réservation reçue' : 'Réservation reçue • $prix',
-        couleur,
-      );
-    } else {
-      final statut = entree['statut']?.toString() ?? '';
-      final couleur = switch (statut) {
-        'termine' => Colors.green,
-        'annule' => Colors.grey,
-        'en_route' || 'client_a_bord' => Colors.blue,
-        _ => Colors.orange,
-      };
-      final prix = formaterFcfaApi(entree['prix_estime']);
-      return (
-        Icons.flash_on,
-        entree['destination']?.toString() ?? '',
-        prix == null ? 'Demande instantanée' : 'Demande instantanée • $prix',
-        couleur,
-      );
     }
   }
 
@@ -635,45 +587,27 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
                   ),
                   const SizedBox(height: 24),
 
-                  const Text('Historique des courses', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 12),
-
-                  if (_historique.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 20),
-                      child: Text('Aucune course pour l\'instant.', style: TextStyle(color: Colors.grey.shade500)),
-                    )
-                  else
-                    ..._historique.map((entree) {
-                      final (icone, titre, sousTitre, couleur) = _infosEntree(entree);
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: Row(
-                          children: [
-                            CircleAvatar(
-                              backgroundColor: couleur.withValues(alpha: 0.15),
-                              child: Icon(icone, color: couleur, size: 20),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(titre, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                                  Text(sousTitre, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
+                  // L'historique complet (détail, totaux du jour) vit dans
+                  // « Mes courses », chargé page par page : plus tout
+                  // l'historique à chaque ouverture du profil.
+                  Material(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: Colors.grey.shade200),
+                      ),
+                      leading: const Icon(Icons.receipt_long_rounded, color: CouleursTaama.indigo),
+                      title: const Text('Mes courses', style: TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: const Text('Courses faites et annulées, avec leur détail'),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const PageMesCourses()),
+                      ),
+                    ),
+                  ),
 
                   const SizedBox(height: 32),
                   // Volontairement discret, en fin de page : action

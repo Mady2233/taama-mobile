@@ -522,14 +522,15 @@ class ApiService {
 
   // ─── Historique conducteur ────────────────────────────────────────────────
 
-  static Future<List<dynamic>> historiqueReservationsChauffeur() async {
-    final reponse = await http.get(Uri.parse('$_baseUrl/trajets/chauffeur/historique-reservations/'), headers: _headers);
-    return _traiterReponse(reponse) as List<dynamic>;
-  }
-
-  static Future<List<dynamic>> historiqueDemandesChauffeur() async {
-    final reponse = await http.get(Uri.parse('$_baseUrl/trajets/chauffeur/historique-demandes/'), headers: _headers);
-    return _traiterReponse(reponse) as List<dynamic>;
+  /// « Mes courses » : 20 courses terminées ou annulées par page.
+  static Future<Map<String, dynamic>> mesCourses({int page = 1}) async {
+    final reponse = await http
+        .get(
+          Uri.parse('$_baseUrl/trajets/chauffeur/mes-courses/').replace(queryParameters: {'page': '$page'}),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 12));
+    return _traiterReponse(reponse) as Map<String, dynamic>;
   }
 
   // ─── Notifications push ───────────────────────────────────────────────────

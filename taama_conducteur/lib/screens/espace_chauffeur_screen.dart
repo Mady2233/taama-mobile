@@ -31,6 +31,7 @@ import '../utils/format.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../widgets/widget_avatar_conducteur.dart';
 import 'connexion_screen.dart';
+import 'mes_courses_page.dart';
 import 'profil_chauffeur_screen.dart';
 import 'portefeuille_screen.dart';
 import 'chat_screen.dart';
@@ -763,6 +764,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
           switch (choix) {
             case 'profil':
               _ouvrir(const EcranProfilChauffeur());
+            case 'courses':
+              _ouvrir(const PageMesCourses());
             case 'portefeuille':
               _ouvrir(const EcranPortefeuille(estChauffeur: true));
             case 'verification':
@@ -777,6 +780,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
         },
         itemBuilder: (context) => [
           _entreeMenu('profil', Icons.person_rounded, 'Mon profil'),
+          _entreeMenu('courses', Icons.receipt_long_rounded, 'Mes courses'),
           if (ConfigApp.paiementActif.value)
             _entreeMenu('portefeuille', Icons.account_balance_wallet_rounded,
                 'Mon portefeuille'),
