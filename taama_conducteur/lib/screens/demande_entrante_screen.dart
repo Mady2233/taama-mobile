@@ -33,6 +33,7 @@ import '../services/sonnerie_service.dart';
 import '../theme/couleurs_taama.dart';
 import '../utils/format.dart';
 import '../widgets/couche_carte_taama.dart';
+import '../widgets/decision_demande.dart';
 import '../widgets/selecteur_prix.dart';
 import '../carte/fond_carte.dart';
 import 'navigation_screen.dart';
@@ -42,8 +43,16 @@ import 'navigation_screen.dart';
 /// avec l'ETA affichée côté client sur l'écran de sélection de véhicule.
 const double _vitesseApprocheKmh = 20;
 
-/// Hauteur approximative du panneau bas : la carte se cadre au-dessus.
-const double _hauteurPanneau = 360;
+/// Hauteur habituelle du panneau bas, tant qu'il n'est pas mesuré : la
+/// carte se cadre au-dessus.
+const double _hauteurPanneau = 440;
+
+// Le panneau monte au plus jusque sous le compte à rebours (en-tête à 32 dp
+// sous la zone sûre, anneau de 84 dp, 12 dp d'air) ; au-delà, les
+// informations défilent. Jamais moins que ce qui doit tenir : marges (22 et
+// 16), espace (18), boutons (124) et au moins 40 dp d'informations.
+const double _basEnTete = 32 + 84 + 12;
+const double _hauteurFixePanneau = 22 + 16 + 18 + 124 + 40;
 
 /// Écran plein écran affiché dès qu'une nouvelle demande instantanée est
 /// attribuée au conducteur (statut 'chauffeur_trouve') — déclenché soit par
@@ -90,14 +99,19 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   int? _prixChoisi;
   // Prix proposé, en attente de la réponse du client.
   bool _enAttenteClient = false;
+  // « Contre-proposer » touché : le − et le + remplacent le prix.
+  bool _modeContre = false;
+  // Temps affiché au client pour répondre à une contre-proposition (le
+  // serveur expire 10 s plus tard : contre_offre.DELAI_EXPIRATION_SECONDES).
+  static const int _dureeReponseClient = 45;
   int _secondesClient = 0;
   Timer? _timerAttente;
   bool _verificationEnCours = false;
   // Fin d'attente sans course (refus ou délai) : message et bouton Fermer.
   String? _issueAttente;
-  // Le client voit 30 s, le serveur expire à 40 s : au-delà de cette marge,
+  // Le client voit 45 s, le serveur expire à 55 s : au-delà de cette marge,
   // l'écran conclut seul, même sans réponse du réseau.
-  static const int _attenteMaxSecondes = 50;
+  static const int _attenteMaxSecondes = 65;
 
   LatLng? _positionActuelle;
   int? _etaMinutes;
@@ -106,6 +120,10 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   // ─── Affichage ───
   final MapController _carte = MapController();
   bool _cartePrete = false;
+  // Panneau du bas, mesuré pour cadrer la carte au-dessus.
+  final GlobalKey _clePanneau = GlobalKey();
+  // Informations du panneau (défilent sur les petits téléphones).
+  final ScrollController _defilementInfos = ScrollController();
   // Anneau fluide (le Timer ci-dessus reste la source de vérité des secondes).
   late final AnimationController _anneau = AnimationController(
     vsync: this,
@@ -149,6 +167,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
     _entree.dispose();
     _pulse.dispose();
     _carte.dispose();
+    _defilementInfos.dispose();
     super.dispose();
   }
 
@@ -250,10 +269,12 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   /// Réduction promo du client (prix de référence moins ce qu'il paie) : le
   /// chauffeur voit toujours le montant qu'il encaissera.
   int get _reduction {
-    final limites = _prixAjustable;
+    // Référence : celle des limites, sinon l'offre du client, sinon le
+    // standard (serveur sans limites, ou prix refusé par le serveur).
+    final reference = _prixAjustable?.reference ?? (_offreClient ? _prixOffert : _prixStandard);
     final estime = _prixEstime;
-    if (limites == null || estime == null) return 0;
-    return math.max(0, limites.reference - estime);
+    if (reference == null || estime == null) return 0;
+    return math.max(0, reference - estime);
   }
 
   int? get _prixAffiche {
@@ -285,7 +306,11 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
         _distanceKm = distanceKm;
         _etaMinutes = math.max(1, (distanceKm / _vitesseApprocheKmh * 60).round());
       });
-      _cadrerCarte();
+      // Après la mise en page : les badges distance et temps ont pu agrandir
+      // le panneau.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _cadrerCarte();
+      });
     } catch (e) {
       debugPrint('[DemandeEntrante] Erreur position/ETA : $e');
     }
@@ -302,6 +327,14 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
 
   double _rad(double deg) => deg * math.pi / 180;
 
+  double _hauteurMaxPanneau() {
+    final zoneSure = MediaQuery.paddingOf(context);
+    return math.max(
+      _hauteurFixePanneau + zoneSure.bottom,
+      MediaQuery.sizeOf(context).height - zoneSure.top - _basEnTete,
+    );
+  }
+
   /// Cadre la carte sur le client et le chauffeur, au-dessus du panneau.
   void _cadrerCarte() {
     if (!_cartePrete || _departLat == null || _departLng == null) return;
@@ -311,9 +344,22 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       _carte.move(depart, 15);
       return;
     }
+    // Au-dessus du panneau tel qu'il est affiché (mesuré), sinon de sa
+    // hauteur habituelle. Trop peu de place entre le titre et le panneau
+    // (petit téléphone) : la carte se centre simplement sur le départ.
+    final hauteurEcran = MediaQuery.sizeOf(context).height;
+    final boite = _clePanneau.currentContext?.findRenderObject();
+    final panneau = boite is RenderBox && boite.hasSize
+        ? boite.size.height
+        : math.min(_hauteurPanneau, _hauteurMaxPanneau());
+    final bas = panneau + 40;
+    if (hauteurEcran - haut - bas < 80) {
+      _carte.move(depart, 15);
+      return;
+    }
     _carte.fitCamera(CameraFit.bounds(
       bounds: LatLngBounds.fromPoints([depart, _positionActuelle!]),
-      padding: EdgeInsets.fromLTRB(60, haut, 60, _hauteurPanneau + 40),
+      padding: EdgeInsets.fromLTRB(60, haut, 60, bas),
       maxZoom: 16,
     ));
   }
@@ -434,8 +480,9 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       final restantes = ((reponse['contre_offre'] as Map?)?['secondes_restantes'] as num?)?.toInt();
       setState(() {
         _enAttenteClient = true;
+        _modeContre = false;
         _acceptationEnCours = false;
-        _secondesClient = restantes ?? 30;
+        _secondesClient = restantes ?? _dureeReponseClient;
       });
       _demarrerAttente();
     } on ApiException catch (e) {
@@ -449,6 +496,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       setState(() {
         _enTraitement = false;
         _acceptationEnCours = false;
+        _modeContre = false;
         _prixAjustable = null;
         _prixChoisi = null;
       });
@@ -574,8 +622,12 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   Widget build(BuildContext context) {
     return PopScope(
       // Pas de retour arrière accidentel pendant le traitement d'un tap, ni
-      // pendant l'attente de la réponse du client (au plus 50 s).
-      canPop: !_enTraitement && !_enAttenteClient,
+      // pendant l'attente de la réponse du client. En contre-proposition, le
+      // retour revient à la vue de départ, comme « Annuler ».
+      canPop: !_enTraitement && !_enAttenteClient && !_modeContre,
+      onPopInvokedWithResult: (aQuitte, _) {
+        if (!aQuitte && _modeContre && !_enTraitement && !_enAttenteClient) _annulerContre();
+      },
       child: Scaffold(
         backgroundColor: CouleursTaama.indigo,
         body: _chargement
@@ -737,13 +789,20 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
                   children: [
                     _PastilleEnDirect(animation: _pulse),
                     const SizedBox(height: 10),
-                    const Text(
-                      'Nouvelle course',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w900,
-                        height: 1.1,
+                    // Une seule ligne, réduite si l'écran est étroit : l'en-tête
+                    // garde la hauteur de l'anneau, sous laquelle monte le panneau.
+                    const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Nouvelle course',
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          height: 1.1,
+                        ),
                       ),
                     ),
                   ],
@@ -767,6 +826,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
               CurvedAnimation(parent: _entree, curve: Curves.easeOutCubic),
             ),
             child: FadeTransition(
+              key: _clePanneau,
               opacity: _entree,
               child: _panneau(demande),
             ),
@@ -780,10 +840,13 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
     final destination = demande['destination']?.toString() ?? '';
     final typeTransport = demande['type_transport']?.toString() ?? '';
     final prix = _prixAffiche;
-    final reduit = MediaQuery.disableAnimationsOf(context);
     final ajustable = _prixAjustable != null && _prixChoisi != null && !_enAttenteClient && _issueAttente == null;
 
     return Container(
+      key: const ValueKey('panneau-demande'),
+      // Jusque sous le compte à rebours, au plus : le titre et l'anneau
+      // restent visibles, en portrait comme en paysage.
+      constraints: BoxConstraints(maxHeight: _hauteurMaxPanneau()),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -797,126 +860,129 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Prix ajustable (le serveur en a envoyé les limites) : le prix
-              // au centre, − et + de chaque côté. Sinon, le prix seul.
-              if (ajustable && prix != null) ...[
-                Row(
-                  children: [
-                    Text(
-                      _offreClient ? 'Le client propose' : 'Prix de la course',
-                      style: const TextStyle(color: CouleursTaama.grisTexte, fontWeight: FontWeight.w800, fontSize: 13),
-                    ),
-                    const Spacer(),
-                    const _PastilleEspeces(),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                SelecteurPrix(
-                  prix: prix,
-                  ecart: _prixChoisi! - _prixAjustable!.reference,
-                  libelleReference: _offreClient ? 'l’offre du client' : 'le prix standard',
-                  pas: _prixAjustable!.pas,
-                  surBaisser: _enTraitement || !_prixAjustable!.peutBaisser(_prixChoisi!)
-                      ? null
-                      : () => setState(() => _prixChoisi = _prixAjustable!.baisser(_prixChoisi!)),
-                  surMonter: _enTraitement || !_prixAjustable!.peutMonter(_prixChoisi!)
-                      ? null
-                      : () => setState(() => _prixChoisi = _prixAjustable!.monter(_prixChoisi!)),
-                ),
-              ] else
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: prix == null
-                          ? const Text('—', style: _stylePrix)
-                          : TweenAnimationBuilder<double>(
-                              tween: Tween(begin: reduit ? prix.toDouble() : 0, end: prix.toDouble()),
-                              duration: const Duration(milliseconds: 900),
-                              curve: Curves.easeOutCubic,
-                              builder: (context, v, _) => FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.centerLeft,
-                                child: Text(formaterFcfa(v.round()), style: _stylePrix),
+              // Seules les informations défilent (petits téléphones) : les
+              // boutons restent toujours visibles, en bas du panneau.
+              Flexible(
+                // Barre visible dès que les informations dépassent : le
+                // chauffeur voit qu'il peut faire défiler.
+                child: Scrollbar(
+                  controller: _defilementInfos,
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    controller: _defilementInfos,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Le prix encaissé (l'offre du client, sinon le prix de la course).
+                        // Après « Contre-proposer » : le − et le + à partir de ce prix.
+                        if (_modeContre && ajustable && prix != null) ...[
+                          const Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Ta contre-proposition',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: CouleursTaama.grisTexte, fontWeight: FontWeight.w800, fontSize: 13),
+                                ),
                               ),
-                            ),
-                    ),
-                    const _PastilleEspeces(),
-                  ],
-                ),
-              // L'offre du client, avec le standard en référence.
-              if (_offreClient) ...[
-                const SizedBox(height: 6),
-                Text(
-                  '${ajustable ? '' : 'Offre du client · '}standard ${formaterFcfa(_prixStandard!)}',
-                  style: const TextStyle(color: CouleursTaama.grisTexte, fontWeight: FontWeight.w700, fontSize: 12.5),
-                ),
-              ],
-              const SizedBox(height: 14),
-
-              // Badges
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  if (_distanceKm != null)
-                    _Badge(
-                      icone: Icons.near_me_rounded,
-                      texte: '${_distanceKm!.toStringAsFixed(1)} km de toi',
-                    ),
-                  if (_etaMinutes != null)
-                    _Badge(icone: Icons.schedule_rounded, texte: '~$_etaMinutes min'),
-                  if (typeTransport.isNotEmpty)
-                    _Badge(icone: Icons.directions_car_filled_rounded, texte: typeTransport),
-                  // Pièce d'identité vérifiée par Taama : un booléen du serveur,
-                  // jamais la pièce. Absent ou faux : rien n'est affiché.
-                  if (_demande?['client_verifie'] == true)
-                    const _Badge(icone: Icons.verified_user_rounded, texte: 'Client vérifié'),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // Destination
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: CouleursTaama.indigo.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: CouleursTaama.terreCuite.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(Icons.flag_rounded, color: CouleursTaama.terreCuite),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Destination',
-                            style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w700),
+                              SizedBox(width: 8),
+                              PastilleEspeces(),
+                            ],
                           ),
-                          Text(
-                            destination.isEmpty ? '—' : destination,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              color: CouleursTaama.indigo,
-                            ),
+                          const SizedBox(height: 8),
+                          SelecteurPrix(
+                            prix: prix,
+                            ecart: _prixChoisi! - _prixAjustable!.reference,
+                            libelleReference: _offreClient ? 'l’offre du client' : 'le prix standard',
+                            pas: _prixAjustable!.pas,
+                            surBaisser: _enTraitement || !_prixAjustable!.peutBaisser(_prixChoisi!)
+                                ? null
+                                : () => setState(() => _prixChoisi = _prixAjustable!.baisser(_prixChoisi!)),
+                            surMonter: _enTraitement || !_prixAjustable!.peutMonter(_prixChoisi!)
+                                ? null
+                                : () => setState(() => _prixChoisi = _prixAjustable!.monter(_prixChoisi!)),
                           ),
-                        ],
-                      ),
+                        ] else
+                          BlocPrixDemande(
+                            prix: prix,
+                            prixStandard: _prixStandard,
+                            prixOffert: _prixOffert,
+                            reduction: _reduction,
+                            // Après « Proposer ce prix » : le prix affiché est le sien.
+                            contreProposition: _enAttenteClient || _issueAttente != null,
+                          ),
+                        const SizedBox(height: 14),
+
+                        // Destination juste sous le prix : visible sans faire défiler.
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: CouleursTaama.indigo.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: CouleursTaama.terreCuite.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Icon(Icons.flag_rounded, color: CouleursTaama.terreCuite),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Destination',
+                                      style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w700),
+                                    ),
+                                    Text(
+                                      destination.isEmpty ? '—' : destination,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w800,
+                                        color: CouleursTaama.indigo,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+
+                        // Badges
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            if (_distanceKm != null)
+                              _Badge(
+                                icone: Icons.near_me_rounded,
+                                texte: '${_distanceKm!.toStringAsFixed(1)} km de toi',
+                              ),
+                            if (_etaMinutes != null)
+                              _Badge(icone: Icons.schedule_rounded, texte: '~$_etaMinutes min'),
+                            if (typeTransport.isNotEmpty)
+                              _Badge(icone: Icons.directions_car_filled_rounded, texte: typeTransport),
+                            // Pièce d'identité vérifiée par Taama : un booléen du serveur,
+                            // jamais la pièce. Absent ou faux : rien n'est affiché.
+                            if (_demande?['client_verifie'] == true)
+                              const _Badge(icone: Icons.verified_user_rounded, texte: 'Client vérifié'),
+                          ],
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
               const SizedBox(height: 18),
@@ -973,7 +1039,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(
-              value: (_secondesClient / 30).clamp(0.0, 1.0),
+              value: (_secondesClient / _dureeReponseClient).clamp(0.0, 1.0),
               minHeight: 6,
               color: CouleursTaama.terreCuite,
               backgroundColor: CouleursTaama.terreCuite.withValues(alpha: 0.15),
@@ -1009,132 +1075,44 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
     );
   }
 
-  static const TextStyle _stylePrix = TextStyle(
-    color: CouleursTaama.terreCuite,
-    fontWeight: FontWeight.w900,
-    fontSize: 34,
-    height: 1,
-  );
 
   Widget _buildBoutons() {
-    return Row(
-      children: [
-        SizedBox(
-          height: 60,
-          child: OutlinedButton(
-            onPressed: _enTraitement ? null : _ignorer,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(96, 60),
-              foregroundColor: Colors.grey.shade700,
-              side: BorderSide(color: Colors.grey.shade300),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-            ),
-            child: (_enTraitement && !_acceptationEnCours)
-                ? SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey.shade600),
-                  )
-                : const Text('Ignorer', style: TextStyle(fontWeight: FontWeight.w700)),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: AnimatedBuilder(
-            animation: _pulse,
-            builder: (context, child) {
-              final t = _enTraitement ? 0.0 : _pulse.value;
-              return Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.green.withValues(alpha: 0.45 * (1 - t)),
-                      blurRadius: 6 + 18 * t,
-                      spreadRadius: 6 * t,
-                    ),
-                  ],
-                ),
-                child: child,
-              );
-            },
-            child: SizedBox(
-              height: 60,
-              child: ElevatedButton(
-                // Prix changé : le client doit d'abord accepter ce prix.
-                onPressed: _enTraitement ? null : (_prixModifie ? _proposer : _accepter),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green.shade600,
-                  disabledBackgroundColor: Colors.green.shade300,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size(0, 60),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                ),
-                child: _acceptationEnCours
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
-                      )
-                    : Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(_prixModifie ? Icons.send_rounded : Icons.check_circle_rounded, size: 24),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                _prixModifie
-                                    ? 'Proposer ce prix'
-                                    : (_prixAffiche != null ? 'Accepter · ${formaterFcfa(_prixAffiche!)}' : 'Accepter'),
-                                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-              ),
-            ),
-          ),
-        ),
-      ],
+    final ajustable = _prixAjustable != null && _prixChoisi != null;
+    return ActionsDemande(
+      prix: _prixAffiche,
+      contrePossible: ajustable,
+      modeContre: _modeContre && ajustable,
+      prixModifie: _prixModifie,
+      enTraitement: _enTraitement,
+      envoiEnCours: _acceptationEnCours,
+      pulse: MediaQuery.disableAnimationsOf(context) ? null : _pulse,
+      onAccepter: _accepter,
+      onRefuser: _ignorer,
+      onContreProposer: () {
+        // Premier geste du chauffeur : la sonnerie s'arrête, comme pour
+        // accepter ou refuser.
+        SonnerieService.instance.arreter();
+        setState(() {
+          _modeContre = true;
+          _prixChoisi = _prixAjustable!.reference;
+        });
+      },
+      onProposer: _proposer,
+      onAnnulerContre: _annulerContre,
     );
+  }
+
+  /// Retour à la vue de départ (« Annuler » ou geste retour) : rien n'a été
+  /// envoyé, le prix redevient celui de la demande.
+  void _annulerContre() {
+    setState(() {
+      _modeContre = false;
+      _prixChoisi = _prixAjustable?.reference;
+    });
   }
 }
 
 // ─── Widgets ───
-
-/// Mode de paiement de la course.
-class _PastilleEspeces extends StatelessWidget {
-  const _PastilleEspeces();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.green.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.payments_rounded, size: 16, color: Colors.green.shade700),
-          const SizedBox(width: 4),
-          Text(
-            'Espèces',
-            style: TextStyle(
-              color: Colors.green.shade700,
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 /// Grand anneau du compte à rebours : fluide, blanc → or → rouge.
 class _AnneauCompteARebours extends StatelessWidget {
