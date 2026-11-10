@@ -109,8 +109,7 @@ class _EcranSplashState extends State<EcranSplash>
 
     // Vérifie si déjà connecté
     if (ApiService.estConnecte) {
-      Navigator.pushReplacement(
-        context,
+      _remplacerPar(
         PageRouteBuilder(
           pageBuilder: (_, __, ___) => const EcranEspaceChauffeur(),
           transitionDuration: const Duration(milliseconds: 500),
@@ -122,8 +121,7 @@ class _EcranSplashState extends State<EcranSplash>
       // Vérifie si premier lancement (onboarding)
       final premierLancement = await _estPremierLancement();
       if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
+      _remplacerPar(
         PageRouteBuilder(
           pageBuilder: (_, __, ___) => premierLancement
               ? const EcranOnboarding()
@@ -133,6 +131,20 @@ class _EcranSplashState extends State<EcranSplash>
               FadeTransition(opacity: anim, child: child),
         ),
       );
+    }
+  }
+
+  /// Remplace l'écran de démarrage lui-même, pas l'écran du dessus :
+  /// pushReplacement remplacerait la demande entrante ouverte par une
+  /// notification pendant le démarrage. Celle-ci reste à l'écran, la suite
+  /// se construit dessous.
+  void _remplacerPar(Route<void> route) {
+    final navigateur = Navigator.of(context);
+    final moi = ModalRoute.of(context);
+    if (moi != null && !moi.isCurrent) {
+      navigateur.replace(oldRoute: moi, newRoute: route);
+    } else {
+      navigateur.pushReplacement(route);
     }
   }
 
