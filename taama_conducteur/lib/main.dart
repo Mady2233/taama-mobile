@@ -9,8 +9,10 @@ import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'services/config_app.dart';
 import 'services/demande_entrante_navigator.dart';
+import 'services/mise_a_jour.dart';
 import 'services/notification_service.dart';
 import 'theme/couleurs_taama.dart';
+import 'widgets/bandeau_mise_a_jour.dart';
 
 void main() async {
   // Avant tout le reste : aucune clé d'API dans les journaux.
@@ -43,11 +45,37 @@ void main() async {
   await ConfigApp.chargerValeurGardee();
   unawaited(ConfigApp.rafraichir());
 
+  // Avant les premières requêtes : la version est annoncée au serveur.
+  await MiseAJour.annoncerVersion();
+
   runApp(const TaamaConducApp());
 }
 
-class TaamaConducApp extends StatelessWidget {
+class TaamaConducApp extends StatefulWidget {
   const TaamaConducApp({super.key});
+
+  @override
+  State<TaamaConducApp> createState() => _TaamaConducAppState();
+}
+
+class _TaamaConducAppState extends State<TaamaConducApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Retour au premier plan : la version minimale a pu monter entre-temps.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState etat) {
+    if (etat == AppLifecycleState.resumed) unawaited(MiseAJour.verifierAuRetour());
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +84,7 @@ class TaamaConducApp extends StatelessWidget {
       title: 'Taama Conducteur',
       debugShowCheckedModeBanner: false,
       theme: _themeTaama,
+      builder: (context, enfant) => AvecBandeauMiseAJour(child: enfant ?? const SizedBox.shrink()),
       home: const EcranSplash(),
     );
   }

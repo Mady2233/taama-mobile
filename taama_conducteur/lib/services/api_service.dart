@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
+import 'version_app.dart';
 
 /// Erreur renvoyée par le backend, avec son code HTTP conservé — permet aux
 /// écrans de distinguer un 409 (conflit, ex. double-accept) d'un 404
@@ -53,17 +54,23 @@ class ApiService {
   static bool get estConnecte => _token != null;
   static String? get token => _token; // Exposé pour le WebSocket du chat
 
+  // X-Taama-App : version de l'app (VersionApp), pour la réponse 426 du
+  // serveur quand elle est trop ancienne.
   static Map<String, String> get _headers {
-    final headers = {'Content-Type': 'application/json'};
+    final headers = {'Content-Type': 'application/json', ...VersionApp.entetes()};
     if (_token != null) headers['Authorization'] = 'Token $_token';
     return headers;
   }
 
   static Map<String, String> get _headersPublics => {
         'Content-Type': 'application/json',
+        ...VersionApp.entetes(),
       };
 
   static dynamic _traiterReponse(http.Response reponse, {int codeAttendu = 200}) {
+    // Version trop ancienne : l'écran « Mise à jour requise » s'affiche, et
+    // l'appel échoue avec le message du serveur, comme toute erreur.
+    VersionApp.signaler(reponse.statusCode, reponse.body);
     if (reponse.statusCode != codeAttendu) {
       String message;
       final erreursChamps = <String, String>{};

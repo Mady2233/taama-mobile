@@ -20,6 +20,11 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 class DemandeEntranteNavigator {
   static int? _idAffiche;
 
+  /// Écrans de demande ouverts (une 2e demande peut s'ouvrir par-dessus) :
+  /// le bandeau de mise à jour se cache tant qu'il y en a un, pour ne jamais
+  /// couvrir le compte à rebours.
+  static final ValueNotifier<int> ecransOuverts = ValueNotifier(0);
+
   // Demandes refusées pendant cette session : jamais réaffichées, même si le
   // polling les revoit (la vraie garde est côté serveur : un chauffeur qui a
   // refusé ne se voit jamais réattribuer la demande).
@@ -64,6 +69,7 @@ class DemandeEntranteNavigator {
     // notification s'arrête, celle de l'app prend le relais (jamais deux).
     unawaited(SonnerieNotification.arreter(demandeId));
     if (sonner) SonnerieService.instance.demarrer();
+    ecransOuverts.value++;
     try {
       await navState.push(
         MaterialPageRoute(
@@ -74,6 +80,7 @@ class DemandeEntranteNavigator {
         ),
       );
     } finally {
+      ecransOuverts.value--;
       // Écran fermé (réponse, expiration, retour) : on coupe. Seulement si
       // c'est bien CET écran qui était au premier plan — une 2e demande
       // ouverte par-dessus garde la main sur la sonnerie.
