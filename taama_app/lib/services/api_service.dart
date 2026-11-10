@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
 import '../models/service_course.dart';
 import '../utils/format.dart';
+import 'version_app.dart';
 
 /// Levée par estimerCourse quand l'estimation n'est pas exploitable (réseau,
 /// timeout, statut HTTP non-200, réponse racine pas une liste) — distincte
@@ -95,17 +96,23 @@ class ApiService {
   static bool get estConnecte => _token != null;
   static String? get token => _token; // Exposé pour le WebSocket du chat
 
+  // X-Taama-App : version de l'app (VersionApp), pour la réponse 426 du
+  // serveur quand elle est trop ancienne.
   static Map<String, String> get _headers {
-    final headers = {'Content-Type': 'application/json'};
+    final headers = {'Content-Type': 'application/json', ...VersionApp.entetes()};
     if (_token != null) headers['Authorization'] = 'Token $_token';
     return headers;
   }
 
   static Map<String, String> get _headersPublics => {
         'Content-Type': 'application/json',
+        ...VersionApp.entetes(),
       };
 
   static dynamic _traiterReponse(http.Response reponse, {int codeAttendu = 200}) {
+    // Version trop ancienne : l'écran « Mise à jour requise » s'affiche, et
+    // l'appel échoue avec le message du serveur, comme toute erreur.
+    VersionApp.signaler(reponse.statusCode, reponse.body);
     if (reponse.statusCode != codeAttendu) {
       String message;
       try {
@@ -241,6 +248,7 @@ class ApiService {
       Uri.parse('$_baseUrl/comptes/mes-adresses/$adresseId/'),
       headers: _headers,
     );
+    VersionApp.signaler(reponse.statusCode, reponse.body);
     if (reponse.statusCode != 204) {
       throw Exception('Suppression impossible (${reponse.statusCode})');
     }
@@ -359,6 +367,8 @@ class ApiService {
       throw EstimationIndisponibleException('Estimation indisponible (réseau) : $e');
     }
 
+    // Version trop ancienne : l'écran « Mise à jour requise », comme partout.
+    VersionApp.signaler(reponse.statusCode, reponse.body);
     if (reponse.statusCode != 200) {
       String message = 'Estimation indisponible (HTTP ${reponse.statusCode})';
       try {

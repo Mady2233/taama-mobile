@@ -1,142 +1,259 @@
 // lib/services/mise_a_jour.dart
 //
-// Mise à jour obligatoire. Au démarrage, l'app s'arrête sur « Mettre à jour »
-// dès que Google Play propose une version plus récente à ce téléphone : Play ne
-// la propose qu'une fois téléchargeable, personne n'est bloqué sans rien à
-// installer. Filet de secours : le plus petit numéro de build fixé par le
-// serveur (config-app, version_min, réglé dans l'admin), qui vaut aussi pour
-// une app installée hors Play Store. Jamais pendant une course : avec une
-// course en cours, l'app s'ouvre normalement et le blocage attend le
-// lancement suivant.
+// Mise à jour de l'app. Le serveur fixe, pour cette app et cette plateforme
+// (config-app, réglées dans l'admin APRÈS chaque publication) :
+// - une version minimale : en dessous, l'app s'arrête sur « Mise à jour
+//   requise » — au démarrage, au retour au premier plan, ou quand le serveur
+//   répond 426 à une requête (VersionApp) ;
+// - une version recommandée : en dessous, un bandeau qu'on peut fermer.
+// Google Play qui propose une version plus récente : le bandeau seulement.
+// Jamais de blocage pendant une course (c'est le serveur qui tranche, voir
+// courseSelonServeur) ; configuration injoignable : la dernière valeur
+// connue, sinon rien n'est exigé.
 
 import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:in_app_update/in_app_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../screens/mise_a_jour_requise_page.dart';
 import 'api_service.dart';
 import 'config_app.dart';
+import 'navigation.dart';
+import 'version_app.dart';
+
+enum EtatMiseAJour { aJour, recommandee, requise }
 
 /// Issue du bouton « Mettre à jour ».
 enum IssueMiseAJour {
   /// Google Play installe la nouvelle version (l'app redémarre d'elle-même),
-  /// ou sa fiche s'est ouverte.
+  /// ou la fiche du store s'est ouverte.
   lancee,
 
   /// L'utilisateur a fermé l'écran de Google Play.
   annulee,
 
-  /// Ni la mise à jour intégrée ni la fiche du Play Store n'ont pu s'ouvrir.
+  /// Ni la mise à jour intégrée ni la fiche du store n'ont pu s'ouvrir.
   impossible,
 }
 
 class MiseAJour {
   MiseAJour._();
 
-  /// Clé de cette app dans version_min.
+  /// Clé de cette app dans la configuration du serveur.
   static const String cleApp = 'client';
   static const String _paquet = 'com.taama.taama_app';
 
-  /// Course pas encore terminée : le client la suit, rien ne doit l'en empêcher.
-  static const Set<String> statutsCourseEnCours = {
-    'en_recherche', 'chauffeur_trouve', 'contre_offre', 'en_route', 'client_a_bord',
-  };
+  static String get plateforme => defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
 
-  /// Le build installé est connu et sous le minimum du serveur. Build inconnu ou
-  /// minimum à 0 : jamais de blocage.
-  static bool requise({required int? installe, required int minimum}) =>
-      installe != null && minimum > 0 && installe < minimum;
+  /// Où en est le build installé face aux versions du serveur. Build inconnu
+  /// ou versions à 0 : à jour, jamais un blocage.
+  static EtatMiseAJour etat({required int? installe, required VersionsCible cible}) {
+    if (installe == null) return EtatMiseAJour.aJour;
+    if (cible.minimale > 0 && installe < cible.minimale) return EtatMiseAJour.requise;
+    if (cible.recommandee > 0 && installe < cible.recommandee) return EtatMiseAJour.recommandee;
+    return EtatMiseAJour.aJour;
+  }
 
-  /// Bloquer l'ouverture : Google Play a une version plus récente, ou le
-  /// serveur exige un build plus récent. Play muet (null) : seul le serveur
-  /// décide.
-  static bool bloquer({required int? installe, required int minimum, required bool? surPlay}) =>
-      surPlay == true || requise(installe: installe, minimum: minimum);
+  /// Build que le bandeau propose : la recommandée, la minimale (blocage
+  /// reporté pendant une course) ou celle de Google Play, la plus haute ;
+  /// null si rien n'est plus récent que le build installé.
+  static int? cibleBandeau({required int? installe, required VersionsCible cible, int? versionPlay}) {
+    if (installe == null) return null;
+    final candidates = [cible.recommandee, cible.minimale, versionPlay ?? 0].where((v) => v > installe);
+    return candidates.isEmpty ? null : candidates.reduce((a, b) => a > b ? a : b);
+  }
 
-  /// Lecture de la réponse de Google Play. Une mise à jour lancée puis
-  /// interrompue compte comme disponible : elle doit être reprise.
-  static bool? plusRecenteSurPlay(UpdateAvailability disponibilite) => switch (disponibilite) {
-        UpdateAvailability.updateAvailable || UpdateAvailability.developerTriggeredUpdateInProgress => true,
-        UpdateAvailability.updateNotAvailable => false,
-        UpdateAvailability.unknown => null,
-      };
+  /// Une fiche où envoyer l'utilisateur : le Play Store sur Android ; sur iOS,
+  /// seulement le lien réglé dans l'admin. Sans fiche, rien à installer :
+  /// jamais de blocage.
+  static bool ficheConnue(String? lien) => plateforme == 'android' || lien != null;
 
-  /// Une des demandes est une course en cours.
-  static bool courseEnCours(List<dynamic> demandes) =>
-      demandes.any((d) => d is Map && statutsCourseEnCours.contains(d['statut']));
+  static int? _build;
 
-  /// Null si illisible ou trop lent (2 s) : l'app s'ouvre alors normalement,
-  /// jamais un démarrage bloqué.
+  /// Null si illisible ou trop lent (2 s) : jamais un démarrage bloqué.
   static Future<int?> buildInstalle() async {
+    if (_build != null) return _build;
     try {
       final info = await PackageInfo.fromPlatform().timeout(const Duration(seconds: 2));
-      return int.tryParse(info.buildNumber);
+      return _build = int.tryParse(info.buildNumber);
     } catch (_) {
       return null;
     }
   }
 
-  /// Google Play a-t-il une version plus récente pour ce téléphone ? Null si
-  /// Play ne répond pas (app installée hors Play Store, pas de Play Store,
-  /// plus de 4 s) : jamais de blocage pour ce seul motif. Remplacé dans les
-  /// tests.
-  @visibleForTesting
-  static Future<bool?> Function() demanderAPlay = _demanderAPlay;
+  /// Au démarrage, avant les premières requêtes : la version est annoncée au
+  /// serveur, et sa réponse 426 ouvre l'écran bloquant.
+  static Future<void> annoncerVersion() async {
+    final build = await buildInstalle();
+    if (build != null) VersionApp.annoncer(app: cleApp, plateforme: plateforme, build: build);
+    VersionApp.surMiseAJourRequise = (lien) => afficherEcranRequis(lien: lien);
+  }
 
-  static Future<bool?> _demanderAPlay() async {
-    if (!Platform.isAndroid) return null;
+  /// Version plus récente proposée par Google Play à ce téléphone (pour le
+  /// bandeau seulement) ; null si aucune, ou Play muet (app installée hors
+  /// Play Store, pas de Play Store, plus de 4 s). Remplacé dans les tests.
+  @visibleForTesting
+  static Future<int?> Function() demanderAPlay = _demanderAPlay;
+
+  static Future<int?> _demanderAPlay() async {
+    // Vraie plateforme (pas defaultTargetPlatform, qui vaut Android dans les
+    // tests) : ailleurs, aucun appel natif.
+    if (kIsWeb || !Platform.isAndroid) return null;
     try {
       final info = await InAppUpdate.checkForUpdate().timeout(const Duration(seconds: 4));
-      return plusRecenteSurPlay(info.updateAvailability);
+      final disponible = info.updateAvailability == UpdateAvailability.updateAvailable ||
+          info.updateAvailability == UpdateAvailability.developerTriggeredUpdateInProgress;
+      return disponible ? info.availableVersionCode : null;
     } catch (_) {
       return null;
     }
   }
 
-  /// Appelé par l'écran de démarrage, juste avant d'ouvrir l'app. Serveur et
-  /// Google Play sont interrogés en même temps : aucune attente de plus.
-  static Future<bool> doitBloquer() async {
+  /// Une course (ou une livraison) est en cours : on ne bloque pas.
+  /// Remplacé dans les tests.
+  @visibleForTesting
+  static Future<bool> Function() verifierCourse = courseSelonServeur;
+
+  /// Le serveur tranche : sous la minimale, il répond 426 à toute requête,
+  /// sauf pendant une course ou une livraison en cours (et, pour le client,
+  /// juste terminée : paiement, note). 426 : aucune course. Toute autre réponse (il laisse
+  /// passer) ou le doute (réseau) : on considère qu'il y en a une. Pas
+  /// connecté : aucune course possible.
+  static Future<bool> courseSelonServeur() async {
+    if (!ApiService.estConnecte) return false;
+    final refusAvant = VersionApp.refusRecus;
+    try {
+      await ApiService.mesDemandesClient().timeout(const Duration(seconds: 12));
+      return true;
+    } catch (_) {
+      return VersionApp.refusRecus == refusAvant;
+    }
+  }
+
+  /// Bandeau « nouvelle version » : écouté au-dessus de tous les écrans.
+  static final ValueNotifier<bool> bandeauVisible = ValueNotifier(false);
+  static int? _cibleBandeau;
+  static const String _cleBandeauFerme = 'mise_a_jour_bandeau_ferme';
+
+  static DateTime? _derniereVerification;
+  static const Duration intervalleRetour = Duration(minutes: 10);
+
+  /// Écran de démarrage : faut-il bloquer ? Prépare aussi le bandeau.
+  static Future<bool> doitBloquer({DateTime? maintenant}) async {
+    _derniereVerification = maintenant ?? DateTime.now();
     final reponses = await Future.wait<Object?>([
       ConfigApp.attendreRafraichissement(),
       demanderAPlay(),
       buildInstalle(),
     ]);
-    final minimum = ConfigApp.versionsMin.value[cleApp] ?? 0;
-    final bloque = bloquer(
-      installe: reponses[2] as int?,
-      minimum: minimum,
-      surPlay: reponses[1] as bool?,
+    final installe = reponses[2] as int?;
+    final cible = ConfigApp.cible(cleApp, plateforme);
+    final bloquer = etat(installe: installe, cible: cible) == EtatMiseAJour.requise &&
+        ficheConnue(cible.lien) &&
+        !await verifierCourse();
+    // L'écran bloquant suffit : jamais le bandeau par-dessus.
+    await _preparerBandeau(
+      bloquer || ecranAffiche ? null : cibleBandeau(installe: installe, cible: cible, versionPlay: reponses[1] as int?),
     );
-    if (!bloque) return false;
-    return !await _courseEnCours();
+    return bloquer;
   }
 
-  static Future<bool> _courseEnCours() async {
-    if (!ApiService.estConnecte) return false;
+  /// Retour au premier plan : même vérification, au plus toutes les
+  /// [intervalleRetour] (une requête de configuration, mise en cache).
+  static Future<void> verifierAuRetour({DateTime? maintenant}) async {
+    final instant = maintenant ?? DateTime.now();
+    final derniere = _derniereVerification;
+    if (derniere != null && instant.difference(derniere) < intervalleRetour) return;
+    unawaited(ConfigApp.rafraichir());
+    if (await doitBloquer(maintenant: instant)) afficherEcranRequis();
+  }
+
+  @visibleForTesting
+  static void reinitialiser() {
+    _derniereVerification = null;
+    _cibleBandeau = null;
+    _build = null;
+    bandeauVisible.value = false;
+    _ecranAffiche = false;
+    lienServeur = null;
+  }
+
+  static Future<void> _preparerBandeau(int? cible) async {
+    _cibleBandeau = cible;
+    if (cible == null) {
+      bandeauVisible.value = false;
+      return;
+    }
+    int? fermee;
     try {
-      final demandes = await ApiService.mesDemandesClient().timeout(const Duration(seconds: 12));
-      return courseEnCours(demandes);
+      fermee = (await SharedPreferences.getInstance()).getInt(_cleBandeauFerme);
     } catch (_) {
-      // Impossible de vérifier : une course est peut-être en cours, on ne bloque pas.
-      return true;
+      // Illisible : le bandeau s'affiche.
+    }
+    bandeauVisible.value = fermee == null || cible > fermee;
+  }
+
+  /// Fermé : il ne revient que pour une version plus récente que la plus
+  /// récente déjà écartée.
+  static Future<void> fermerBandeau() async {
+    bandeauVisible.value = false;
+    final cible = _cibleBandeau;
+    if (cible == null) return;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final fermee = preferences.getInt(_cleBandeauFerme);
+      if (fermee == null || cible > fermee) await preferences.setInt(_cleBandeauFerme, cible);
+    } catch (_) {
+      // Non gardé : il reviendra au prochain lancement.
     }
   }
 
+  /// L'écran bloquant est affiché, ou sur le point de l'être : jamais deux.
+  static bool get ecranAffiche => _ecranAffiche;
+  static bool _ecranAffiche = false;
+
+  /// Fiche du store envoyée par le serveur avec sa réponse 426.
+  static String? lienServeur;
+
+  /// Ouvre l'écran bloquant, seul à l'écran : les écrans dessous (et leurs
+  /// requêtes périodiques) s'arrêtent. Sans risque pour une course : le
+  /// serveur ne répond jamais 426 pendant une course, et le démarrage comme
+  /// le retour au premier plan ne bloquent qu'après lui (courseSelonServeur).
+  /// [navigateur] : celui de l'appelant (écran de démarrage), sinon celui de
+  /// l'app (navigatorKey).
+  static void afficherEcranRequis({String? lien, NavigatorState? navigateur}) {
+    if (lien != null) lienServeur = lien;
+    if (_ecranAffiche) return;
+    if (!ficheConnue(lienServeur ?? ConfigApp.cible(cleApp, plateforme).lien)) return;
+    final cible = navigateur ?? navigatorKey.currentState;
+    if (cible == null) return;
+    // Tout de suite, pas à la construction de l'écran : une deuxième 426
+    // reçue dans la même frame n'en empile pas un deuxième.
+    _ecranAffiche = true;
+    bandeauVisible.value = false;
+    cible
+        .pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const PageMiseAJourRequise()), (_) => false)
+        .whenComplete(() => _ecranAffiche = false);
+  }
+
   /// Bouton « Mettre à jour » : la mise à jour plein écran de Google Play
-  /// (téléchargement, installation, redémarrage), sinon la fiche du Play Store.
+  /// (téléchargement, installation, redémarrage), sinon la fiche du store.
   static Future<IssueMiseAJour> mettreAJour() async {
     final integree = await _miseAJourIntegree();
     if (integree != null) return integree;
-    return await ouvrirPlayStore() ? IssueMiseAJour.lancee : IssueMiseAJour.impossible;
+    return await ouvrirFiche() ? IssueMiseAJour.lancee : IssueMiseAJour.impossible;
   }
 
-  /// Null : impossible depuis l'app (installée hors Play Store, Play muet,
-  /// échec de Play), la fiche du Play Store prend le relais.
+  /// Null : impossible depuis l'app (iOS, installée hors Play Store, Play
+  /// muet, échec de Play), la fiche du store prend le relais.
   static Future<IssueMiseAJour?> _miseAJourIntegree() async {
-    if (!Platform.isAndroid) return null;
+    if (kIsWeb || !Platform.isAndroid) return null;
     try {
       // Play exige une vérification juste avant de lancer la mise à jour.
       final info = await InAppUpdate.checkForUpdate().timeout(const Duration(seconds: 4));
@@ -153,22 +270,24 @@ class MiseAJour {
     }
   }
 
-  /// Fiche Play Store de l'app : l'app Play Store si elle est là, sinon le site.
-  static Future<bool> ouvrirPlayStore() async {
-    try {
-      if (await launchUrl(Uri.parse('market://details?id=$_paquet'), mode: LaunchMode.externalApplication)) {
-        return true;
-      }
-    } catch (_) {
-      // Pas d'app Play Store : le site ci-dessous.
-    }
-    try {
-      return await launchUrl(
+  /// Fiche de l'app : le lien du serveur (App Store pour iOS), sinon le Play
+  /// Store (l'app Play Store si elle est là, sinon le site).
+  static Future<bool> ouvrirFiche() async {
+    final lien = lienServeur ?? ConfigApp.cible(cleApp, plateforme).lien;
+    final adresses = [
+      if (lien != null) Uri.parse(lien),
+      if (plateforme == 'android') ...[
+        Uri.parse('market://details?id=$_paquet'),
         Uri.https('play.google.com', '/store/apps/details', {'id': _paquet}),
-        mode: LaunchMode.externalApplication,
-      );
-    } catch (_) {
-      return false;
+      ],
+    ];
+    for (final adresse in adresses) {
+      try {
+        if (await launchUrl(adresse, mode: LaunchMode.externalApplication)) return true;
+      } catch (_) {
+        // Suivante.
+      }
     }
+    return false;
   }
 }

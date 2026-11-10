@@ -3,8 +3,11 @@
 // Logique de l'écran « Mise à jour requise » : lancer la mise à jour de Google
 // Play (sinon sa fiche), ou relancer le démarrage.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../services/config_app.dart';
 import '../services/mise_a_jour.dart';
 import 'mise_a_jour_requise_screen.dart';
 import 'splash_screen.dart';
@@ -39,8 +42,11 @@ class _PageMiseAJourRequiseState extends State<PageMiseAJourRequise> {
     }
   }
 
+  /// Relance le démarrage depuis zéro, avec une configuration relue : la
+  /// version minimale a pu baisser entre-temps (réglée trop tôt, corrigée).
   void _reessayer() {
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const EcranSplash()));
+    unawaited(ConfigApp.rafraichir());
+    Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const EcranSplash()), (_) => false);
   }
 
   @override

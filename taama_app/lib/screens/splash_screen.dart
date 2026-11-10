@@ -5,7 +5,6 @@ import '../theme/taama_theme.dart';
 import '../services/api_service.dart';
 import '../services/mise_a_jour.dart';
 import '../widgets/taama/marque_taama.dart';
-import 'mise_a_jour_requise_page.dart';
 import 'onboarding_screen.dart';
 import 'connexion_screen.dart';
 import 'accueil_screen.dart';
@@ -79,11 +78,16 @@ class _EcranSplashState extends State<EcranSplash>
   }
 
   Future<void> _demarrerAnimations() async {
+    // Retiré entre deux étapes (écran « Mise à jour requise » ouvert par une
+    // réponse 426) : plus rien à animer.
     await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
     _bgController.forward();
     await Future.delayed(const Duration(milliseconds: 200));
+    if (!mounted) return;
     _logoController.forward();
     await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
     _textController.forward();
 
     // Attend la fin des animations puis navigue
@@ -97,10 +101,12 @@ class _EcranSplashState extends State<EcranSplash>
     // Version trop ancienne : l'app s'arrête ici, jamais pendant une course.
     if (await MiseAJour.doitBloquer()) {
       if (!mounted) return;
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const PageMiseAJourRequise()));
+      MiseAJour.afficherEcranRequis(navigateur: Navigator.of(context));
       return;
     }
-    if (!mounted) return;
+    // Écran bloquant déjà ouvert pendant la vérification (réponse 426 du
+    // serveur) : rien ne doit passer par-dessus.
+    if (!mounted || MiseAJour.ecranAffiche) return;
 
     // Vérifie si déjà connecté
     if (ApiService.estConnecte) {
@@ -139,6 +145,8 @@ class _EcranSplashState extends State<EcranSplash>
 
   @override
   void dispose() {
+    // Retiré avant la fin : les barres du système ne restent pas masquées.
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _logoController.dispose();
     _textController.dispose();
     _bgController.dispose();

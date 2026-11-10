@@ -9,8 +9,11 @@ import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'services/config_app.dart';
+import 'services/mise_a_jour.dart';
+import 'services/navigation.dart';
 import 'services/notification_service.dart';
 import 'theme/taama_theme.dart';
+import 'widgets/bandeau_mise_a_jour.dart';
 
 void main() {
   // Avant tout le reste : aucune clé d'API dans les journaux.
@@ -62,6 +65,9 @@ void main() {
     await ConfigApp.chargerValeurGardee();
     unawaited(ConfigApp.rafraichir());
 
+    // Avant les premières requêtes : la version est annoncée au serveur.
+    await MiseAJour.annoncerVersion();
+
     runApp(const TaamaApp());
   }, (error, stack) {
     debugPrint('ZONE ERROR: $error');
@@ -70,15 +76,40 @@ void main() {
 }
 
 /// Configuration globale de mon application
-class TaamaApp extends StatelessWidget {
+class TaamaApp extends StatefulWidget {
   const TaamaApp({super.key});
+
+  @override
+  State<TaamaApp> createState() => _TaamaAppState();
+}
+
+class _TaamaAppState extends State<TaamaApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Retour au premier plan : la version minimale a pu monter entre-temps.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState etat) {
+    if (etat == AppLifecycleState.resumed) unawaited(MiseAJour.verifierAuRetour());
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Taama',
       debugShowCheckedModeBanner: false,
       theme: TaamaTheme.light(),
+      builder: (context, enfant) => AvecBandeauMiseAJour(child: enfant ?? const SizedBox.shrink()),
       home: const EcranSplash(),
     );
   }
