@@ -74,6 +74,15 @@ Future<void> _contreProposer(WidgetTester t) async {
   await t.pump(); // réponse du serveur
 }
 
+/// Réponse du vrai serveur à « Proposer ce prix » : 201 Created, et la
+/// demande en contre_offre dans le corps.
+http.Response _propositionEnregistree({bool offre = true, int code = 201}) => _json(
+    _demande(
+        statut: 'contre_offre',
+        offre: offre,
+        contreOffre: {'prix_propose': 1300, 'prix_client': 1300, 'secondes_restantes': 45}),
+    code);
+
 /// Faux serveur d'une contre-proposition que le client refuse : après la
 /// proposition, la demande n'est plus à ce chauffeur.
 Future<http.Response> Function(http.Request) _refusDuClient({required bool offre}) {
@@ -81,9 +90,24 @@ Future<http.Response> Function(http.Request) _refusDuClient({required bool offre
   return (requete) async {
     if (requete.url.path.endsWith('/proposer-prix/')) {
       proposee = true;
-      return _json({'contre_offre': {'secondes_restantes': 45}});
+      return _propositionEnregistree(offre: offre);
     }
     return _json(proposee ? [] : [_demande(offre: offre)]);
+  };
+}
+
+/// Faux serveur : [reponse] à « Proposer ce prix », puis la demande relue
+/// vaut [apres] ; [relectures] compte les relectures après la proposition.
+Future<http.Response> Function(http.Request) _proposition(
+    http.Response reponse, Map<String, dynamic> apres, void Function() relue) {
+  var proposee = false;
+  return (requete) async {
+    if (requete.url.path.endsWith('/proposer-prix/')) {
+      proposee = true;
+      return reponse;
+    }
+    if (proposee) relue();
+    return _json([if (proposee) apres else _demande()]);
   };
 }
 
@@ -129,6 +153,51 @@ void main() {
             _enTeteVisible(t);
             await t.pumpWidget(const SizedBox());
           }));
+
+  group('« Proposer ce prix » réussi : l’état du corps de la réponse fait foi', () {
+    final enAttente = _demande(
+        statut: 'contre_offre', contreOffre: {'prix_propose': 1300, 'prix_client': 1300, 'secondes_restantes': 45});
+
+    for (final code in [201, 200]) {
+      testWidgets('réponse $code avec la demande en contre_offre : attente, sans relecture', (t) {
+        var relectures = 0;
+        return _avecServeur(_proposition(_propositionEnregistree(code: code), enAttente, () => relectures++), () async {
+          await _ouvrir(t, taille: const Size(412, 915), basSur: 0);
+          await _contreProposer(t);
+          await t.pump();
+          expect(find.text('En attente de la réponse du client'), findsOneWidget);
+          expect(relectures, 0);
+          await t.pumpWidget(const SizedBox());
+        });
+      });
+    }
+
+    testWidgets('corps sans état reconnu : l’écran relit la demande, jamais d’attente supposée', (t) {
+      var relectures = 0;
+      return _avecServeur(_proposition(_json({}, 201), _demande(), () => relectures++), () async {
+        await _ouvrir(t, taille: const Size(412, 915), basSur: 0);
+        await _contreProposer(t);
+        await t.pump();
+        expect(relectures, 1);
+        expect(find.text('En attente de la réponse du client'), findsNothing);
+        expect(find.text('Proposer ce prix'), findsOneWidget);
+        expect(find.text('La proposition n’a pas pu être confirmée : réessaie.'), findsOneWidget);
+        await t.pumpWidget(const SizedBox());
+      });
+    });
+
+    testWidgets('corps sans état reconnu, relecture en contre_offre : attente', (t) {
+      var relectures = 0;
+      return _avecServeur(_proposition(_json({}, 201), enAttente, () => relectures++), () async {
+        await _ouvrir(t, taille: const Size(412, 915), basSur: 0);
+        await _contreProposer(t);
+        await t.pump();
+        expect(relectures, 1);
+        expect(find.text('En attente de la réponse du client'), findsOneWidget);
+        await t.pumpWidget(const SizedBox());
+      });
+    });
+  });
 
   group('réponse de « Proposer ce prix » perdue : le serveur fait foi', () {
     testWidgets('proposition enregistrée : l’écran attend le client',

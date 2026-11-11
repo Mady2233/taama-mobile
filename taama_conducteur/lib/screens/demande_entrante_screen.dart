@@ -481,14 +481,17 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
     try {
       final reponse = await ApiService.proposerPrix(widget.demandeId, prix);
       if (!mounted) return;
-      final restantes = ((reponse['contre_offre'] as Map?)?['secondes_restantes'] as num?)?.toInt();
+      // L'écran suit l'état renvoyé par le serveur (la demande), jamais un
+      // état supposé. Corps sans état reconnu : on relit la demande.
+      if (_suivreEtat(reponse) || await _suivreLeServeur()) return;
+      if (!mounted) return;
       setState(() {
-        _enAttenteClient = true;
-        _modeContre = false;
+        _enTraitement = false;
         _acceptationEnCours = false;
-        _secondesClient = restantes ?? _dureeReponseClient;
       });
-      _demarrerAttente();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('La proposition n’a pas pu être confirmée : réessaie.')),
+      );
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.statusCode == 404) {
@@ -544,9 +547,17 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       _fermer();
       return true;
     }
-    switch (actuelle['statut']) {
+    return _suivreEtat(actuelle);
+  }
+
+  /// Suit l'état d'une demande renvoyé par le serveur : contre-proposition
+  /// enregistrée → attente du client (temps et prix du serveur) ; course
+  /// acceptée → navigation. Vrai si l'écran a suivi ; faux pour tout autre
+  /// état (la demande attend encore une réponse, ou état inconnu).
+  bool _suivreEtat(Map<String, dynamic> demande) {
+    switch (demande['statut']) {
       case 'contre_offre':
-        final offre = actuelle['contre_offre'];
+        final offre = demande['contre_offre'];
         final restantes = offre is Map ? (offre['secondes_restantes'] as num?)?.toInt() : null;
         final propose = offre is Map ? (offre['prix_propose'] as num?)?.toInt() : null;
         setState(() {
@@ -559,7 +570,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
         _demarrerAttente();
         return true;
       case 'en_route':
-        _ouvrirNavigation(actuelle);
+        _ouvrirNavigation(demande);
         return true;
     }
     return false;

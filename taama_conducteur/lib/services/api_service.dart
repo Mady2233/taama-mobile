@@ -437,7 +437,9 @@ class ApiService {
           body: jsonEncode({'prix': prix}),
         )
         .timeout(const Duration(seconds: 12));
-    return _traiterReponse(reponse) as Map<String, dynamic>;
+    // Succès : 201 Created (proposer_prix) ; 200 accepté aussi, pour ne
+    // jamais prendre une proposition enregistrée pour une erreur.
+    return _traiterReponse(reponse, codeAttendu: reponse.statusCode == 200 ? 200 : 201) as Map<String, dynamic>;
   }
 
   static Future<void> refuserDemande(int demandeId) async {
