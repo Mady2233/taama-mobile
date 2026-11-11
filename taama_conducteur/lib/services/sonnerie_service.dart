@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
-import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
+import 'package:flutter/foundation.dart' show kDebugMode, debugPrint, visibleForTesting;
 import 'package:flutter/services.dart' show HapticFeedback;
 
 /// Sonnerie d'une nouvelle demande de course (app ouverte ou en arrière-plan
@@ -25,6 +25,14 @@ class SonnerieService {
   bool _enCours = false;
 
   bool get enCours => _enCours;
+
+  /// La vibration en boucle tourne.
+  @visibleForTesting
+  bool get vibre => _vibration != null;
+
+  /// Remplace la lecture du son dans les tests (pas de lecteur natif).
+  @visibleForTesting
+  Future<void> Function()? lecturePourTest;
 
   Future<AudioPlayer> _preparerLecteur() async {
     final existant = _lecteur;
@@ -54,13 +62,29 @@ class SonnerieService {
     if (_enCours) return;
     _enCours = true;
     try {
-      final lecteur = await _preparerLecteur();
-      if (!_enCours) return; // arrêtée pendant la préparation
-      await lecteur.play(AssetSource(_fichier), volume: 1.0);
+      final lecture = lecturePourTest;
+      if (lecture != null) {
+        await lecture();
+      } else {
+        final lecteur = await _preparerLecteur();
+        if (!_enCours) return; // arrêtée pendant la préparation
+        await lecteur.play(AssetSource(_fichier), volume: 1.0);
+      }
     } catch (e) {
       // Pas de son (fichier absent, audio occupé…) : la vibration et
       // l'écran de demande restent — jamais de crash pour une sonnerie.
       if (kDebugMode) debugPrint('[Sonnerie] Lecture impossible : $e');
+    }
+    // Arrêtée pendant le lancement du son (demande disparue entre-temps) :
+    // ni vibration ni arrêt automatique relancés — l'arrêt automatique ne
+    // couperait plus rien — et le son, s'il est parti, est coupé.
+    if (!_enCours) {
+      try {
+        await _lecteur?.stop();
+      } catch (_) {
+        // Rien à couper.
+      }
+      return;
     }
     HapticFeedback.heavyImpact();
     _vibration?.cancel();
