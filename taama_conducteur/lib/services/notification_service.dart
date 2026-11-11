@@ -1,9 +1,11 @@
+import 'dart:async';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/foundation.dart';
 import 'annulations_course.dart';
-import 'api_service.dart';
 import 'demande_entrante_navigator.dart';
+import 'enregistrement_jeton.dart';
 import 'sonnerie_notification.dart';
 
 /// Canal Android général (messages, annulations…). Référencé également côté
@@ -177,18 +179,12 @@ class NotificationService {
     // 5. Si le token change (rare mais possible), je le garde à jour ET je
     // le renvoie au backend — sinon DeviceToken reste sur l'ancien token
     // (mort dès la rotation), et le conducteur arrête silencieusement de
-    // recevoir des notifications jusqu'à sa prochaine connexion (seul autre
-    // point d'enregistrement, voir otp_verification_screen.dart). Best-effort
-    // (try/catch) : ApiService.enregistrerTokenNotification échoue déjà en
-    // silence en interne, ce try/catch protège contre toute autre erreur.
-    _messaging.onTokenRefresh.listen((nouveauToken) async {
+    // recevoir les sonneries de course. Réponse vérifiée, nouveaux essais
+    // espacés : EnregistrementJeton (aussi au démarrage et à la connexion).
+    _messaging.onTokenRefresh.listen((nouveauToken) {
       token = nouveauToken;
       if (kDebugMode) debugPrint('Token FCM mis à jour : $nouveauToken');
-      try {
-        await ApiService.enregistrerTokenNotification(nouveauToken);
-      } catch (e) {
-        debugPrint('Erreur ré-enregistrement du token FCM : $e');
-      }
+      unawaited(EnregistrementJeton.enregistrer(nouveauToken));
     });
   }
 

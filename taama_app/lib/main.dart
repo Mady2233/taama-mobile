@@ -9,6 +9,7 @@ import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'services/config_app.dart';
+import 'services/enregistrement_jeton.dart';
 import 'services/mise_a_jour.dart';
 import 'services/navigation.dart';
 import 'services/notification_service.dart';
@@ -67,6 +68,10 @@ void main() {
 
     // Avant les premières requêtes : la version est annoncée au serveur.
     await MiseAJour.annoncerVersion();
+
+    // Session ouverte : le jeton de notification est réenregistré à chaque
+    // démarrage (réponse vérifiée, nouveaux essais : EnregistrementJeton).
+    unawaited(EnregistrementJeton.enregistrer(NotificationService.token));
 
     runApp(const TaamaApp());
   }, (error, stack) {

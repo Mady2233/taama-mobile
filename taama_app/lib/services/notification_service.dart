@@ -1,7 +1,9 @@
+import 'dart:async';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/foundation.dart';
-import 'api_service.dart';
+import 'enregistrement_jeton.dart';
 
 /// Canal Android dédié aux notifications de course — importance MAX (son +
 /// pop-up "heads-up") pour que le passager soit alerté même téléphone
@@ -76,7 +78,8 @@ class NotificationService {
     // 3. Je récupère le token de cet appareil
     try {
       token = await _messaging.getToken();
-      debugPrint('Token FCM récupéré : $token');
+      // Le token identifie l'appareil : jamais dans les logs en production.
+      if (kDebugMode) debugPrint('Token FCM récupéré : $token');
     } catch (e) {
       debugPrint('Erreur lors de la récupération du token FCM : $e');
     }
@@ -90,17 +93,12 @@ class NotificationService {
     // 5. Si le token change (rare mais possible), je le garde à jour ET je
     // le renvoie au backend — sinon DeviceToken reste sur l'ancien token
     // (mort dès la rotation), et le passager arrête silencieusement de
-    // recevoir des notifications jusqu'à sa prochaine connexion. Best-effort
-    // (try/catch) : ApiService.enregistrerTokenNotification échoue déjà en
-    // silence en interne, ce try/catch protège contre toute autre erreur.
-    _messaging.onTokenRefresh.listen((nouveauToken) async {
+    // recevoir des notifications. Réponse vérifiée, nouveaux essais
+    // espacés : EnregistrementJeton.
+    _messaging.onTokenRefresh.listen((nouveauToken) {
       token = nouveauToken;
-      debugPrint('Token FCM mis à jour : $nouveauToken');
-      try {
-        await ApiService.enregistrerTokenNotification(nouveauToken);
-      } catch (e) {
-        debugPrint('Erreur ré-enregistrement du token FCM : $e');
-      }
+      if (kDebugMode) debugPrint('Token FCM mis à jour : $nouveauToken');
+      unawaited(EnregistrementJeton.enregistrer(nouveauToken));
     });
   }
 

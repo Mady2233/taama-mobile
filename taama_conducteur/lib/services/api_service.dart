@@ -544,14 +544,20 @@ class ApiService {
 
   // ─── Notifications push ───────────────────────────────────────────────────
 
-  static Future<void> enregistrerTokenNotification(String token) async {
-    try {
-      await http.post(
-        Uri.parse('$_baseUrl/trajets/notifications/enregistrer-token/'),
-        headers: _headers,
-        body: jsonEncode({'token': token}),
-      );
-    } catch (_) {}
+  /// Envoie le jeton FCM de cet appareil et rend le code HTTP (200 :
+  /// enregistré). Lève sur erreur réseau ou délai dépassé. Une réponse 426
+  /// ouvre l'écran « Mise à jour requise », comme partout. Nouveaux essais :
+  /// EnregistrementJeton.
+  static Future<int> enregistrerTokenNotification(String token) async {
+    final reponse = await http
+        .post(
+          Uri.parse('$_baseUrl/trajets/notifications/enregistrer-token/'),
+          headers: _headers,
+          body: jsonEncode({'token': token}),
+        )
+        .timeout(const Duration(seconds: 12));
+    VersionApp.signaler(reponse.statusCode, reponse.body);
+    return reponse.statusCode;
   }
 
   // ─── Notation du conducteur ───────────────────────────────────────────────
