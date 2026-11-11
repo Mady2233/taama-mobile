@@ -491,6 +491,10 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
         _fermer();
         return;
       }
+      // Refus du serveur : la proposition a pu partir lors d'un essai dont la
+      // réponse s'est perdue. Le serveur fait foi.
+      if (await _suivreLeServeur()) return;
+      if (!mounted) return;
       // Prix refusé par le serveur (limites changées, déjà deux propositions…) :
       // retour au prix standard, la course reste acceptable normalement.
       setState(() {
@@ -503,12 +507,58 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } catch (e) {
       if (!mounted) return;
+      // Réponse perdue (réseau, délai) : la proposition est peut-être
+      // enregistrée. Le serveur fait foi.
+      if (await _suivreLeServeur()) return;
+      if (!mounted) return;
       setState(() {
         _enTraitement = false;
         _acceptationEnCours = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_messageErreurLisible(e))));
     }
+  }
+
+  /// Après un échec de « Proposer ce prix », relit la demande et suit le
+  /// serveur : contre-proposition enregistrée → attente du client ; course
+  /// acceptée → navigation ; demande partie → fermeture. Vrai si l'écran a
+  /// suivi ; faux si elle attend toujours une réponse (ou si le réseau ne
+  /// répond pas) : l'erreur s'affiche, le chauffeur peut réessayer.
+  Future<bool> _suivreLeServeur() async {
+    final List<dynamic> demandes;
+    try {
+      demandes = await ApiService.mesDemandesAssignees();
+    } catch (_) {
+      return false;
+    }
+    if (!mounted) return true;
+    final actuelle = demandes
+        .whereType<Map<String, dynamic>>()
+        .where((d) => d['id'] == widget.demandeId)
+        .firstOrNull;
+    if (actuelle == null) {
+      _fermer();
+      return true;
+    }
+    switch (actuelle['statut']) {
+      case 'contre_offre':
+        final offre = actuelle['contre_offre'];
+        final restantes = offre is Map ? (offre['secondes_restantes'] as num?)?.toInt() : null;
+        final propose = offre is Map ? (offre['prix_propose'] as num?)?.toInt() : null;
+        setState(() {
+          _enAttenteClient = true;
+          _modeContre = false;
+          _acceptationEnCours = false;
+          if (propose != null) _prixChoisi = propose;
+          _secondesClient = restantes ?? _dureeReponseClient;
+        });
+        _demarrerAttente();
+        return true;
+      case 'en_route':
+        _ouvrirNavigation(actuelle);
+        return true;
+    }
+    return false;
   }
 
   /// Compte à rebours du client et vérification toutes les 3 s : course

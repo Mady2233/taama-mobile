@@ -87,6 +87,19 @@ Future<http.Response> Function(http.Request) _refusDuClient({required bool offre
   };
 }
 
+/// Faux serveur dont la réponse à « Proposer ce prix » se perd (réseau) ;
+/// la demande, relue ensuite, a l'état [apres].
+Future<http.Response> Function(http.Request) _reponsePerdue(Map<String, dynamic> apres) {
+  var proposee = false;
+  return (requete) async {
+    if (requete.url.path.endsWith('/proposer-prix/')) {
+      proposee = true;
+      throw http.ClientException('Connexion perdue');
+    }
+    return _json([if (proposee) apres else _demande()]);
+  };
+}
+
 void main() {
   testWidgets('petit téléphone : boutons et destination visibles, titre et compte à rebours jamais couverts',
       (t) => _avecServeur(_serveurSimple, () async {
@@ -107,6 +120,31 @@ void main() {
             _enTeteVisible(t);
             await t.pumpWidget(const SizedBox());
           }));
+
+  group('réponse de « Proposer ce prix » perdue : le serveur fait foi', () {
+    testWidgets('proposition enregistrée : l’écran attend le client',
+        (t) => _avecServeur(
+            _reponsePerdue(_demande(
+                statut: 'contre_offre', contreOffre: {'prix_propose': 1300, 'prix_client': 1300, 'secondes_restantes': 40})),
+            () async {
+              await _ouvrir(t, taille: const Size(412, 915), basSur: 0);
+              await _contreProposer(t);
+              await t.pump();
+              expect(find.text('En attente de la réponse du client'), findsOneWidget);
+              expect(find.text('Ta contre-proposition'), findsOneWidget);
+              await t.pumpWidget(const SizedBox());
+            }));
+
+    testWidgets('proposition pas enregistrée : l’erreur, et on peut réessayer',
+        (t) => _avecServeur(_reponsePerdue(_demande()), () async {
+              await _ouvrir(t, taille: const Size(412, 915), basSur: 0);
+              await _contreProposer(t);
+              await t.pump();
+              expect(find.text('En attente de la réponse du client'), findsNothing);
+              expect(find.text('Proposer ce prix'), findsOneWidget);
+              await t.pumpWidget(const SizedBox());
+            }));
+  });
 
   group('contre-proposition refusée par le client', () {
     for (final (offre, message) in [
