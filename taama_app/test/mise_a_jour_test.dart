@@ -386,7 +386,7 @@ void main() {
   });
 
   group('écran', () {
-    Future<List<String>> ouvrir(WidgetTester t, {AvisMiseAJour? avis, bool enCours = false}) async {
+    Future<List<String>> ouvrir(WidgetTester t, {AvisMiseAJour? avis, bool enCours = false, bool ios = false}) async {
       await t.binding.setSurfaceSize(const Size(360, 780));
       addTearDown(() => t.binding.setSurfaceSize(null));
       final actions = <String>[];
@@ -396,6 +396,7 @@ void main() {
           onReessayer: () => actions.add('reessayer'),
           avis: avis,
           enCours: enCours,
+          ios: ios,
         ),
       ));
       return actions;
@@ -420,6 +421,13 @@ void main() {
       expect(t.widget<PopScope>(find.byType(PopScope)).canPop, isFalse);
     });
 
+    testWidgets('iPhone : l’App Store, jamais Google Play ni le Play Store', (t) async {
+      await ouvrir(t, ios: true, avis: AvisMiseAJour.playStoreIndisponible, enCours: true);
+      expect(find.textContaining('App Store'), findsWidgets);
+      expect(find.textContaining('Google Play'), findsNothing);
+      expect(find.textContaining('Play Store'), findsNothing);
+    });
+
     testWidgets('Play Store indisponible : le dire', (t) async {
       await ouvrir(t, avis: AvisMiseAJour.playStoreIndisponible);
       expect(find.textContaining('Le Play Store ne s’est pas ouvert'), findsOneWidget);
@@ -427,7 +435,7 @@ void main() {
   });
 
   group('bandeau', () {
-    Future<List<String>> ouvrir(WidgetTester t, {bool echec = false, double largeur = 393}) async {
+    Future<List<String>> ouvrir(WidgetTester t, {bool echec = false, double largeur = 393, bool ios = false}) async {
       await t.binding.setSurfaceSize(Size(largeur, 300));
       addTearDown(() => t.binding.setSurfaceSize(null));
       final actions = <String>[];
@@ -437,6 +445,7 @@ void main() {
             onMettreAJour: () => actions.add('maj'),
             onFermer: () => actions.add('fermer'),
             echec: echec,
+            ios: ios,
           ),
         ),
       ));
@@ -466,6 +475,12 @@ void main() {
       await t.pump();
       expect(find.text('Nouvelle version disponible'), findsNothing);
       expect(find.text('accueil'), findsOneWidget);
+    });
+
+    testWidgets('iPhone, fiche introuvable : l’App Store, jamais le Play Store', (t) async {
+      await ouvrir(t, echec: true, ios: true);
+      expect(find.textContaining('Ouvre l’App Store'), findsOneWidget);
+      expect(find.textContaining('Play Store'), findsNothing);
     });
 
     testWidgets('fiche introuvable : le dire', (t) async {

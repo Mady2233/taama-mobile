@@ -17,6 +17,7 @@ class BandeauMiseAJour extends StatelessWidget {
     required this.onFermer,
     this.enCours = false,
     this.echec = false,
+    this.ios = false,
   });
 
   final VoidCallback onMettreAJour;
@@ -25,6 +26,9 @@ class BandeauMiseAJour extends StatelessWidget {
 
   /// La fiche du store ne s'est pas ouverte : le dire, jamais un bouton muet.
   final bool echec;
+
+  /// iPhone : l'App Store, jamais le Play Store.
+  final bool ios;
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +57,7 @@ class BandeauMiseAJour extends StatelessWidget {
                   Text(
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    echec ? 'Ouvre le Play Store et cherche « Taama ».' : 'Plus rapide et plus sûre.',
+                    echec ? 'Ouvre ${ios ? 'l’App Store' : 'le Play Store'} et cherche « Taama ».' : 'Plus rapide et plus sûre.',
                     style: TaamaText.body.copyWith(fontSize: 12, color: TaamaColors.onNavyMuted),
                   ),
                 ],
@@ -135,6 +139,7 @@ class _AvecBandeauMiseAJourState extends State<AvecBandeauMiseAJour> {
                     onFermer: MiseAJour.fermerBandeau,
                     enCours: _enCours,
                     echec: _echec,
+                    ios: MiseAJour.plateforme == 'ios',
                   ),
                 ),
               ),

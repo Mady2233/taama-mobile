@@ -55,5 +55,6 @@ class _PageMiseAJourRequiseState extends State<PageMiseAJourRequise> {
         onReessayer: _reessayer,
         enCours: _enCours,
         avis: _avis,
+        ios: MiseAJour.plateforme == 'ios',
       );
 }
