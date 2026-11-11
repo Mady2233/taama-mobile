@@ -25,6 +25,7 @@ class EcranMiseAJourRequise extends StatelessWidget {
     required this.onReessayer,
     this.enCours = false,
     this.avis,
+    this.ios = false,
   });
 
   final VoidCallback onMettreAJour;
@@ -39,9 +40,12 @@ class EcranMiseAJourRequise extends StatelessWidget {
   /// Dernier essai sans succès : le dire, jamais un bouton muet.
   final AvisMiseAJour? avis;
 
-  static const List<(IconData, String)> _atouts = [
+  /// iPhone : la mise à jour passe par l'App Store, jamais par Google Play.
+  final bool ios;
+
+  List<(IconData, String)> get _atouts => [
     (Icons.verified_user_rounded, 'Ton compte, tes gains et tes courses sont conservés'),
-    (Icons.shield_rounded, 'Installation sécurisée par Google Play'),
+    (Icons.shield_rounded, ios ? 'Installation sécurisée par l’App Store' : 'Installation sécurisée par Google Play'),
     (Icons.auto_awesome_rounded, 'Les dernières améliorations de Taama Conducteur'),
   ];
 
@@ -90,14 +94,14 @@ class EcranMiseAJourRequise extends StatelessWidget {
                           style: TextStyle(fontSize: 15, height: 1.45, color: CouleursTaama.nuitTexteSecondaire),
                         ),
                         const SizedBox(height: 24),
-                        const _Atouts(atouts: _atouts),
+                        _Atouts(atouts: _atouts),
                         if (avis != null) ...[
                           const SizedBox(height: 12),
-                          _Avis(avis: avis!),
+                          _Avis(avis: avis!, ios: ios),
                         ],
                         const Spacer(),
                         const SizedBox(height: 24),
-                        _BoutonMettreAJour(enCours: enCours, onPressed: onMettreAJour),
+                        _BoutonMettreAJour(enCours: enCours, onPressed: onMettreAJour, ios: ios),
                         const SizedBox(height: 8),
                         TextButton(
                           onPressed: enCours ? null : onReessayer,
@@ -247,9 +251,10 @@ class _Atouts extends StatelessWidget {
 }
 
 class _Avis extends StatelessWidget {
-  const _Avis({required this.avis});
+  const _Avis({required this.avis, required this.ios});
 
   final AvisMiseAJour avis;
+  final bool ios;
 
   @override
   Widget build(BuildContext context) {
@@ -257,7 +262,7 @@ class _Avis extends StatelessWidget {
       AvisMiseAJour.annulee =>
         'Mise à jour annulée. Elle est nécessaire pour continuer à recevoir des courses.',
       AvisMiseAJour.playStoreIndisponible =>
-        'Le Play Store ne s’est pas ouvert : ouvre-le toi-même et cherche « Taama Conducteur ».',
+        '${ios ? 'L’App Store' : 'Le Play Store'} ne s’est pas ouvert : ouvre-le toi-même et cherche « Taama Conducteur ».',
     };
     return Container(
       padding: const EdgeInsets.all(12),
@@ -288,9 +293,10 @@ class _Avis extends StatelessWidget {
 }
 
 class _BoutonMettreAJour extends StatelessWidget {
-  const _BoutonMettreAJour({required this.enCours, required this.onPressed});
+  const _BoutonMettreAJour({required this.enCours, required this.onPressed, required this.ios});
 
   final bool enCours;
+  final bool ios;
   final VoidCallback onPressed;
 
   @override
@@ -325,7 +331,7 @@ class _BoutonMettreAJour extends StatelessWidget {
             Flexible(
               child: FittedBox(
                 fit: BoxFit.scaleDown,
-                child: Text(enCours ? 'Ouverture de Google Play…' : 'Mettre à jour'),
+                child: Text(enCours ? (ios ? 'Ouverture de l’App Store…' : 'Ouverture de Google Play…') : 'Mettre à jour'),
               ),
             ),
           ],
