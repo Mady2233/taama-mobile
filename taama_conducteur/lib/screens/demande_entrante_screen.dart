@@ -339,22 +339,26 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   void _cadrerCarte() {
     if (!_cartePrete || _departLat == null || _departLng == null) return;
     final depart = LatLng(_departLat!, _departLng!);
-    final haut = MediaQuery.paddingOf(context).top + 150;
-    if (_positionActuelle == null) {
-      _carte.move(depart, 15);
-      return;
-    }
+    final zoneSure = MediaQuery.paddingOf(context);
+    final haut = zoneSure.top + 150;
     // Au-dessus du panneau tel qu'il est affiché (mesuré), sinon de sa
-    // hauteur habituelle. Trop peu de place entre le titre et le panneau
-    // (petit téléphone) : la carte se centre simplement sur le départ.
+    // hauteur habituelle.
     final hauteurEcran = MediaQuery.sizeOf(context).height;
     final boite = _clePanneau.currentContext?.findRenderObject();
     final panneau = boite is RenderBox && boite.hasSize
         ? boite.size.height
         : math.min(_hauteurPanneau, _hauteurMaxPanneau());
     final bas = panneau + 40;
-    if (hauteurEcran - haut - bas < 80) {
-      _carte.move(depart, 15);
+    // Pas de position du chauffeur, ou trop peu de place pour cadrer les deux
+    // (petit téléphone) : le départ au milieu de la bande de carte visible,
+    // entre le compte à rebours et le panneau — pas au centre de l'écran.
+    if (_positionActuelle == null || hauteurEcran - haut - bas < 80) {
+      final hautBande = zoneSure.top + _basEnTete;
+      final basBande = hauteurEcran - panneau;
+      // Bande vide (paysage) : ce qui reste visible au-dessus du panneau,
+      // derrière l'en-tête — jamais sous le panneau.
+      final y = basBande > hautBande ? (hautBande + basBande) / 2 : (zoneSure.top + basBande) / 2;
+      _carte.move(depart, 15, offset: Offset(0, y - hauteurEcran / 2));
       return;
     }
     _carte.fitCamera(CameraFit.bounds(
@@ -884,7 +888,17 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
             child: FadeTransition(
               key: _clePanneau,
               opacity: _entree,
-              child: _panneau(demande),
+              // Le panneau change de taille (contre-proposition, attente,
+              // issue, badges) : la carte se recadre au-dessus.
+              child: NotificationListener<SizeChangedLayoutNotification>(
+                onNotification: (_) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _cadrerCarte();
+                  });
+                  return true;
+                },
+                child: SizeChangedLayoutNotifier(child: _panneau(demande)),
+              ),
             ),
           ),
         ),
