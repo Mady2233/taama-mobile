@@ -541,7 +541,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
           .where((d) => d['id'] == widget.demandeId)
           .firstOrNull;
       if (actuelle == null) {
-        _finAttente('Le client garde le prix standard : la course passe à un autre chauffeur.');
+        _finAttente(_messageClientGarde);
       } else if (actuelle['statut'] == 'en_route') {
         _timerAttente?.cancel();
         _ouvrirNavigation(actuelle);
@@ -553,6 +553,12 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       _verificationEnCours = false;
     }
   }
+
+  /// Contre-proposition refusée : le client garde son offre s'il en avait
+  /// fait une, sinon le prix standard (comme la notification du serveur).
+  String get _messageClientGarde => _offreClient
+      ? 'Le client garde son offre : la course passe à un autre chauffeur.'
+      : 'Le client garde le prix standard : la course passe à un autre chauffeur.';
 
   void _finAttente(String message) {
     _timerAttente?.cancel();
