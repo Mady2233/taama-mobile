@@ -94,32 +94,42 @@ Future<Map<String, dynamic>?> afficherDialogueAnnulation(
             // (trajets/models.py backend) : le backend compare en set exact,
             // sensible à la casse, donc ces codes doivent matcher au caractère
             // près, et la liste doit changer selon qui annule.
-            ...(estChauffeur
-                ? const {
-                    'CLIENT_ABSENT': 'Client absent',
-                    'ADRESSE_INTROUVABLE': 'Adresse introuvable',
-                    'TROP_LOIN': 'Trop loin',
-                    'PROBLEME_VEHICULE': 'Problème de véhicule',
-                    'CLIENT_IRRESPECTUEUX': 'Client irrespectueux',
-                    'AUTRE': 'Autre raison',
-                  }
-                : const {
-                    'ATTENTE_TROP_LONGUE': 'Attente trop longue',
-                    'CONDUCTEUR_INJOIGNABLE': 'Conducteur injoignable',
-                    'ERREUR_ADRESSE': "Erreur d'adresse",
-                    'PLUS_BESOIN': 'Plus besoin du trajet',
-                    'PRIX_TROP_ELEVE': 'Prix trop élevé',
-                    'CONDUCTEUR_NE_VIENT_PAS': 'Le conducteur ne vient pas',
-                    'AUTRE': 'Autre raison',
-                  }
-            ).entries.map((entry) => RadioListTile<String>(
-              title: Text(entry.value, style: const TextStyle(fontSize: 14)),
-              value: entry.key,
+            // Un seul motif : RadioGroup tient le choix (groupValue et
+            // onChanged sur chaque bouton sont dépréciés depuis Flutter 3.32).
+            RadioGroup<String>(
               groupValue: motifChoisi,
-              dense: true,
-              activeColor: CouleursTaama.terreCuite,
               onChanged: (val) => setState(() => motifChoisi = val),
-            )),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final entry in (estChauffeur
+                        ? const {
+                            'CLIENT_ABSENT': 'Client absent',
+                            'ADRESSE_INTROUVABLE': 'Adresse introuvable',
+                            'TROP_LOIN': 'Trop loin',
+                            'PROBLEME_VEHICULE': 'Problème de véhicule',
+                            'CLIENT_IRRESPECTUEUX': 'Client irrespectueux',
+                            'AUTRE': 'Autre raison',
+                          }
+                        : const {
+                            'ATTENTE_TROP_LONGUE': 'Attente trop longue',
+                            'CONDUCTEUR_INJOIGNABLE': 'Conducteur injoignable',
+                            'ERREUR_ADRESSE': "Erreur d'adresse",
+                            'PLUS_BESOIN': 'Plus besoin du trajet',
+                            'PRIX_TROP_ELEVE': 'Prix trop élevé',
+                            'CONDUCTEUR_NE_VIENT_PAS': 'Le conducteur ne vient pas',
+                            'AUTRE': 'Autre raison',
+                          }
+                  ).entries)
+                    RadioListTile<String>(
+                      title: Text(entry.value, style: const TextStyle(fontSize: 14)),
+                      value: entry.key,
+                      dense: true,
+                      activeColor: CouleursTaama.terreCuite,
+                    ),
+                ],
+              ),
+            ),
           ],
         ),
         actions: [
