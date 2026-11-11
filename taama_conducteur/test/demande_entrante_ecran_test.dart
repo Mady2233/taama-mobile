@@ -113,6 +113,15 @@ void main() {
             await t.pumpWidget(const SizedBox()); // compte à rebours arrêté
           }));
 
+  // La police de test dessine chaque lettre aussi large que haute : un écran
+  // de 320 dp y est plus étroit qu'un vrai, rien ne doit déborder.
+  testWidgets('écran étroit (320 dp) : rien ne déborde',
+      (t) => _avecServeur(_serveurSimple, () async {
+            await _ouvrir(t, taille: const Size(320, 640), basSur: 48);
+            expect(find.text('DEMANDE EN DIRECT'), findsOneWidget);
+            await t.pumpWidget(const SizedBox());
+          }));
+
   testWidgets('paysage : boutons visibles, compte à rebours jamais couvert',
       (t) => _avecServeur(_serveurSimple, () async {
             await _ouvrir(t, taille: const Size(640, 360), basSur: 0);

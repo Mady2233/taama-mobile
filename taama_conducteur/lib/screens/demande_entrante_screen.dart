@@ -1266,13 +1266,20 @@ class _PastilleEnDirect extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          const Text(
-            'DEMANDE EN DIRECT',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-              fontSize: 11,
-              letterSpacing: 0.8,
+          // Écran étroit ou grand texte : le libellé rétrécit, jamais coupé.
+          const Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                'DEMANDE EN DIRECT',
+                maxLines: 1,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 11,
+                  letterSpacing: 0.8,
+                ),
+              ),
             ),
           ),
         ],
