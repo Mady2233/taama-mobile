@@ -224,6 +224,44 @@ void main() {
             }));
   });
 
+  // Essai précédent enregistré (réponse perdue), nouvel essai refusé (400),
+  // relecture impossible : l'état est inconnu, rien n'est retiré.
+  testWidgets('refus du serveur et relecture impossible : la contre-proposition reste', (t) {
+    var proposee = false;
+    return _avecServeur((requete) async {
+      if (requete.url.path.endsWith('/proposer-prix/')) {
+        proposee = true;
+        return _json({'erreur': 'Le prix de cette course ne peut pas être modifié.', 'code': 'PRIX_NON_AJUSTABLE'}, 400);
+      }
+      if (proposee) throw http.ClientException('Connexion perdue');
+      return _json([_demande()]);
+    }, () async {
+      await _ouvrir(t, taille: const Size(412, 915), basSur: 0);
+      await _contreProposer(t);
+      await t.pump();
+      expect(find.text('Proposer ce prix'), findsOneWidget);
+      expect(find.text('Le prix de cette course ne peut pas être modifié.'), findsNothing);
+      expect(find.textContaining('Pas de connexion internet'), findsOneWidget);
+      await t.pumpWidget(const SizedBox());
+    });
+  });
+
+  testWidgets('refus du serveur confirmé (la demande attend encore) : retour au prix de la demande', (t) {
+    return _avecServeur((requete) async {
+      if (requete.url.path.endsWith('/proposer-prix/')) {
+        return _json({'erreur': 'Le prix de cette course ne peut pas être modifié.', 'code': 'PRIX_NON_AJUSTABLE'}, 400);
+      }
+      return _json([_demande()]);
+    }, () async {
+      await _ouvrir(t, taille: const Size(412, 915), basSur: 0);
+      await _contreProposer(t);
+      await t.pump();
+      expect(find.text('Proposer ce prix'), findsNothing);
+      expect(find.text('Le prix de cette course ne peut pas être modifié.'), findsOneWidget);
+      await t.pumpWidget(const SizedBox());
+    });
+  });
+
   group('contre-proposition refusée par le client', () {
     for (final (offre, message) in [
       (true, 'Le client garde son offre : la course passe à un autre chauffeur.'),

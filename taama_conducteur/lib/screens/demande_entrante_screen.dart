@@ -483,7 +483,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       if (!mounted) return;
       // L'écran suit l'état renvoyé par le serveur (la demande), jamais un
       // état supposé. Corps sans état reconnu : on relit la demande.
-      if (_suivreEtat(reponse) || await _suivreLeServeur()) return;
+      if (_suivreEtat(reponse) || await _suivreLeServeur() == _Reprise.suivie) return;
       if (!mounted) return;
       setState(() {
         _enTraitement = false;
@@ -500,8 +500,18 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       }
       // Refus du serveur : la proposition a pu partir lors d'un essai dont la
       // réponse s'est perdue. Le serveur fait foi.
-      if (await _suivreLeServeur()) return;
-      if (!mounted) return;
+      final reprise = await _suivreLeServeur();
+      if (!mounted || reprise == _Reprise.suivie) return;
+      if (reprise == _Reprise.inconnue) {
+        // État réel inconnu : on garde la contre-proposition, un nouvel
+        // essai relira le serveur.
+        setState(() {
+          _enTraitement = false;
+          _acceptationEnCours = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(_messageReseau)));
+        return;
+      }
       // Prix refusé par le serveur (limites changées, déjà deux propositions…) :
       // retour au prix standard, la course reste acceptable normalement.
       setState(() {
@@ -516,7 +526,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       if (!mounted) return;
       // Réponse perdue (réseau, délai) : la proposition est peut-être
       // enregistrée. Le serveur fait foi.
-      if (await _suivreLeServeur()) return;
+      if (await _suivreLeServeur() == _Reprise.suivie) return;
       if (!mounted) return;
       setState(() {
         _enTraitement = false;
@@ -528,27 +538,27 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
 
   /// Après un échec de « Proposer ce prix », relit la demande et suit le
   /// serveur : contre-proposition enregistrée → attente du client ; course
-  /// acceptée → navigation ; demande partie → fermeture. Vrai si l'écran a
-  /// suivi ; faux si elle attend toujours une réponse (ou si le réseau ne
-  /// répond pas) : l'erreur s'affiche, le chauffeur peut réessayer.
-  Future<bool> _suivreLeServeur() async {
+  /// acceptée → navigation ; demande partie → fermeture.
+  Future<_Reprise> _suivreLeServeur() async {
     final List<dynamic> demandes;
     try {
       demandes = await ApiService.mesDemandesAssignees();
     } catch (_) {
-      return false;
+      return _Reprise.inconnue;
     }
-    if (!mounted) return true;
+    if (!mounted) return _Reprise.suivie;
     final actuelle = demandes
         .whereType<Map<String, dynamic>>()
         .where((d) => d['id'] == widget.demandeId)
         .firstOrNull;
     if (actuelle == null) {
       _fermer();
-      return true;
+      return _Reprise.suivie;
     }
-    return _suivreEtat(actuelle);
+    return _suivreEtat(actuelle) ? _Reprise.suivie : _Reprise.aRepondre;
   }
+
+  static const String _messageReseau = 'Pas de connexion internet — vérifiez votre réseau et réessayez.';
 
   /// Suit l'état d'une demande renvoyé par le serveur : contre-proposition
   /// enregistrée → attente du client (temps et prix du serveur) ; course
@@ -646,7 +656,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
         texte.contains('HandshakeException') ||
         texte.contains('TimeoutException') ||
         texte.contains('Failed host lookup')) {
-      return 'Pas de connexion internet — vérifiez votre réseau et réessayez.';
+      return _messageReseau;
     }
     return texte.replaceAll('Exception: ', '');
   }
@@ -1191,6 +1201,18 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
       _prixChoisi = _prixAjustable?.reference;
     });
   }
+}
+
+/// Issue de la relecture du serveur après un échec de « Proposer ce prix ».
+enum _Reprise {
+  /// L'écran a suivi le serveur (attente, navigation ou fermeture).
+  suivie,
+
+  /// Le serveur confirme que la demande attend encore une réponse.
+  aRepondre,
+
+  /// Le réseau ne répond pas : état réel inconnu.
+  inconnue,
 }
 
 // ─── Widgets ───
