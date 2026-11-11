@@ -4,6 +4,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/foundation.dart';
 import 'annulations_course.dart';
+import 'api_service.dart';
 import 'demande_entrante_navigator.dart';
 import 'enregistrement_jeton.dart';
 import 'sonnerie_notification.dart';
@@ -95,6 +96,49 @@ class NotificationService {
   /// Le token FCM de cet appareil, récupéré après initialisation.
   /// Utilisé par les écrans de connexion pour l'envoyer au backend.
   static String? token;
+
+  /// Demande le jeton à Firebase ; remplacé dans les tests.
+  @visibleForTesting
+  static Future<String?> Function() demanderJeton = () => FirebaseMessaging.instance.getToken();
+
+  /// Réenregistre le jeton sur le serveur (EnregistrementJeton). Jeton encore
+  /// inconnu (Firebase muet au démarrage) : il est redemandé à Firebase.
+  static Future<void> reenregistrerJeton() async {
+    if (!ApiService.estConnecte) return;
+    var jeton = token;
+    if (jeton == null) {
+      try {
+        jeton = await demanderJeton().timeout(const Duration(seconds: 12));
+      } catch (_) {
+        return; // Firebase injoignable : nouvel essai au prochain retour
+      }
+      if (jeton == null) return;
+      token = jeton;
+    }
+    await EnregistrementJeton.enregistrer(jeton);
+  }
+
+  static DateTime? _dernierEssaiAuRetour;
+  static const Duration intervalleRetour = Duration(minutes: 2);
+
+  /// Retour au premier plan : seulement si le dernier enregistrement n'a pas
+  /// réussi (jamais tenté, ou abandonné faute de réseau), au plus toutes les
+  /// [intervalleRetour].
+  static Future<void> reenregistrerSiEchec({DateTime? maintenant}) async {
+    if (!EnregistrementJeton.aReessayer) return;
+    final instant = maintenant ?? DateTime.now();
+    final dernier = _dernierEssaiAuRetour;
+    if (dernier != null && instant.difference(dernier) < intervalleRetour) return;
+    _dernierEssaiAuRetour = instant;
+    await reenregistrerJeton();
+  }
+
+  @visibleForTesting
+  static void reinitialiserJeton() {
+    token = null;
+    _dernierEssaiAuRetour = null;
+    demanderJeton = () => FirebaseMessaging.instance.getToken();
+  }
 
   static Future<void> initialiser() async {
     // 1. Je demande la permission d'envoyer des notifications (obligatoire sur iOS,

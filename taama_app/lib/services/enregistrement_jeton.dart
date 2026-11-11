@@ -36,6 +36,11 @@ class EnregistrementJeton {
   @visibleForTesting
   static IssueJeton? derniereIssue;
 
+  /// Le dernier enregistrement n'a pas réussi et il reste utile d'essayer :
+  /// jamais tenté, ou abandonné faute de réseau. Après un refus définitif ou
+  /// une mise à jour requise, inutile d'insister.
+  static bool get aReessayer => derniereIssue == null || derniereIssue == IssueJeton.abandonne;
+
   static bool _enCours = false;
   static String? _plusRecent;
 

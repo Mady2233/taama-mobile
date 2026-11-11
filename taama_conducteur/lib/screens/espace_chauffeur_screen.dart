@@ -24,6 +24,7 @@ import '../services/politique_confidentialite.dart';
 import '../services/config_app.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/location_service.dart';
+import '../services/notification_service.dart';
 import '../services/polling_premier_plan.dart';
 import '../services/sonnerie_service.dart';
 import '../services/verification_sonnerie.dart';
@@ -474,6 +475,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
 
       if (nouvelleDisponibilite) {
         unawaited(_verifierSonnerie());
+        // En ligne : le jeton de notification est réenregistré, pour que les
+        // sonneries de course arrivent.
+        unawaited(NotificationService.reenregistrerJeton());
         // Conducteur passe en ligne → démarre le suivi GPS
         await _serviceLocalisationGenerale.demarrerSuiviPositionEnLigne();
         debugPrint('[GPS] Suivi de position démarré');

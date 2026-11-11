@@ -104,7 +104,11 @@ class _TaamaAppState extends State<TaamaApp> with WidgetsBindingObserver {
   // Retour au premier plan : la version minimale a pu monter entre-temps.
   @override
   void didChangeAppLifecycleState(AppLifecycleState etat) {
-    if (etat == AppLifecycleState.resumed) unawaited(MiseAJour.verifierAuRetour());
+    if (etat != AppLifecycleState.resumed) return;
+    unawaited(MiseAJour.verifierAuRetour());
+    // Jeton de notification pas encore enregistré (réseau, Firebase) : nouvel
+    // essai, au plus toutes les 2 min.
+    unawaited(NotificationService.reenregistrerSiEchec());
   }
 
   @override
