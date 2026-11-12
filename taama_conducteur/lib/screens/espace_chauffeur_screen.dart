@@ -24,6 +24,7 @@ import '../services/politique_confidentialite.dart';
 import '../services/config_app.dart';
 import '../services/deconnexion.dart';
 import '../services/deconnexion_chauffeur.dart';
+import '../services/fin_de_session.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/location_service.dart';
 import '../services/mise_a_jour.dart';
@@ -621,7 +622,11 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
   /// Courses impossibles à vérifier : le chauffeur choisit de se déconnecter
   /// quand même. Déconnecté : suivi GPS et sonnerie arrêtés, écran de
   /// connexion, même si le serveur n'a pas répondu (il le dit alors).
-  Future<void> _deconnexion() async {
+  Future<void> _deconnexion() => FinDeSession.pendant(_menerDeconnexion);
+
+  // Sous FinDeSession.pendant : un 401 du polling ne vole pas l'issue ni le
+  // message de la déconnexion.
+  Future<void> _menerDeconnexion() async {
     if (_deconnexionEnCours) return;
     if (!await demanderConfirmationDeconnexion(context)) return;
     if (!mounted) return;

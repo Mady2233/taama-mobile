@@ -130,6 +130,16 @@ void main() {
     expect((await relire({'/trajets/courier/42/': 'livreur_assigne'})).$1, isTrue);
   });
 
+  test('relecture : 401 (session fermée ailleurs), plus rien ne bloque la déconnexion', () async {
+    await ApiService.definirToken('session-a');
+    await CoursesEnCours.enregistrerCourse(7, maintenant: t0);
+    late bool enCours;
+    await http.runWithClient(() async {
+      enCours = await CoursesEnCours.enCoursApresRelecture(maintenant: t0);
+    }, () => MockClient((_) async => http.Response('{"detail": "Jeton invalide."}', 401)));
+    expect(enCours, isFalse);
+  });
+
   test('relecture : encore en cours, ou sans réponse, elle compte toujours', () async {
     await ApiService.definirToken('session-a');
     await CoursesEnCours.enregistrerCourse(7, maintenant: t0);

@@ -5,6 +5,7 @@ import '../services/api_service.dart';
 import '../services/config_app.dart';
 import '../services/courses_en_cours.dart';
 import '../services/deconnexion.dart';
+import '../services/fin_de_session.dart';
 import '../services/mise_a_jour.dart';
 import '../services/politique_confidentialite.dart';
 import '../theme/taama_theme.dart';
@@ -51,7 +52,11 @@ class _EcranCompteState extends State<EcranCompte> {
   /// course ou une livraison, connue de l'app (CoursesEnCours, relue sur le
   /// serveur) ou du serveur (409). Sinon l'écran de connexion s'ouvre, même
   /// si le serveur n'a pas répondu (il le dit alors).
-  Future<void> _deconnecter() async {
+  Future<void> _deconnecter() => FinDeSession.pendant(_menerDeconnexion);
+
+  // Sous FinDeSession.pendant : un 401 du polling de l'accueil ne vole pas
+  // l'issue ni le message de cet écran.
+  Future<void> _menerDeconnexion() async {
     if (_deconnexionEnCours) return;
     if (!await demanderConfirmationDeconnexion(context)) return;
     if (!mounted) return;
@@ -92,7 +97,11 @@ class _EcranCompteState extends State<EcranCompte> {
     );
   }
 
-  Future<void> _supprimerCompte() async {
+  Future<void> _supprimerCompte() => FinDeSession.pendant(_menerSuppressionCompte);
+
+  // Sous FinDeSession.pendant : un 401 du polling de l'accueil (le compte
+  // vient d'être supprimé) ne remplace pas le message de la suppression.
+  Future<void> _menerSuppressionCompte() async {
     if (!await demanderConfirmationSuppression(context)) return;
     if (!mounted) return;
     setState(() => _suppressionEnCours = true);
@@ -111,12 +120,18 @@ class _EcranCompteState extends State<EcranCompte> {
       messageFinal = "Ta session n'est plus valide. Si tu venais de demander "
           'la suppression, elle a bien été prise en compte.';
     } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text(
-            'Impossible de joindre Taama. Vérifie ta connexion et réessaie.'),
-      ));
-      return;
+      // Réponse perdue ou trop lente, mais un 401 de la session est arrivé
+      // entre-temps (FinDeSession) : le serveur a bien supprimé le compte.
+      if (!FinDeSession.fermeeDuranteOperation) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Impossible de joindre Taama. Vérifie ta connexion et réessaie.'),
+        ));
+        return;
+      }
+      messageFinal = "Ta session n'est plus valide. Si tu venais de demander "
+          'la suppression, elle a bien été prise en compte.';
     } finally {
       if (mounted) setState(() => _suppressionEnCours = false);
     }

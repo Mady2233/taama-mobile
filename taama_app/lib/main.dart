@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show LicenseEntryWithLineBreaks, Licens
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:firebase_core/firebase_core.dart';
+import 'package:http/http.dart' as http;
 import 'carte/journal_sans_cle.dart';
 import 'config/api_config.dart';
 import 'firebase_options.dart';
@@ -11,6 +12,7 @@ import 'services/api_service.dart';
 import 'services/config_app.dart';
 import 'services/deconnexion.dart';
 import 'services/enregistrement_jeton.dart';
+import 'services/fin_de_session.dart';
 import 'services/mise_a_jour.dart';
 import 'services/navigation.dart';
 import 'services/notification_service.dart';
@@ -20,7 +22,9 @@ import 'widgets/bandeau_mise_a_jour.dart';
 void main() {
   // Avant tout le reste : aucune clé d'API dans les journaux.
   installerJournalSansCle();
-  runZonedGuarded(() async {
+  // Toutes les requêtes HTTP passent par ClientSession : un 401 de la session
+  // ouverte la ferme (FinDeSession).
+  runZonedGuarded(() => http.runWithClient(() async {
     WidgetsFlutterBinding.ensureInitialized();
     FlutterError.onError = (details) {
       debugPrint('FLUTTER ERROR: ${details.exception}');
@@ -79,7 +83,7 @@ void main() {
     unawaited(Deconnexion.reprendre());
 
     runApp(const TaamaApp());
-  }, (error, stack) {
+  }, ClientSession.creer), (error, stack) {
     debugPrint('ZONE ERROR: $error');
     debugPrint('STACK: $stack');
   });

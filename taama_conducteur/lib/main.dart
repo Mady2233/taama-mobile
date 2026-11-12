@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:http/http.dart' as http;
 import 'carte/journal_sans_cle.dart';
 import 'config/api_config.dart';
 import 'firebase_options.dart';
@@ -11,12 +12,17 @@ import 'services/config_app.dart';
 import 'services/deconnexion.dart';
 import 'services/demande_entrante_navigator.dart';
 import 'services/enregistrement_jeton.dart';
+import 'services/fin_de_session.dart';
 import 'services/mise_a_jour.dart';
 import 'services/notification_service.dart';
 import 'theme/couleurs_taama.dart';
 import 'widgets/bandeau_mise_a_jour.dart';
 
-void main() async {
+// Toutes les requêtes HTTP passent par ClientSession : un 401 de la session
+// ouverte la ferme (FinDeSession).
+void main() => http.runWithClient(_demarrer, ClientSession.creer);
+
+Future<void> _demarrer() async {
   // Avant tout le reste : aucune clé d'API dans les journaux.
   installerJournalSansCle();
   WidgetsFlutterBinding.ensureInitialized();

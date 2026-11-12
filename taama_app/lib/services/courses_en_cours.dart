@@ -99,6 +99,10 @@ class CoursesEnCours {
         if (statut is String && statut.isNotEmpty && !enCours.contains(statut)) {
           await _modifier(instant, (e, _) => e.remove(cle));
         }
+      } on SessionInvalideException {
+        // Session déjà fermée par le serveur : plus rien à protéger ici, la
+        // déconnexion passe (FinDeSession ramène à la connexion).
+        return false;
       } catch (_) {
         // Sans réponse : elle compte toujours.
       }

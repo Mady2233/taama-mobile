@@ -57,10 +57,17 @@ class PrixCourierChangeException implements Exception {
   String toString() => 'Le prix de cette livraison est passé à ${formaterFcfa(nouveauPrix)}.';
 }
 
-/// Levée quand le serveur ne reconnaît plus le token (401). Sur
+/// Levée quand le serveur ne reconnaît plus le token (401) : session fermée
+/// ailleurs (FinDeSession ramène alors à la connexion). Sur
 /// supprimerMonCompte, c'est typiquement qu'une première tentative a abouti
 /// mais que la réponse s'est perdue (réseau) : le token a été effacé.
-class SessionInvalideException implements Exception {}
+class SessionInvalideException implements Exception {
+  /// Message affiché, jamais celui du serveur.
+  static const String message = 'Tu as été déconnecté de Taama. Reconnecte-toi pour continuer.';
+
+  @override
+  String toString() => message;
+}
 
 /// Service centralisé pour tous les appels au backend Django.
 /// L'URL vient de ApiConfig (voir lib/config/api_config.dart) : par défaut
@@ -114,6 +121,8 @@ class ApiService {
     // Version trop ancienne : l'écran « Mise à jour requise » s'affiche, et
     // l'appel échoue avec le message du serveur, comme toute erreur.
     VersionApp.signaler(reponse.statusCode, reponse.body);
+    // Session fermée ailleurs (FinDeSession s'en charge) : un message clair.
+    if (reponse.statusCode == 401 && codeAttendu != 401) throw SessionInvalideException();
     if (reponse.statusCode != codeAttendu) {
       String message;
       try {

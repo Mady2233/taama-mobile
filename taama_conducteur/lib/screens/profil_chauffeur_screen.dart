@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../services/deconnexion.dart';
+import '../services/fin_de_session.dart';
 import '../theme/couleurs_taama.dart';
 import '../widgets/dialogue_suppression_compte.dart';
 import '../widgets/widget_avatar_conducteur.dart';
@@ -319,7 +320,11 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
     }
   }
 
-  Future<void> _supprimerCompte() async {
+  Future<void> _supprimerCompte() => FinDeSession.pendant(_menerSuppressionCompte);
+
+  // Sous FinDeSession.pendant : un 401 du polling de l'espace (le compte vient
+  // d'être supprimé) ne remplace pas le message de la suppression.
+  Future<void> _menerSuppressionCompte() async {
     if (!await demanderConfirmationSuppression(context)) return;
     if (!mounted) return;
     setState(() => _suppressionEnCours = true);
@@ -339,11 +344,17 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
       messageFinal = "Ta session n'est plus valide. Si tu venais de demander "
           'la suppression, elle a bien été prise en compte.';
     } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Impossible de joindre Taama. Vérifie ta connexion et réessaie.'),
-      ));
-      return;
+      // Réponse perdue ou trop lente, mais un 401 de la session est arrivé
+      // entre-temps (FinDeSession) : le serveur a bien supprimé le compte.
+      if (!FinDeSession.fermeeDuranteOperation) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Impossible de joindre Taama. Vérifie ta connexion et réessaie.'),
+        ));
+        return;
+      }
+      messageFinal = "Ta session n'est plus valide. Si tu venais de demander "
+          'la suppression, elle a bien été prise en compte.';
     } finally {
       if (mounted) setState(() => _suppressionEnCours = false);
     }
