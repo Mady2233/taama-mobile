@@ -101,6 +101,11 @@ class LocationService {
   DateTime? _horodatageDerniereMesure;
   DateTime? _mesureRecueLe;
   bool _enLigne = false;
+  // Incrémenté à chaque arrêt : un démarrage encore en attente (permissions,
+  // première position) qui le voit changer s'arrête là. Sans ça, un arrêt
+  // pendant le démarrage (fin de session, déconnexion) laissait un flux GPS
+  // et le service au premier plan sans propriétaire.
+  int _generationEnLigne = 0;
 
   // Canal WebSocket d'une course : même logique, seuil de déplacement plus fin.
   double? _derniereLatWs;
@@ -178,6 +183,11 @@ class LocationService {
         if (p.speed >= 0) 'vitesse': p.speed,
         't': p.timestamp.millisecondsSinceEpoch,
       };
+
+  /// Connexion du canal d'une course ; retenue dans les tests.
+  @visibleForTesting
+  static Future<bool> Function(LocationService service, String demandeId) connecterCanal =
+      (service, demandeId) => service._connecter(demandeId);
 
   /// Établit la connexion WebSocket avec timeout et gestion d'erreur.
   Future<bool> _connecter(String demandeId) async {
@@ -271,7 +281,7 @@ class LocationService {
     _envoiDemande = true;
     if (_arrete) {
       final ouvert = await _ouvrirCanal(demandeId);
-      if (!ouvert) return; // permissions refusées : rien n'a démarré
+      if (!ouvert) return; // permissions refusées ou arrêt : rien n'a démarré
     }
 
     // Flux GPS d'envoi démarré même si la première connexion a échoué : il
@@ -306,7 +316,10 @@ class LocationService {
     }
 
     if (_arrete) return false; // arreter() appelé pendant la vérification
-    final connexionOk = await _connecter(demandeId);
+    final connexionOk = await connecterCanal(this, demandeId);
+    // arreter() appelé pendant la connexion : ni reconnexion planifiée après
+    // coup, ni écoute d'un canal déjà fermé, ni flux GPS sans propriétaire.
+    if (_arrete) return false;
     if (connexionOk) {
       _ecouterEtatConnexion();
     } else {
@@ -375,8 +388,10 @@ class LocationService {
     // verraient _enLigne encore à false et démarreraient chacun leur propre
     // stream + timer, avec fuite de celui écrasé sans jamais être annulé.
     _enLigne = true;
+    final generation = _generationEnLigne;
 
     final permissionsOk = await _verifierPermissions();
+    if (generation != _generationEnLigne) return; // arrêté entre-temps
     if (!permissionsOk) {
       _enLigne = false; // Rien n'a été démarré : on libère le verrou.
       return;
@@ -389,6 +404,7 @@ class LocationService {
           timeLimit: Duration(seconds: 5),
         ),
       );
+      if (generation != _generationEnLigne) return; // arrêté entre-temps
       await _pousserPosition(position);
     } on TimeoutException {
       debugPrint('[LocationService] Timeout GPS initial — on continue avec le flux');
@@ -396,6 +412,7 @@ class LocationService {
       debugPrint('[LocationService] Erreur position initiale : $e');
     }
 
+    if (generation != _generationEnLigne) return; // arrêté entre-temps
     final android = defaultTargetPlatform == TargetPlatform.android;
     _streamPositionEnLigne = Geolocator.getPositionStream(
       locationSettings: android
@@ -488,6 +505,7 @@ class LocationService {
   /// Annule le stream ET le heartbeat — jamais de timer orphelin après
   /// passage hors ligne / logout.
   Future<void> arreterSuiviPositionEnLigne({bool prevenirServeur = true}) async {
+    _generationEnLigne++; // un démarrage en attente s'arrête là
     await _streamPositionEnLigne?.cancel();
     _streamPositionEnLigne = null;
     _timerHeartbeat?.cancel();
