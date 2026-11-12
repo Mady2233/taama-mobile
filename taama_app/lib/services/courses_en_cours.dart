@@ -32,11 +32,13 @@ class CoursesEnCours {
   static const Duration expiration = Duration(hours: 2);
 
   // Statuts qui bloquent la déconnexion côté serveur (accounts/deconnexion.py).
+  // Une livraison ne compte qu'une fois attribuée à un livreur : encore en
+  // recherche, elle ne bloque jamais.
   static const Set<String> _statutsCourseEnCours = {
     'en_recherche', 'chauffeur_trouve', 'contre_offre', 'en_route', 'client_a_bord',
   };
   static const Set<String> _statutsLivraisonEnCours = {
-    'en_recherche', 'livreur_assigne', 'en_collecte', 'en_livraison',
+    'livreur_assigne', 'en_collecte', 'en_livraison',
   };
 
   static Future<void> enregistrerCourse(int id, {DateTime? maintenant}) =>

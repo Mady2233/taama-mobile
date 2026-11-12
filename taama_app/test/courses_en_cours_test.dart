@@ -117,6 +117,19 @@ void main() {
     expect(await CoursesEnCours.enCours(maintenant: t0), isFalse);
   });
 
+  test('relecture : livraison sans livreur (en recherche), effacée, la déconnexion passe', () async {
+    await ApiService.definirToken('session-a');
+    await CoursesEnCours.enregistrerLivraison(42, maintenant: t0);
+    expect((await relire({'/trajets/courier/42/': 'en_recherche'})).$1, isFalse);
+    expect(await CoursesEnCours.enCours(maintenant: t0), isFalse);
+  });
+
+  test('relecture : livraison attribuée, elle compte toujours', () async {
+    await ApiService.definirToken('session-a');
+    await CoursesEnCours.enregistrerLivraison(42, maintenant: t0);
+    expect((await relire({'/trajets/courier/42/': 'livreur_assigne'})).$1, isTrue);
+  });
+
   test('relecture : encore en cours, ou sans réponse, elle compte toujours', () async {
     await ApiService.definirToken('session-a');
     await CoursesEnCours.enregistrerCourse(7, maintenant: t0);
