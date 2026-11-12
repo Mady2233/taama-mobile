@@ -386,34 +386,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  static String? _urlHttpsOuNull(Object? valeur) {
-    if (valeur is! String) return null;
-    final uri = Uri.tryParse(valeur);
-    return (uri != null && uri.scheme == 'https' && uri.host.isNotEmpty) ? valeur : null;
-  }
-
-  /// null si l'entrée est inexploitable (pas de coordonnées valides).
-  ConducteurProche? _conducteurDepuisJson(Object? brut) {
-    if (brut is! Map) return null;
-    final id = brut['id']?.toString();
-    final lat = (brut['lat'] as num?)?.toDouble();
-    final lng = (brut['lng'] as num?)?.toDouble();
-    if (id == null || lat == null || lng == null) return null;
-    if (lat.abs() > 90 || lng.abs() > 180) return null;
-
-    final noteBrute = brut['note'];
-    return ConducteurProche(
-      id: id,
-      nomCourt: (brut['nom_court'] ?? '').toString(),
-      position: LatLng(lat, lng),
-      urlPhoto: _urlHttpsOuNull(brut['photo_profil']),
-      note: noteBrute == null ? null : double.tryParse(noteBrute.toString()),
-      modeleVehicule: brut['vehicule'] as String?,
-      minutesAvant: (brut['temps_minutes'] as num?)?.toInt(),
-      estMoto: brut['type_transport'] == CodesTransport.moto,
-    );
-  }
-
   /// [silencieux] : pas d'indicateur « Recherche… » (rafraîchissement auto),
   /// pour éviter que la pastille clignote toutes les 20 s.
   Future<void> _chargerConducteursProches({bool silencieux = false}) async {
@@ -437,7 +409,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setState(() {
         _conducteurs = [
           for (final c in brut)
-            if (_conducteurDepuisJson(c) case final ConducteurProche conducteur) conducteur,
+            if (ConducteurProche.depuisJson(c) case final ConducteurProche conducteur) conducteur,
         ];
         _chargementConducteurs = false;
       });

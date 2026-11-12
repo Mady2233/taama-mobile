@@ -36,6 +36,37 @@ class ConducteurProche {
   final String? modeleVehicule;
   final int? minutesAvant;
   final bool estMoto;
+
+  /// Une entrée de conducteurs/proches/ ; null si elle est inexploitable (pas
+  /// de coordonnées valides). Identifiant lu comme un texte (pseudonyme du
+  /// serveur), photo facultative (le serveur ne l'envoie plus). Même lecture
+  /// que les builds installés depuis le 31/10 : test/conducteur_proche_test.dart.
+  static ConducteurProche? depuisJson(Object? brut) {
+    if (brut is! Map) return null;
+    final id = brut['id']?.toString();
+    final lat = (brut['lat'] as num?)?.toDouble();
+    final lng = (brut['lng'] as num?)?.toDouble();
+    if (id == null || lat == null || lng == null) return null;
+    if (lat.abs() > 90 || lng.abs() > 180) return null;
+
+    final noteBrute = brut['note'];
+    return ConducteurProche(
+      id: id,
+      nomCourt: (brut['nom_court'] ?? '').toString(),
+      position: LatLng(lat, lng),
+      urlPhoto: _urlHttpsOuNull(brut['photo_profil']),
+      note: noteBrute == null ? null : double.tryParse(noteBrute.toString()),
+      modeleVehicule: brut['vehicule'] as String?,
+      minutesAvant: (brut['temps_minutes'] as num?)?.toInt(),
+      estMoto: brut['type_transport'] == CodesTransport.moto,
+    );
+  }
+
+  static String? _urlHttpsOuNull(Object? valeur) {
+    if (valeur is! String) return null;
+    final uri = Uri.tryParse(valeur);
+    return (uri != null && uri.scheme == 'https' && uri.host.isNotEmpty) ? valeur : null;
+  }
 }
 
 @immutable
