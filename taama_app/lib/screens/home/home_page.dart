@@ -28,6 +28,7 @@ import '../../carte/fond_carte.dart';
 import '../../models/verification_identite.dart';
 import '../../services/api_service.dart';
 import '../../services/config_app.dart';
+import '../../services/courses_en_cours.dart';
 import '../../services/routing_service.dart';
 import '../../widgets/champ_adresse_lieu.dart';
 import '../courier_screen.dart';
@@ -166,6 +167,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   /// vieilles, et on garde la plus récente. Échec silencieux (confort).
   Future<void> _chargerCourseActive() async {
     try {
+      final lueLe = DateTime.now();
       final demandes = await ApiService.mesDemandesClient();
       if (!mounted) return;
       final maintenant = DateTime.now();
@@ -206,6 +208,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           );
         }
       }
+      // Déconnexion : seule cette course compte encore comme en cours.
+      unawaited(CoursesEnCours.remplacerCourses(active?.id, lueLe: lueLe));
       if (!mounted) return;
       setState(() => _courseActive = active);
     } catch (e) {

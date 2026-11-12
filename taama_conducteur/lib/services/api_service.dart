@@ -35,7 +35,8 @@ class ApiService {
   static String? _token;
 
   static Future<void> definirToken(String token) async {
-    _token = token;
+    // Chaîne vide : déconnecté (estConnecte faux), jamais un jeton vide.
+    _token = token.isEmpty ? null : token;
     final prefs = await SharedPreferences.getInstance();
     if (token.isEmpty) {
       await prefs.remove(_cleTokenPersiste);
@@ -118,6 +119,40 @@ class ApiService {
     );
     final donnees = _traiterReponse(reponse);
     await definirToken(donnees['token'] as String);
+  }
+
+  /// Déconnexion du compte en ligne, avec le jeton de la session ouverte
+  /// [jeton] : le serveur révoque toutes les sessions du compte. Rend le code
+  /// HTTP (200 déconnecté, 401 déjà déconnecté, 409 course ou livraison en
+  /// cours) ; lève sur erreur réseau ou délai dépassé.
+  static Future<int> deconnexion(String jeton) async {
+    final reponse = await http
+        .post(
+          Uri.parse('$_baseUrl/comptes/deconnexion/'),
+          headers: {..._headersPublics, 'Authorization': 'Token $jeton'},
+        )
+        .timeout(const Duration(seconds: 12));
+    VersionApp.signaler(reponse.statusCode, reponse.body);
+    return reponse.statusCode;
+  }
+
+  /// Déconnexion différée (Deconnexion) : retire du serveur le jeton de
+  /// notification [jetonNotification] de cet appareil, avec l'ancien jeton
+  /// de session [jetonSession], qui ne sert qu'à cette requête. Le serveur
+  /// ne révoque aucune session. Ni version annoncée ni écran « Mise à jour
+  /// requise » : il jugerait la course de l'ancien jeton, pas celle de la
+  /// session ouverte, et l'écran bloquant tomberait en pleine course. Rend
+  /// le code HTTP (200 retiré ou déjà parti, 401 session déjà révoquée) ;
+  /// lève sur erreur réseau ou délai dépassé.
+  static Future<int> retirerAppareil(String jetonSession, String jetonNotification) async {
+    final reponse = await http
+        .post(
+          Uri.parse('$_baseUrl/trajets/notifications/retirer-token/'),
+          headers: {'Content-Type': 'application/json', 'Authorization': 'Token $jetonSession'},
+          body: jsonEncode({'token': jetonNotification}),
+        )
+        .timeout(const Duration(seconds: 12));
+    return reponse.statusCode;
   }
 
   static Future<Map<String, dynamic>> monProfil() async {

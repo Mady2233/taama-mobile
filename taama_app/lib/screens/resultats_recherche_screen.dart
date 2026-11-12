@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import '../config/app_config.dart';
 import '../models/service_course.dart';
 import '../services/api_service.dart';
+import '../services/courses_en_cours.dart';
 import '../services/recherche_lieux.dart';
 import '../services/routing_service.dart';
 import '../theme/taama_theme.dart';
@@ -382,6 +383,9 @@ class _EcranDemandeInstantaneeState
         codePromo: codePromo,
         prixOffert: prixOffert,
       );
+      // Course en cours pour la déconnexion, même si l'écran est déjà fermé.
+      final id = demande['id'];
+      if (id is int) await CoursesEnCours.enregistrerCourse(id);
       if (!mounted) return;
 
       Navigator.pushReplacement(

@@ -14,6 +14,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../services/api_service.dart';
 import '../../services/config_app.dart';
+import '../../services/courses_en_cours.dart';
 import '../../services/location_service.dart';
 import '../../services/routing_service.dart';
 import '../../theme/taama_theme.dart';
@@ -252,6 +253,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       // que d'afficher un état trompeur.
       if (nouveauStatut == 'annule') {
         _timerPolling?.cancel();
+        unawaited(CoursesEnCours.effacerCourse(widget.demandeId));
         if (demande['aucun_chauffeur_trouve'] == true) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _afficherAucunChauffeurTrouve();
@@ -273,6 +275,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       // (paiement, notation) est piloté par action utilisateur.
       if (nouveauStatut == 'termine') {
         _timerPolling?.cancel();
+        unawaited(CoursesEnCours.effacerCourse(widget.demandeId));
       }
 
       // client_a_bord : le suivi GPS continue, c'est la 2e jambe du trajet.
@@ -442,6 +445,7 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
     try {
       final reponse = await ApiService.annulerDemande(widget.demandeId, motif: motif);
       _timerPolling?.cancel();
+      unawaited(CoursesEnCours.effacerCourse(widget.demandeId));
       if (!mounted) return;
       final penalite = reponse['penalite'] as int? ?? 0;
       ScaffoldMessenger.of(context).showSnackBar(

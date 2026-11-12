@@ -25,6 +25,7 @@ import 'package:latlong2/latlong.dart';
 import '../carte/fond_carte.dart';
 import '../services/api_service.dart';
 import '../services/config_app.dart';
+import '../services/courses_en_cours.dart';
 import '../services/location_service.dart';
 import '../theme/taama_theme.dart';
 import '../utils/format.dart';
@@ -154,6 +155,8 @@ class _EcranSuiviCourierState extends State<EcranSuiviCourier>
       if (!mounted) return;
       setState(() => _commande = detail);
       if (!_actif) _suspendreSuivi();
+      // Livrée ou annulée : plus en cours pour la déconnexion.
+      if (_statut.isNotEmpty && !_actif) unawaited(CoursesEnCours.effacerLivraison(_id));
     } catch (_) {
       // Réseau instable : on réessaie au prochain tick.
     }

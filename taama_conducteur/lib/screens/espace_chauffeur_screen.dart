@@ -22,8 +22,11 @@ import '../services/annulations_course.dart';
 import '../services/api_service.dart';
 import '../services/politique_confidentialite.dart';
 import '../services/config_app.dart';
+import '../services/deconnexion.dart';
+import '../services/deconnexion_chauffeur.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/location_service.dart';
+import '../services/mise_a_jour.dart';
 import '../services/notification_service.dart';
 import '../services/polling_premier_plan.dart';
 import '../services/sonnerie_service.dart';
@@ -32,6 +35,8 @@ import '../theme/couleurs_taama.dart';
 import '../utils/format.dart';
 import '../widgets/alerte_sonnerie.dart';
 import '../widgets/couche_carte_taama.dart';
+import '../widgets/dialogue_deconnexion.dart';
+import '../widgets/voile_deconnexion.dart';
 import '../widgets/widget_avatar_conducteur.dart';
 import 'connexion_screen.dart';
 import 'mes_courses_page.dart';
@@ -60,6 +65,9 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
   Map<String, dynamic>? _profil;
   List<dynamic> _demandesAssignees = [];
   List<dynamic> _livraisonsCourier = [];
+  // Dernière lecture réussie de chaque liste (déconnexion : etatCoursesChauffeur).
+  bool _demandesAJour = false;
+  bool _livraisonsAJour = false;
   int? _solde;
   // Écran affiché seulement. Écran verrouillé, le service de position garde
   // l'app active : ce polling tournerait sans fin (~2 000 requêtes/h). Les
@@ -91,6 +99,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
   bool _cartePrete = false;
   LatLng? _positionChauffeur;
   bool _basculeEnCours = false;
+  bool _deconnexionEnCours = false;
 
   // Ce qui empêcherait une demande de sonner (affiché en ligne seulement).
   List<ProblemeSonnerie> _problemesSonnerie = const [];
@@ -133,7 +142,8 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
       // Les livraisons (« courier_gps_… ») sont arrêtées par leur propre écran.
       if (int.tryParse(cle) != null) LocationService.pourCourse(cle).arreter();
     }
-    _serviceLocalisationGenerale.arreterSuiviPositionEnLigne();
+    // Sans session (compte supprimé, déconnexion) : rien à prévenir.
+    _serviceLocalisationGenerale.arreterSuiviPositionEnLigne(prevenirServeur: ApiService.estConnecte);
     _carte.dispose();
     SonnerieService.instance.arreter();
     super.dispose();
@@ -317,6 +327,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
       _signalerCoursesDisparues(demandes);
       setState(() {
         _demandesAssignees = demandes;
+        _demandesAJour = true;
         _erreurDemandes = null;
       });
       // Plus aucune demande en attente de réponse (acceptée depuis l'écran
@@ -326,8 +337,13 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
       }
     } catch (e) {
       debugPrint('[DemandesAssignees] Erreur rafraîchissement : $e');
+      final definitive = lectureDefinitive(e);
+      _demandesAJour = definitive;
       if (mounted) {
-        setState(() => _erreurDemandes = 'Impossible de mettre à jour tes demandes.');
+        setState(() {
+          if (definitive) _demandesAssignees = [];
+          _erreurDemandes = 'Impossible de mettre à jour tes demandes.';
+        });
       }
     }
   }
@@ -359,9 +375,15 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     try {
       final livraisons = await ApiService.mesLivraisonsCourier();
       if (!mounted) return;
-      setState(() => _livraisonsCourier = livraisons);
+      setState(() {
+        _livraisonsCourier = livraisons;
+        _livraisonsAJour = true;
+      });
     } catch (e) {
       debugPrint('[LivraisonsCourier] Erreur rafraîchissement : $e');
+      final definitive = lectureDefinitive(e);
+      _livraisonsAJour = definitive;
+      if (definitive && mounted) setState(() => _livraisonsCourier = []);
     }
   }
 
@@ -587,12 +609,78 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     }
   }
 
-  void _deconnexion() {
+  EtatCoursesChauffeur _etatCourses() => etatCoursesChauffeur(
+        demandes: _demandesAssignees,
+        demandesAJour: _demandesAJour,
+        livraisons: _livraisonsCourier,
+        livraisonsAJour: _livraisonsAJour,
+      );
+
+  /// Déconnexion, après confirmation (deconnecterChauffeur) : refusée
+  /// pendant une course ou une livraison, connue ici ou du serveur (409).
+  /// Courses impossibles à vérifier : le chauffeur choisit de se déconnecter
+  /// quand même. Déconnecté : suivi GPS et sonnerie arrêtés, écran de
+  /// connexion, même si le serveur n'a pas répondu (il le dit alors).
+  Future<void> _deconnexion() async {
+    if (_deconnexionEnCours) return;
+    if (!await demanderConfirmationDeconnexion(context)) return;
+    if (!mounted) return;
+    setState(() => _deconnexionEnCours = true);
+    IssueDeconnexion? issue;
+    var resteConnecte = false;
+    try {
+      issue = await deconnecterChauffeur(
+        // Listes du serveur, relues toutes les 5 s : demandes à accepter ou
+        // acceptées, livraisons assignées.
+        etat: _etatCourses,
+        relire: () => Future.wait([_rafraichirDemandesAssignees(), _rafraichirLivraisonsCourier()]),
+        seDeconnecterQuandMeme: _demanderDeconnexionQuandMeme,
+      );
+      resteConnecte = issue == null;
+    } catch (e) {
+      debugPrint('Erreur déconnexion : $e');
+    } finally {
+      if (mounted) setState(() => _deconnexionEnCours = false);
+    }
+    final deconnecte = issue?.estDeconnecte ?? false;
+    if (deconnecte) {
+      // En ligne, le serveur l'a passé hors ligne. Hors réseau, il y reste
+      // disponible jusqu'à ce que sa position vieillisse (45 s) : la reprise
+      // ne touche qu'au jeton de notification de ce téléphone.
+      await _serviceLocalisationGenerale.arreterSuiviPositionEnLigne(prevenirServeur: false);
+      SonnerieService.instance.arreter();
+    }
+    if (!mounted || resteConnecte) return;
+    if (!deconnecte) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(issue == IssueDeconnexion.courseEnCours
+            ? Deconnexion.messageCourseEnCours
+            : 'Déconnexion impossible pour le moment. Réessaie.'),
+      ));
+      return;
+    }
+    // Version trop ancienne (426) : l'écran « Mise à jour requise » reste seul.
+    if (MiseAJour.ecranAffiche) return;
+    final messager = ScaffoldMessenger.of(context);
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (context) => const EcranConnexion()),
       (route) => false,
     );
+    if (issue == IssueDeconnexion.deconnecteHorsReseau) {
+      messager.showSnackBar(const SnackBar(content: Text(messageDeconnexionHorsReseau)));
+    }
+  }
+
+  /// Courses impossibles à vérifier : le voile s'efface le temps de la
+  /// question au chauffeur.
+  Future<bool> _demanderDeconnexionQuandMeme() async {
+    if (!mounted) return false;
+    setState(() => _deconnexionEnCours = false);
+    final quandMeme = await demanderDeconnexionQuandMeme(context);
+    if (!mounted) return false;
+    if (quandMeme) setState(() => _deconnexionEnCours = true);
+    return quandMeme;
   }
 
   void _ouvrirChat({required String roomName, required String titre}) {
@@ -619,7 +707,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     // la feuille du bas (qui monte et descend) ne la recouvre jamais.
     final margeAttribution = EdgeInsets.fromLTRB(8, hautSecurite + 76, 8, 8);
 
-    return Scaffold(
+    final ecran = Scaffold(
       backgroundColor: CouleursTaama.sable,
       body: Stack(
         children: [
@@ -691,9 +779,16 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
             snapSizes: const [0.46],
             builder: (context, controleur) => _feuille(controleur, disponible),
           ),
+
+          // 4. Déconnexion en cours : plus rien ne se touche.
+          if (_deconnexionEnCours) const Positioned.fill(child: VoileDeconnexion()),
         ],
       ),
     );
+
+    // Déconnexion en cours : le retour système ne ferme pas l'app avant la
+    // fin (session effacée, GPS arrêté).
+    return PopScope(canPop: !_deconnexionEnCours, child: ecran);
   }
 
   Widget _barreHaute(bool disponible) {

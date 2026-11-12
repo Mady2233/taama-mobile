@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+import '../services/deconnexion.dart';
 import '../theme/couleurs_taama.dart';
 import '../widgets/dialogue_suppression_compte.dart';
 import '../widgets/widget_avatar_conducteur.dart';
@@ -346,7 +347,8 @@ class _EcranProfilChauffeurState extends State<EcranProfilChauffeur> {
     } finally {
       if (mounted) setState(() => _suppressionEnCours = false);
     }
-    await ApiService.definirToken('');
+    // Compte supprimé : la session de l'appareil est effacée, sans requête.
+    await Deconnexion.effacerSessionLocale();
     if (!mounted) return;
     final messager = ScaffoldMessenger.of(context);
     // Retire aussi EcranEspaceChauffeur : son dispose() arrête le suivi GPS

@@ -8,6 +8,7 @@ import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'services/config_app.dart';
+import 'services/deconnexion.dart';
 import 'services/demande_entrante_navigator.dart';
 import 'services/enregistrement_jeton.dart';
 import 'services/mise_a_jour.dart';
@@ -52,6 +53,10 @@ void main() async {
   // Session ouverte : le jeton de notification est réenregistré à chaque
   // démarrage (réponse vérifiée, nouveaux essais : EnregistrementJeton).
   unawaited(EnregistrementJeton.enregistrer(NotificationService.token));
+
+  // Déconnexion restée en attente (réseau) : retentée sans retarder
+  // l'ouverture (Deconnexion).
+  unawaited(Deconnexion.reprendre());
 
   runApp(const TaamaConducApp());
 }

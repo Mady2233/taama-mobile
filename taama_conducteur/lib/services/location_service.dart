@@ -483,10 +483,11 @@ class LocationService {
     }
   }
 
-  /// Arrête le suivi GPS "en ligne" et signale la déconnexion au serveur.
+  /// Arrête le suivi GPS "en ligne" et signale la déconnexion au serveur
+  /// ([prevenirServeur] faux : la déconnexion du compte s'en charge déjà).
   /// Annule le stream ET le heartbeat — jamais de timer orphelin après
   /// passage hors ligne / logout.
-  Future<void> arreterSuiviPositionEnLigne() async {
+  Future<void> arreterSuiviPositionEnLigne({bool prevenirServeur = true}) async {
     await _streamPositionEnLigne?.cancel();
     _streamPositionEnLigne = null;
     _timerHeartbeat?.cancel();
@@ -494,6 +495,7 @@ class LocationService {
     _oublierMesures();
     if (!_enLigne) return;
     _enLigne = false;
+    if (!prevenirServeur) return;
 
     try {
       await ApiService.deconnexionChauffeur();

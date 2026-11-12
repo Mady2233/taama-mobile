@@ -23,6 +23,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../carte/fond_carte.dart';
 import '../services/api_service.dart';
+import '../services/courses_en_cours.dart';
 import '../theme/taama_theme.dart';
 import '../utils/format.dart';
 import '../widgets/couche_carte_taama.dart';
@@ -194,6 +195,9 @@ class _EcranCourierState extends State<EcranCourier> {
         latLivraison: l.position.latitude,
         lngLivraison: l.position.longitude,
       );
+      // Livraison en cours pour la déconnexion, même si l'écran est déjà fermé.
+      final id = resultat['id'];
+      if (id is int) await CoursesEnCours.enregistrerLivraison(id);
       if (!mounted) return;
       HapticFeedback.mediumImpact();
       Navigator.pushReplacement(

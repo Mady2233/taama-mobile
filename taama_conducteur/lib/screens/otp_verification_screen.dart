@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
-import '../services/enregistrement_jeton.dart';
+import '../services/deconnexion.dart';
 import '../services/notification_service.dart';
 import 'espace_chauffeur_screen.dart';
 import 'inscription_chauffeur_screen.dart';
@@ -49,12 +49,18 @@ class _EcranVerificationOTPState extends State<EcranVerificationOTP> {
     setState(() => _enChargement = true);
 
     try {
+      // Déconnexion restée en attente (réseau) : terminée avant d'ouvrir la
+      // nouvelle session, jamais pendant (Deconnexion).
+      await Deconnexion.reprendre();
+
       // J'appelle mon backend pour vérifier le code et récupérer mon token
       await ApiService.verifierOtp(widget.numeroTelephone, code);
+      await Deconnexion.apresConnexion();
 
       // Jeton FCM de cet appareil, pour les notifications push : envoyé sans
-      // retarder l'ouverture (réponse vérifiée, nouveaux essais espacés).
-      unawaited(EnregistrementJeton.enregistrer(NotificationService.token));
+      // retarder l'ouverture (réponse vérifiée, nouveaux essais espacés),
+      // redemandé à Firebase s'il a été supprimé à la déconnexion.
+      unawaited(NotificationService.reenregistrerJeton());
 
       if (!mounted) return;
 

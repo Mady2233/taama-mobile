@@ -3,8 +3,12 @@ import 'package:flutter/material.dart';
 import '../models/verification_identite.dart';
 import '../services/api_service.dart';
 import '../services/config_app.dart';
+import '../services/courses_en_cours.dart';
+import '../services/deconnexion.dart';
+import '../services/mise_a_jour.dart';
 import '../services/politique_confidentialite.dart';
 import '../theme/taama_theme.dart';
+import '../widgets/dialogue_deconnexion.dart';
 import '../widgets/dialogue_suppression_compte.dart';
 import '../widgets/photo_avatar.dart';
 import 'avis_app_screen.dart';
@@ -28,6 +32,7 @@ class EcranCompte extends StatefulWidget {
 class _EcranCompteState extends State<EcranCompte> {
   Map<String, dynamic>? _profil;
   bool _suppressionEnCours = false;
+  bool _deconnexionEnCours = false;
 
   @override
   void initState() {
@@ -42,9 +47,44 @@ class _EcranCompteState extends State<EcranCompte> {
     } catch (_) {}
   }
 
+  /// Déconnexion (Deconnexion), après confirmation : refusée pendant une
+  /// course ou une livraison, connue de l'app (CoursesEnCours, relue sur le
+  /// serveur) ou du serveur (409). Sinon l'écran de connexion s'ouvre, même
+  /// si le serveur n'a pas répondu (il le dit alors).
   Future<void> _deconnecter() async {
-    await ApiService.definirToken('');
+    if (_deconnexionEnCours) return;
+    if (!await demanderConfirmationDeconnexion(context)) return;
     if (!mounted) return;
+    setState(() => _deconnexionEnCours = true);
+    IssueDeconnexion? issue;
+    try {
+      issue = await Deconnexion.seDeconnecter(
+          courseEnCoursLocale: await CoursesEnCours.enCoursApresRelecture());
+      if (issue.estDeconnecte) await CoursesEnCours.toutEffacer();
+    } catch (e) {
+      debugPrint('Erreur déconnexion : $e');
+    } finally {
+      if (mounted) setState(() => _deconnexionEnCours = false);
+    }
+    if (!mounted) return;
+    if (!(issue?.estDeconnecte ?? false)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(issue == IssueDeconnexion.courseEnCours
+            ? Deconnexion.messageCourseEnCours
+            : 'Déconnexion impossible pour le moment. Réessaie.'),
+      ));
+      return;
+    }
+    final messager = ScaffoldMessenger.of(context);
+    _ouvrirConnexion();
+    if (issue == IssueDeconnexion.deconnecteHorsReseau) {
+      messager.showSnackBar(const SnackBar(content: Text(messageDeconnexionHorsReseau)));
+    }
+  }
+
+  void _ouvrirConnexion() {
+    // Version trop ancienne (426) : l'écran « Mise à jour requise » reste seul.
+    if (MiseAJour.ecranAffiche) return;
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (_) => const EcranConnexion()),
@@ -82,7 +122,10 @@ class _EcranCompteState extends State<EcranCompte> {
     }
     if (!mounted) return;
     final messager = ScaffoldMessenger.of(context);
-    await _deconnecter();
+    // Compte supprimé : la session de l'appareil est effacée, sans requête.
+    await Deconnexion.effacerSessionLocale();
+    await CoursesEnCours.toutEffacer();
+    if (mounted) _ouvrirConnexion();
     messager.showSnackBar(SnackBar(content: Text(messageFinal)));
   }
 
@@ -254,7 +297,14 @@ class _EcranCompteState extends State<EcranCompte> {
         title: Text('Se déconnecter',
             style: TaamaText.body.copyWith(
                 color: TaamaColors.danger, fontWeight: FontWeight.w800)),
-        onTap: _deconnecter,
+        trailing: _deconnexionEnCours
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: TaamaColors.danger),
+              )
+            : null,
+        onTap: _deconnexionEnCours ? null : _deconnecter,
       ),
     );
   }
