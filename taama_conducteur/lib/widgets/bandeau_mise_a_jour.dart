@@ -58,7 +58,7 @@ class BandeauMiseAJour extends StatelessWidget {
                   Text(
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    echec ? 'Ouvre ${ios ? 'l’App Store' : 'le Play Store'} et cherche « Taama Conducteur ».' : 'Plus rapide et plus sûre.',
+                    echec ? 'Ouvre ${ios ? 'l’App Store' : 'le Play Store'} et cherche « Taama Chauffeur ».' : 'Plus rapide et plus sûre.',
                     style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: CouleursTaama.nuitTexteSecondaire),
                   ),
                 ],

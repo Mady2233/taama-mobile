@@ -23,7 +23,7 @@ void main() {
   // Le démarrage lit le numéro de build (mise à jour obligatoire) : sans canal
   // natif en test, valeur simulée.
   setUp(() => PackageInfo.setMockInitialValues(
-        appName: 'Taama Conducteur',
+        appName: 'Taama Chauffeur',
         packageName: 'com.taama.taama_conducteur',
         version: '1.0.0',
         buildNumber: '61',

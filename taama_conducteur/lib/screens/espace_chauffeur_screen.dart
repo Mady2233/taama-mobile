@@ -826,7 +826,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        nom.isEmpty ? 'Taama Conducteur' : nom,
+                        nom.isEmpty ? 'Taama Chauffeur' : nom,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(

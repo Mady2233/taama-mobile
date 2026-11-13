@@ -46,7 +46,7 @@ class EcranMiseAJourRequise extends StatelessWidget {
   List<(IconData, String)> get _atouts => [
     (Icons.verified_user_rounded, 'Ton compte, tes gains et tes courses sont conservés'),
     (Icons.shield_rounded, ios ? 'Installation sécurisée par l’App Store' : 'Installation sécurisée par Google Play'),
-    (Icons.auto_awesome_rounded, 'Les dernières améliorations de Taama Conducteur'),
+    (Icons.auto_awesome_rounded, 'Les dernières améliorations de Taama Chauffeur'),
   ];
 
   @override
@@ -88,7 +88,7 @@ class EcranMiseAJourRequise extends StatelessWidget {
                         ),
                         const SizedBox(height: 12),
                         const Text(
-                          'Une version plus récente de Taama Conducteur est prête. '
+                          'Une version plus récente de Taama Chauffeur est prête. '
                           'Installe-la pour continuer à recevoir des courses.',
                           textAlign: TextAlign.center,
                           style: TextStyle(fontSize: 15, height: 1.45, color: CouleursTaama.nuitTexteSecondaire),
@@ -262,7 +262,7 @@ class _Avis extends StatelessWidget {
       AvisMiseAJour.annulee =>
         'Mise à jour annulée. Elle est nécessaire pour continuer à recevoir des courses.',
       AvisMiseAJour.playStoreIndisponible =>
-        '${ios ? 'L’App Store' : 'Le Play Store'} ne s’est pas ouvert : ouvre-le toi-même et cherche « Taama Conducteur ».',
+        '${ios ? 'L’App Store' : 'Le Play Store'} ne s’est pas ouvert : ouvre-le toi-même et cherche « Taama Chauffeur ».',
     };
     return Container(
       padding: const EdgeInsets.all(12),

@@ -29,7 +29,7 @@ class AlerteSonnerie extends StatelessWidget {
         ProblemeSonnerie.economieBatterie => (
             Icons.battery_alert_rounded,
             'Économie de batterie',
-            'Choisis « Ne pas optimiser » ou « Aucune restriction » pour Taama Conducteur.',
+            'Choisis « Ne pas optimiser » ou « Aucune restriction » pour Taama Chauffeur.',
           ),
       };
 

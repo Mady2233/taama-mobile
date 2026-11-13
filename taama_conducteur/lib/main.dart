@@ -101,7 +101,7 @@ class _TaamaConducAppState extends State<TaamaConducApp> with WidgetsBindingObse
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey,
-      title: 'Taama Conducteur',
+      title: 'Taama Chauffeur',
       debugShowCheckedModeBanner: false,
       theme: _themeTaama,
       builder: (context, enfant) => AvecBandeauMiseAJour(child: enfant ?? const SizedBox.shrink()),

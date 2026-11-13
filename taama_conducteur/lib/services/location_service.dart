@@ -136,7 +136,7 @@ class LocationService {
         distanceFilter: 0,
         intervalDuration: const Duration(seconds: 5),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationTitle: 'Taama Conducteur',
+          notificationTitle: 'Taama Chauffeur',
           notificationText: 'Votre position est partagée tant que vous êtes en ligne ou en course.',
           notificationChannelName: 'Position du chauffeur',
           notificationIcon: AndroidResource(name: 'ic_launcher_foreground', defType: 'drawable'),
