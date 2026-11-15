@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:taama_conducteur/screens/demande_entrante_screen.dart';
+import 'package:taama_conducteur/services/annulations_course.dart';
 
 /// La demande telle que mes-demandes-assignees la renvoie : contre-proposition
 /// possible, destination sur deux lignes, sans coordonnées (pas de carte).
@@ -48,6 +49,25 @@ Future<void> _ouvrir(WidgetTester t, {required Size taille, required double basS
 }
 
 Future<http.Response> _serveurSimple(http.Request _) async => _json([_demande()]);
+
+/// L'écran ouvert par-dessus l'accueil, comme dans l'app : il peut se fermer.
+Future<void> _ouvrirParDessus(WidgetTester t) async {
+  SharedPreferences.setMockInitialValues({});
+  t.view.physicalSize = const Size(360, 780) * 3;
+  t.view.devicePixelRatio = 3;
+  addTearDown(t.view.reset);
+  final navigateur = GlobalKey<NavigatorState>();
+  await t.pumpWidget(MaterialApp(
+    navigatorKey: navigateur,
+    home: const Scaffold(body: Text('Accueil chauffeur')),
+  ));
+  navigateur.currentState!.push(
+    MaterialPageRoute<void>(builder: (_) => const EcranDemandeEntrante(demandeId: 7)),
+  );
+  await t.pump();
+  await t.pump(); // réponse du serveur
+  await t.pump(const Duration(seconds: 1)); // entrée du panneau
+}
 
 /// Le titre et l'anneau du compte à rebours sont au-dessus du panneau.
 void _enTeteVisible(WidgetTester t) {
@@ -278,5 +298,46 @@ void main() {
                 await t.pumpWidget(const SizedBox());
               }));
     }
+  });
+
+  group('demande close pendant que l’écran sonne', () {
+    testWidgets('410 à l’acceptation : message du serveur, écran fermé', (t) async {
+      const message = 'Cette demande a expiré : le client choisit un autre chauffeur.';
+      await _avecServeur((requete) async {
+        if (requete.url.path.endsWith('/accepter/')) {
+          return _json({'erreur': message, 'code': 'DEMANDE_EXPIREE'}, 410);
+        }
+        return _json([_demande()]);
+      }, () async {
+        await _ouvrirParDessus(t);
+        await t.tap(find.textContaining('Accepter'));
+        await t.pump(); // réponse du serveur
+        await t.pump(const Duration(seconds: 1)); // fermeture
+        expect(find.byType(EcranDemandeEntrante), findsNothing);
+        expect(find.text('Accueil chauffeur'), findsOneWidget);
+        expect(find.text(message), findsOneWidget);
+      });
+    });
+
+    testWidgets('demande annulée : sonnerie coupée, écran fermé', (t) async {
+      await _avecServeur(_serveurSimple, () async {
+        await _ouvrirParDessus(t);
+        AnnulationsCourse.signaler(7);
+        await t.pump();
+        await t.pump(const Duration(seconds: 1));
+        expect(find.byType(EcranDemandeEntrante), findsNothing);
+        expect(find.text('Cette demande n’est plus disponible.'), findsOneWidget);
+      });
+    });
+
+    testWidgets('annulation d’une autre demande : rien ne change', (t) async {
+      await _avecServeur(_serveurSimple, () async {
+        await _ouvrirParDessus(t);
+        AnnulationsCourse.signaler(8);
+        await t.pump();
+        await t.pump(const Duration(seconds: 1));
+        expect(find.byType(EcranDemandeEntrante), findsOneWidget);
+      });
+    });
   });
 }

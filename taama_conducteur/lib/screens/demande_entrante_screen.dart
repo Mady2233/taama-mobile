@@ -26,6 +26,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import '../services/annulations_course.dart';
 import '../services/api_service.dart';
 import '../services/demande_entrante_navigator.dart';
 import '../services/prix_ajustable.dart';
@@ -84,6 +85,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   Map<String, dynamic>? _demande;
   bool _chargement = true;
   bool _demandeIntrouvable = false;
+  StreamSubscription<int>? _abonnementAnnulation;
   // Anti double-tap : dès le premier appui (Accepter OU Ignorer), les DEUX
   // boutons sont désactivés — jamais deux POST accepter/refuser en parallèle.
   bool _enTraitement = false;
@@ -144,7 +146,23 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   void initState() {
     super.initState();
     _demande = widget.demandeInitiale;
+    _abonnementAnnulation = AnnulationsCourse.flux.listen(_surAnnulation);
     _verifierEtDemarrer();
+  }
+
+  /// Push `demande_annulee` reçu au premier plan pendant que l'écran sonne :
+  /// le client a annulé, ou le serveur a clos une demande ciblée restée sans
+  /// réponse. La sonnerie de l'écran (SonnerieService) s'arrête, l'écran se
+  /// ferme. Acceptation en cours : sa réponse (404, 409, 410) s'en charge.
+  void _surAnnulation(int demandeId) {
+    if (demandeId != widget.demandeId || !mounted) return;
+    SonnerieService.instance.arreter();
+    _arreterCompteARebours();
+    if (_enTraitement) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Cette demande n’est plus disponible.')),
+    );
+    _fermer();
   }
 
   @override
@@ -161,6 +179,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
 
   @override
   void dispose() {
+    _abonnementAnnulation?.cancel();
     _timerCompteARebours?.cancel();
     _timerAttente?.cancel();
     _anneau.dispose();
@@ -422,6 +441,14 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
         );
         _fermer();
       } else if (e.statusCode == 404) {
+        _fermer();
+      } else if (e.statusCode == 410) {
+        // Demande ciblée acceptée après ses 45 s : le client en choisit un
+        // autre. Message du serveur, écran fermé (un nouvel appui redonnerait
+        // 410).
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
         _fermer();
       } else {
         setState(() {
