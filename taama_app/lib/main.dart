@@ -124,6 +124,7 @@ class _TaamaAppState extends State<TaamaApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey,
+      navigatorObservers: [observateurEcrans],
       title: 'Taama',
       debugShowCheckedModeBanner: false,
       theme: TaamaTheme.light(),

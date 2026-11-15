@@ -28,6 +28,7 @@ import '../../carte/fond_carte.dart';
 import '../../models/verification_identite.dart';
 import '../../services/api_service.dart';
 import '../../services/config_app.dart';
+import '../../services/navigation.dart';
 import '../../services/courses_en_cours.dart';
 import '../../services/routing_service.dart';
 import '../../widgets/champ_adresse_lieu.dart';
@@ -85,7 +86,7 @@ class _EntreeCacheDuree {
   bool get expiree => DateTime.now().difference(calculeeLe) > _dureeCacheOsrm;
 }
 
-class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver, RouteAware {
   String? _prenom;
   // ⚠️ Aucune source actuelle (pas de reverse-geocoding) : HomeScreen
   // affiche « Ma position » quand c'est null.
@@ -106,6 +107,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   final Map<String, _EntreeCacheDuree> _cacheDurees = {};
 
+  /// Un autre écran couvre l'accueil (commande, choix du chauffeur, suivi…) :
+  /// aucune requête périodique, même au retour au premier plan.
+  bool _couvert = false;
+
   @override
   void initState() {
     super.initState();
@@ -118,7 +123,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null) observateurEcrans.subscribe(this, route);
+  }
+
+  /// Un écran s'ouvre par-dessus l'accueil : plus de requêtes (data).
+  @override
+  void didPushNext() {
+    _couvert = true;
+    _arreterRafraichissement();
+  }
+
+  /// Retour sur l'accueil : chauffeurs et course en cours relus (une commande
+  /// a pu partir, ou finir), puis reprise du rafraîchissement.
+  @override
+  void didPopNext() {
+    _couvert = false;
+    _chargerConducteursProches(silencieux: true);
+    _chargerCourseActive();
+    _demarrerRafraichissement();
+  }
+
+  @override
   void dispose() {
+    observateurEcrans.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     ConfigApp.paiementActif.removeListener(_surChangementPaiement);
     _arreterRafraichissement();
@@ -129,6 +159,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState etat) {
     switch (etat) {
       case AppLifecycleState.resumed:
+        // Couvert par un autre écran : il reprendra au retour (didPopNext).
+        if (_couvert) break;
         _chargerConducteursProches(silencieux: true);
         _chargerCourseActive();
         _demarrerRafraichissement();
@@ -302,7 +334,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _chargerConducteursProches(),
       _chargerSuggestions(),
     ]);
-    if (mounted) _demarrerRafraichissement();
+    if (mounted && !_couvert) _demarrerRafraichissement();
   }
 
   Future<void> _obtenirPosition() async {
