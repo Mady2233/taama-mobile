@@ -11,21 +11,36 @@ import '../models/service_course.dart';
 import '../theme/taama_theme.dart';
 import '../utils/format.dart';
 
-/// Ouvre la feuille ; l'offre choisie (avant promo), ou null si le client
-/// ferme sans commander.
-Future<int?> afficherChoixOffre(
+/// Offre choisie (avant promo), et la façon de trouver le chauffeur.
+class ChoixOffre {
+  const ChoixOffre(this.prix, {this.choisirChauffeur = false});
+
+  final int prix;
+
+  /// Vrai : le client choisit son chauffeur sur la carte ; faux : le plus
+  /// proche, comme avant.
+  final bool choisirChauffeur;
+}
+
+/// Ouvre la feuille ; l'offre choisie, ou null si le client ferme sans
+/// commander. [choixChauffeur] : « Choisir mon chauffeur » est proposé.
+Future<ChoixOffre?> afficherChoixOffre(
   BuildContext context, {
   required String nomService,
   required OffreLimites limites,
+  bool choixChauffeur = false,
 }) =>
-    showModalBottomSheet<int>(
+    showModalBottomSheet<ChoixOffre>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => FeuilleOffre(
         nomService: nomService,
         limites: limites,
-        onCommander: (prix) => Navigator.pop(context, prix),
+        onCommander: (prix) => Navigator.pop(context, ChoixOffre(prix)),
+        onChoisirChauffeur: choixChauffeur
+            ? (prix) => Navigator.pop(context, ChoixOffre(prix, choisirChauffeur: true))
+            : null,
       ),
     );
 
@@ -35,11 +50,15 @@ class FeuilleOffre extends StatefulWidget {
     required this.nomService,
     required this.limites,
     required this.onCommander,
+    this.onChoisirChauffeur,
   });
 
   final String nomService;
   final OffreLimites limites;
   final ValueChanged<int> onCommander;
+
+  /// « Choisir mon chauffeur », au même prix. Null : bouton absent.
+  final ValueChanged<int>? onChoisirChauffeur;
 
   @override
   State<FeuilleOffre> createState() => _FeuilleOffreState();
@@ -182,6 +201,24 @@ class _FeuilleOffreState extends State<FeuilleOffre> {
                   ),
                 ),
               ),
+              if (widget.onChoisirChauffeur != null) ...[
+                const SizedBox(height: TaamaSpacing.sm),
+                SizedBox(
+                  height: 52,
+                  child: OutlinedButton(
+                    onPressed: () => widget.onChoisirChauffeur!(_prix),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: TaamaColors.textOnDark,
+                      side: const BorderSide(color: TaamaColors.nightBorder),
+                      textStyle: TaamaText.body.copyWith(fontSize: 15.5, fontWeight: FontWeight.w700),
+                    ),
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('Choisir mon chauffeur'),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

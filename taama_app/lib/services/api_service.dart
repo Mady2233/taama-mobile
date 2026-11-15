@@ -57,6 +57,43 @@ class PrixCourierChangeException implements Exception {
   String toString() => 'Le prix de cette livraison est passé à ${formaterFcfa(nouveauPrix)}.';
 }
 
+/// Motif d'un refus du serveur pour une demande à un chauffeur choisi.
+enum MotifRefusChoix {
+  /// 410 (jeton expiré) ou 409 CHAUFFEUR_INDISPONIBLE : choisir un autre.
+  chauffeurIndisponible,
+
+  /// 429 LIMITE_CHOIX_CHAUFFEUR : trop de choix dans l'heure.
+  limiteAtteinte,
+
+  /// 400 CHOIX_CHAUFFEUR_INDISPONIBLE : coupé sur le serveur.
+  fonctionCoupee,
+}
+
+/// Levée par creerDemandeInstantanee pour une demande à un chauffeur choisi
+/// sur la carte (jetonChauffeur) : le devis est intact, rien n'est commandé.
+class ChoixChauffeurException implements Exception {
+  const ChoixChauffeurException(this.motif, this.message);
+
+  final MotifRefusChoix motif;
+
+  /// Message du serveur, affiché tel quel.
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// Levée par creerDemandeInstantanee : le client a déjà une course en cours
+/// (409 DEMANDE_DEJA_EN_COURS). Elle est affichée sur l'accueil.
+class DemandeDejaEnCoursException implements Exception {
+  const DemandeDejaEnCoursException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// Levée quand le serveur ne reconnaît plus le token (401) : session fermée
 /// ailleurs (FinDeSession ramène alors à la connexion). Sur
 /// supprimerMonCompte, c'est typiquement qu'une première tentative a abouti
@@ -480,6 +517,7 @@ class ApiService {
     DateTime? dateHeurePlanifiee,
     String? codePromo,
     int? prixOffert,
+    String? jetonChauffeur,
   }) async {
     final reponse = await http.post(
       Uri.parse('$_baseUrl/trajets/demandes/creer/'),
@@ -496,24 +534,46 @@ class ApiService {
         'contre_offre': true,
         // Offre du client (limites du serveur, revérifiée par lui).
         if (prixOffert != null) 'prix_offert': prixOffert,
+        // Chauffeur choisi sur la carte (jeton signé du serveur, 120 s).
+        if (jetonChauffeur != null) 'jeton_chauffeur': jetonChauffeur,
       }),
     ).timeout(const Duration(seconds: 12));
     // Cas particulier AVANT _traiterReponse (qui ne garde qu'un message
     // texte, perdant nouveau_devis_id/nouveau_prix) : un devis expiré porte
     // un nouveau devis tout prêt dans le corps de la réponse 409.
-    if (reponse.statusCode == 409) {
+    final code = reponse.statusCode;
+    if (code == 400 || code == 409 || code == 410 || code == 429) {
       Map<String, dynamic>? corps;
       try {
         corps = jsonDecode(reponse.body) as Map<String, dynamic>;
       } catch (_) {
-        // Corps non-JSON : traité comme une erreur 409 générique ci-dessous.
+        // Corps non-JSON : traité comme une erreur générique ci-dessous.
       }
-      if (corps != null && corps['code'] == 'DEVIS_EXPIRE') {
+      final motif = corps?['code'];
+      final message = (corps?['erreur'] ?? corps?['detail'])?.toString() ?? '';
+      if (code == 409 && motif == 'DEVIS_EXPIRE' && corps != null) {
         throw DevisExpireException(
           nouveauDevisId: corps['nouveau_devis_id'] as int,
           nouveauPrix: corps['nouveau_prix'] as int,
           detail: corps['detail'] as Map<String, dynamic>?,
         );
+      }
+      if (code == 409 && motif == 'DEMANDE_DEJA_EN_COURS') {
+        throw DemandeDejaEnCoursException(message);
+      }
+      if (jetonChauffeur != null) {
+        if (code == 410 || (code == 409 && motif == 'CHAUFFEUR_INDISPONIBLE')) {
+          throw ChoixChauffeurException(
+            MotifRefusChoix.chauffeurIndisponible,
+            message.isEmpty ? 'Ce chauffeur n’est plus disponible.' : message,
+          );
+        }
+        if (code == 429 && motif == 'LIMITE_CHOIX_CHAUFFEUR') {
+          throw ChoixChauffeurException(MotifRefusChoix.limiteAtteinte, message);
+        }
+        if (code == 400 && motif == 'CHOIX_CHAUFFEUR_INDISPONIBLE') {
+          throw ChoixChauffeurException(MotifRefusChoix.fonctionCoupee, message);
+        }
       }
     }
     return _traiterReponse(reponse, codeAttendu: 201) as Map<String, dynamic>;

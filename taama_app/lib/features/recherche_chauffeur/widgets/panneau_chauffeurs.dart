@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/taama_theme.dart';
+import '../../../utils/format.dart' show formaterFcfa;
 import '../chauffeur_proche.dart';
 import '../couleurs_recherche.dart';
 import 'avatar_chauffeur.dart';
@@ -18,6 +19,9 @@ class PanneauChauffeurs extends StatefulWidget {
     required this.onSelection,
     required this.onChoisir,
     required this.onReessayer,
+    this.prix,
+    this.onPlusProche,
+    this.choixBloque = false,
   });
 
   /// Chauffeurs filtrés, du plus proche au plus éloigné.
@@ -32,6 +36,18 @@ class PanneauChauffeurs extends StatefulWidget {
   final ValueChanged<ChauffeurProche> onSelection;
   final Future<void> Function(ChauffeurProche chauffeur) onChoisir;
   final VoidCallback onReessayer;
+
+  /// Prix de la course, le même quel que soit le chauffeur : rappelé sur
+  /// « Le plus proche ». Null : non affiché.
+  final int? prix;
+
+  /// « Le plus proche » : commander sans choisir, au même prix. Toujours
+  /// visible, même sans chauffeur à l'écran. Null : bouton absent.
+  final VoidCallback? onPlusProche;
+
+  /// Choix impossible pour l'instant (plafond du serveur atteint) : seul
+  /// « Le plus proche » reste, mis en avant.
+  final bool choixBloque;
 
   @override
   State<PanneauChauffeurs> createState() => _PanneauChauffeursState();
@@ -108,6 +124,14 @@ class _PanneauChauffeursState extends State<PanneauChauffeurs> {
               const _Poignee(),
               const SizedBox(height: 14),
               ..._contenu(context),
+              if (widget.onPlusProche != null) ...[
+                const SizedBox(height: 6),
+                _BoutonPlusProche(
+                  prix: widget.prix,
+                  enAvant: widget.choixBloque,
+                  onTap: _envoi ? null : widget.onPlusProche,
+                ),
+              ],
             ],
           ),
         ),
@@ -162,14 +186,16 @@ class _PanneauChauffeursState extends State<PanneauChauffeurs> {
       if (selection != null) _FicheChauffeur(chauffeur: selection),
       const SizedBox(height: 14),
       _BoutonPrincipal(
-        libelle: selection == null
-            ? 'Choisir un chauffeur'
-            : widget.obsolete
-                ? 'Mise à jour des positions…'
-                : 'Choisir ${selection.prenom}',
+        libelle: widget.choixBloque
+            ? 'Choix indisponible pour l’instant'
+            : selection == null
+                ? 'Choisir un chauffeur'
+                : widget.obsolete
+                    ? 'Mise à jour des positions…'
+                    : 'Choisir ${selection.prenom}',
         icone: Icons.arrow_forward_rounded,
         envoi: _envoi,
-        onPressed: selection == null || widget.obsolete
+        onPressed: selection == null || widget.obsolete || widget.choixBloque
             ? null
             : () => _choisir(selection),
       ),
@@ -493,6 +519,46 @@ class _BoutonPrincipal extends StatelessWidget {
                 ],
               ),
       ),
+    );
+  }
+}
+
+/// « Le plus proche » : commander sans choisir, au même prix. Discret, sauf
+/// quand le choix est bloqué : il devient alors le bouton principal.
+class _BoutonPlusProche extends StatelessWidget {
+  const _BoutonPlusProche({required this.prix, required this.enAvant, required this.onTap});
+
+  final int? prix;
+  final bool enAvant;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final prix = this.prix;
+    final libelle = prix == null ? 'Le plus proche' : 'Le plus proche · ${formaterFcfa(prix)}';
+    const style = TextStyle(fontFamily: TaamaFonts.body, fontSize: 16, fontWeight: FontWeight.w700);
+    final texte = Text(libelle, maxLines: 1, overflow: TextOverflow.ellipsis);
+    return SizedBox(
+      height: 52,
+      child: enAvant
+          ? FilledButton(
+              onPressed: onTap,
+              style: FilledButton.styleFrom(
+                backgroundColor: CouleursRecherche.indigo,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                textStyle: style,
+              ),
+              child: texte,
+            )
+          : TextButton(
+              onPressed: onTap,
+              style: TextButton.styleFrom(
+                foregroundColor: CouleursRecherche.indigo,
+                textStyle: style,
+              ),
+              child: texte,
+            ),
     );
   }
 }

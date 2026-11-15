@@ -11,6 +11,21 @@ import 'recherche_chauffeur_controller.dart';
 import 'widgets/carte_chauffeurs.dart';
 import 'widgets/panneau_chauffeurs.dart';
 
+/// Ce que la page a fait du chauffeur choisi.
+enum IssueChoix {
+  /// La page quitte l'écran (demande envoyée, ou autre suite) : rien à faire.
+  quitte,
+
+  /// Ce chauffeur n'est plus disponible : la recherche repart tout de suite.
+  autreChauffeur,
+
+  /// Plafond de choix atteint : choix bloqué, « Le plus proche » en avant.
+  limiteAtteinte,
+
+  /// Autre erreur, déjà affichée par la page : la recherche repart.
+  erreur,
+}
+
 /// Écran « Choisis ton chauffeur » : les chauffeurs proches en direct sur la
 /// vraie carte, du type du service choisi, et le choix manuel par le client.
 class RechercheChauffeurScreen extends StatefulWidget {
@@ -20,6 +35,9 @@ class RechercheChauffeurScreen extends StatefulWidget {
     required this.positionDepart,
     required this.onChauffeurChoisi,
     this.type,
+    this.prix,
+    this.onPlusProche,
+    this.onFonctionCoupee,
     this.rayonM = 3000,
   }) : assert(rayonM > 0 && rayonM <= 5000);
 
@@ -34,11 +52,19 @@ class RechercheChauffeurScreen extends StatefulWidget {
   /// parmi ceux du type du devis) ; null : tous les types.
   final TypeVehicule? type;
 
-  /// Appelé quand le client confirme son choix. Doit gérer ses propres
-  /// erreurs (chauffeur plus disponible, réseau). Le rafraîchissement est
-  /// suspendu pendant l'appel et reprend à son retour si l'écran est
-  /// toujours affiché.
-  final Future<void> Function(ChauffeurProche chauffeur) onChauffeurChoisi;
+  /// Appelé quand le client confirme son choix. Gère ses propres erreurs
+  /// (messages compris) et dit à l'écran quoi faire ensuite. Le
+  /// rafraîchissement est suspendu pendant l'appel.
+  final Future<IssueChoix> Function(ChauffeurProche chauffeur) onChauffeurChoisi;
+
+  /// Prix de la course, le même quel que soit le chauffeur.
+  final int? prix;
+
+  /// « Le plus proche », au même prix. Null : bouton absent.
+  final VoidCallback? onPlusProche;
+
+  /// Le serveur a coupé le choix du chauffeur (404) : appelé une fois.
+  final VoidCallback? onFonctionCoupee;
 
   final int rayonM;
 
@@ -62,6 +88,8 @@ class _RechercheChauffeurScreenState extends State<RechercheChauffeurScreen>
   static const double _sousLePanneau = 28;
 
   bool _choixEnCours = false;
+  bool _choixBloque = false;
+  bool _coupureSignalee = false;
 
   @override
   void initState() {
@@ -91,12 +119,27 @@ class _RechercheChauffeurScreenState extends State<RechercheChauffeurScreen>
     if (_choixEnCours) return;
     _choixEnCours = true;
     _controleur.suspendre();
+    var issue = IssueChoix.erreur;
     try {
-      await widget.onChauffeurChoisi(chauffeur);
+      issue = await widget.onChauffeurChoisi(chauffeur);
     } finally {
       _choixEnCours = false;
-      if (mounted) _controleur.demarrer();
+      if (mounted && issue != IssueChoix.quitte) {
+        if (issue == IssueChoix.limiteAtteinte) setState(() => _choixBloque = true);
+        _controleur.demarrer();
+      }
     }
+  }
+
+  /// Fonction coupée sur le serveur : la page est prévenue une seule fois.
+  void _signalerCoupure() {
+    if (_coupureSignalee) return;
+    _coupureSignalee = true;
+    final rappel = widget.onFonctionCoupee;
+    if (rappel == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) rappel();
+    });
   }
 
   void _selectionner(ChauffeurProche chauffeur) {
@@ -117,6 +160,7 @@ class _RechercheChauffeurScreenState extends State<RechercheChauffeurScreen>
           builder: (context, _) {
             final c = _controleur;
             final selection = c.selectionne;
+            if (c.fonctionCoupee) _signalerCoupure();
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -172,6 +216,9 @@ class _RechercheChauffeurScreenState extends State<RechercheChauffeurScreen>
                   onSelection: _selectionner,
                   onChoisir: _choisir,
                   onReessayer: _controleur.demarrer,
+                  prix: widget.prix,
+                  onPlusProche: widget.onPlusProche,
+                  choixBloque: _choixBloque,
                 ),
               ],
             );

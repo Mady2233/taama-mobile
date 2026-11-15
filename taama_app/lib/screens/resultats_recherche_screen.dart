@@ -6,8 +6,12 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../config/app_config.dart';
+import '../features/recherche_chauffeur/chauffeur_proche.dart';
+import '../features/recherche_chauffeur/chauffeurs_proches_api.dart';
+import '../features/recherche_chauffeur/recherche_chauffeur_screen.dart';
 import '../models/service_course.dart';
 import '../services/api_service.dart';
+import '../services/config_app.dart';
 import '../services/courses_en_cours.dart';
 import '../services/recherche_lieux.dart';
 import '../services/routing_service.dart';
@@ -15,6 +19,7 @@ import '../theme/taama_theme.dart';
 import '../utils/format.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../carte/fond_carte.dart';
+import '../widgets/choix_mode_chauffeur.dart';
 import '../widgets/choix_offre.dart';
 import '../widgets/widget_choix_vehicule.dart';
 import 'course/suivi_course_page.dart';
@@ -28,6 +33,37 @@ import 'recherche_screen.dart';
 /// dessous, cohérent avec l'accueil et la recherche. La LOGIQUE est inchangée
 /// — prix exclusivement serveur, gestion du devis expiré, code promo validé
 /// côté serveur.
+/// Type de chauffeur à montrer sur la carte pour ce service, ou null si le
+/// client ne peut pas choisir son chauffeur (Confort, 4x4, tricycle : le
+/// serveur refuse, CHOIX_CHAUFFEUR_SERVICE).
+TypeVehicule? typeRadarPourService(ServiceCourse service) {
+  if (service.necessiteClimatisation) return null;
+  return switch (service.typeVehicule) {
+    'MOTO' => TypeVehicule.moto,
+    'BERLINE' => TypeVehicule.voiture,
+    _ => null,
+  };
+}
+
+/// Devis utilisé pour la commande en cours : renouvelé si le serveur le
+/// déclare expiré pendant que le client choisit son chauffeur.
+class _DevisEnCours {
+  _DevisEnCours(this.id, this.prix);
+
+  int id;
+  int? prix;
+}
+
+enum _MotifSortie { envoyee, plusProche, fonctionCoupee, prixRefuse, demandeEnCours }
+
+/// Comment l'écran de la carte a été quitté (null : bouton retour).
+class _SortieCarte {
+  const _SortieCarte(this.motif, [this.demande]);
+
+  final _MotifSortie motif;
+  final Map<String, dynamic>? demande;
+}
+
 class EcranDemandeInstantanee extends StatefulWidget {
   final String destination;
   final String? typePreselectionne;
@@ -333,12 +369,26 @@ class _EcranDemandeInstantaneeState
 
     // Offre du client : seulement si le serveur en a envoyé les limites pour
     // ce service (négociation allumée). Feuille fermée : rien n'est commandé.
+    // Le choix du chauffeur se fait au même endroit (même prix).
     int? prixOffert;
+    var choisirChauffeur = false;
     final service = services.where((s) => s.id == choix['type_service']).firstOrNull;
     final limites = service?.offre;
+    final peutChoisir = service != null && _choixChauffeurPossible(service);
     if (service != null && limites != null) {
-      prixOffert = await afficherChoixOffre(context, nomService: service.nom, limites: limites);
-      if (prixOffert == null || !mounted) return;
+      final offre = await afficherChoixOffre(
+        context,
+        nomService: service.nom,
+        limites: limites,
+        choixChauffeur: peutChoisir,
+      );
+      if (offre == null || !mounted) return;
+      prixOffert = offre.prix;
+      choisirChauffeur = offre.choisirChauffeur;
+    } else if (peutChoisir) {
+      final choisir = await afficherChoixModeChauffeur(context, prix: choix['prix_estime'] as int?);
+      if (choisir == null || !mounted) return;
+      choisirChauffeur = choisir;
     }
 
     // Envoyé tel quel si non-vide, même si _verifierCodePromo n'a jamais été
@@ -348,6 +398,17 @@ class _EcranDemandeInstantaneeState
     final codePromoSaisi = _codePromoCtrl.text.trim();
     final codePromo = codePromoSaisi.isEmpty ? null : codePromoSaisi;
 
+    if (choisirChauffeur && service != null) {
+      await _choisirSonChauffeur(
+        service: service,
+        devis: _DevisEnCours(choix['devis_id'] as int, choix['prix_estime'] as int?),
+        typeServiceId: choix['type_service'] as int,
+        codePromo: codePromo,
+        prixOffert: prixOffert,
+      );
+      return;
+    }
+
     await _soumettre(
       devisId: choix['devis_id'] as int,
       typeServiceId: choix['type_service'] as int,
@@ -356,6 +417,202 @@ class _EcranDemandeInstantaneeState
       prixOffert: prixOffert,
     );
   }
+
+  /// Choix du chauffeur possible : interrupteur du serveur allumé, Moto ou
+  /// Berline sans climatisation, départ connu (centre de la carte, et point
+  /// autour duquel le serveur retrouve le chauffeur choisi).
+  bool _choixChauffeurPossible(ServiceCourse service) =>
+      ConfigApp.choixChauffeur.value &&
+      typeRadarPourService(service) != null &&
+      _departLat != null &&
+      _departLng != null;
+
+  /// Le client choisit son chauffeur sur la carte. Même devis, même offre :
+  /// même prix que « Le plus proche », toujours proposé sur la carte.
+  Future<void> _choisirSonChauffeur({
+    required ServiceCourse service,
+    required _DevisEnCours devis,
+    required int typeServiceId,
+    required String? codePromo,
+    required int? prixOffert,
+  }) async {
+    final sortie = await Navigator.push<_SortieCarte>(
+      context,
+      MaterialPageRoute(
+        builder: (contexteCarte) => RechercheChauffeurScreen(
+          repository: const ApiChauffeursProchesRepository(),
+          positionDepart: GeoPoint(_departLat!, _departLng!),
+          type: typeRadarPourService(service),
+          prix: prixOffert ?? devis.prix,
+          onChauffeurChoisi: (chauffeur) => _commanderAupres(
+            contexteCarte,
+            chauffeur,
+            devis: devis,
+            typeServiceId: typeServiceId,
+            codePromo: codePromo,
+            prixOffert: prixOffert,
+          ),
+          onPlusProche: () => Navigator.pop(contexteCarte, const _SortieCarte(_MotifSortie.plusProche)),
+          onFonctionCoupee: () =>
+              Navigator.pop(contexteCarte, const _SortieCarte(_MotifSortie.fonctionCoupee)),
+        ),
+      ),
+    );
+    // Retour sans rien choisir : le client reste sur son trajet.
+    if (sortie == null || !mounted) return;
+    switch (sortie.motif) {
+      case _MotifSortie.envoyee:
+        await _suivreDemandeCiblee(sortie.demande!);
+      case _MotifSortie.plusProche:
+        await _soumettre(
+          devisId: devis.id, typeServiceId: typeServiceId, prixAffiche: devis.prix,
+          codePromo: codePromo, prixOffert: prixOffert,
+        );
+      case _MotifSortie.fonctionCoupee:
+        await ConfigApp.desactiverChoixChauffeur();
+        if (!mounted) return;
+        final plusProche = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            content: const Text(
+              'Le choix du chauffeur n’est pas disponible pour le moment. '
+              'Commander avec le plus proche, au même prix ?',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+              ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Commander')),
+            ],
+          ),
+        );
+        if (plusProche == true && mounted) {
+          await _soumettre(
+            devisId: devis.id, typeServiceId: typeServiceId, prixAffiche: devis.prix,
+            codePromo: codePromo, prixOffert: prixOffert,
+          );
+        }
+      case _MotifSortie.prixRefuse:
+        await _recalculerEstimation();
+      case _MotifSortie.demandeEnCours:
+        // La course en cours est sur l'accueil.
+        Navigator.of(context).popUntil((route) => route.isFirst);
+    }
+  }
+
+  /// Demande au chauffeur choisi. Rend à l'écran de la carte ce qu'il doit
+  /// faire ; quitte la carte quand la suite se passe ailleurs.
+  Future<IssueChoix> _commanderAupres(
+    BuildContext contexteCarte,
+    ChauffeurProche chauffeur, {
+    required _DevisEnCours devis,
+    required int typeServiceId,
+    required String? codePromo,
+    required int? prixOffert,
+  }) async {
+    void message(String texte) {
+      if (contexteCarte.mounted) {
+        ScaffoldMessenger.of(contexteCarte).showSnackBar(SnackBar(content: Text(texte)));
+      }
+    }
+
+    IssueChoix quitter(_SortieCarte sortie) {
+      if (contexteCarte.mounted) Navigator.pop(contexteCarte, sortie);
+      return IssueChoix.quitte;
+    }
+
+    var dejaRelance = false;
+    while (true) {
+      try {
+        final demande = await ApiService.creerDemandeInstantanee(
+          destination: widget.destination,
+          devisId: devis.id,
+          typeServiceId: typeServiceId,
+          codePromo: codePromo,
+          prixOffert: prixOffert,
+          jetonChauffeur: chauffeur.jeton,
+        );
+        // Course en cours pour la déconnexion, même si l'écran est déjà fermé.
+        final id = demande['id'];
+        if (id is int) await CoursesEnCours.enregistrerCourse(id);
+        return quitter(_SortieCarte(_MotifSortie.envoyee, demande));
+      } on DevisExpireException catch (e) {
+        // Le devis a dépassé ses 5 min pendant le choix : même règle que
+        // _soumettre, une seule reprise, jamais sur un prix non validé.
+        if (dejaRelance || !contexteCarte.mounted) {
+          message('Le prix a expiré à nouveau — relance la recherche.');
+          return quitter(const _SortieCarte(_MotifSortie.prixRefuse));
+        }
+        if (devis.prix == null || e.nouveauPrix != devis.prix) {
+          final accepte = await _confirmerNouveauPrix(contexteCarte, e.nouveauPrix, devis.prix);
+          if (accepte != true) return quitter(const _SortieCarte(_MotifSortie.prixRefuse));
+        }
+        devis
+          ..id = e.nouveauDevisId
+          ..prix = e.nouveauPrix;
+        dejaRelance = true;
+        // Nouvel envoi, même chauffeur (jeton expiré entre-temps : 410).
+      } on ChoixChauffeurException catch (e) {
+        switch (e.motif) {
+          case MotifRefusChoix.chauffeurIndisponible:
+            message('${e.message} Choisis-en un autre.');
+            return IssueChoix.autreChauffeur;
+          case MotifRefusChoix.limiteAtteinte:
+            message(e.message);
+            return IssueChoix.limiteAtteinte;
+          case MotifRefusChoix.fonctionCoupee:
+            return quitter(const _SortieCarte(_MotifSortie.fonctionCoupee));
+        }
+      } on DemandeDejaEnCoursException catch (e) {
+        message(e.message);
+        return quitter(const _SortieCarte(_MotifSortie.demandeEnCours));
+      } catch (e) {
+        // Réseau, délai : rien n'est perdu. Si la demande est quand même
+        // partie, un nouvel essai reçoit 409 « déjà une course en cours ».
+        message(e.toString().replaceAll('Exception: ', ''));
+        return IssueChoix.erreur;
+      }
+    }
+  }
+
+  /// Demande ciblée envoyée : son suivi s'ouvre par-dessus cet écran.
+  Future<void> _suivreDemandeCiblee(Map<String, dynamic> demande) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SuiviCoursePage(
+          demandeId: demande['id'] as int,
+          destination: widget.destination,
+          typeTransport: demande['type_transport'] as String,
+        ),
+      ),
+    );
+    // Suivi fermé : la commande est derrière, plus rien à faire ici.
+    if (mounted) Navigator.pop(context);
+  }
+
+  /// « Le prix a changé » : confirmation explicite avant de commander à un
+  /// nouveau prix.
+  Future<bool?> _confirmerNouveauPrix(BuildContext contexte, int nouveauPrix, int? prixAffiche) =>
+      showDialog<bool>(
+        context: contexte,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Le prix a changé'),
+          content: Text(
+            prixAffiche != null
+                ? 'Le prix est maintenant de ${formaterFcfa(nouveauPrix)} (au lieu de ${formaterFcfa(prixAffiche)}). Confirmer à ce nouveau prix ?'
+                : 'Le prix est maintenant de ${formaterFcfa(nouveauPrix)}. Confirmer ?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annuler'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Confirmer'),
+            ),
+          ],
+        ),
+      );
 
   /// Poste la demande avec ce devis. Si le devis a expiré ENTRE le choix du
   /// véhicule et cette confirmation, le serveur en renvoie un nouveau (même
@@ -421,27 +678,7 @@ class _EcranDemandeInstantaneeState
         return;
       }
       // Prix différent : jamais de commande sur un prix non validé.
-      final accepte = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Le prix a changé'),
-          content: Text(
-            prixAffiche != null
-                ? 'Le prix est maintenant de ${formaterFcfa(e.nouveauPrix)} (au lieu de ${formaterFcfa(prixAffiche)}). Confirmer à ce nouveau prix ?'
-                : 'Le prix est maintenant de ${formaterFcfa(e.nouveauPrix)}. Confirmer ?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Annuler'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Confirmer'),
-            ),
-          ],
-        ),
-      );
+      final accepte = await _confirmerNouveauPrix(context, e.nouveauPrix, prixAffiche);
       if (accepte == true && mounted) {
         await _soumettre(
           devisId: e.nouveauDevisId, typeServiceId: typeServiceId,
