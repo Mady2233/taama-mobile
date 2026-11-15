@@ -14,7 +14,11 @@ class ResultatRecherche {
 }
 
 class RechercheChauffeursException implements Exception {
-  const RechercheChauffeursException(this.message, {this.reessayable = true});
+  const RechercheChauffeursException(
+    this.message, {
+    this.reessayable = true,
+    this.fonctionCoupee = false,
+  });
 
   /// Message destiné à l'utilisateur, sans détail technique.
   final String message;
@@ -23,14 +27,21 @@ class RechercheChauffeursException implements Exception {
   /// position invalide). Le rafraîchissement s'arrête.
   final bool reessayable;
 
+  /// Vrai si le serveur a coupé le choix du chauffeur (404) : l'écran se
+  /// ferme, la commande continue avec le plus proche.
+  final bool fonctionCoupee;
+
   @override
   String toString() => 'RechercheChauffeursException($message)';
 }
 
 abstract class ChauffeursProchesRepository {
+  /// [type] : celui du service choisi (le serveur ne retrouve un chauffeur
+  /// choisi que parmi ceux du type du devis) ; null : tous.
   Future<ResultatRecherche> rechercher({
     required GeoPoint position,
     required int rayonM,
+    TypeVehicule? type,
   });
 }
 
@@ -76,12 +87,15 @@ class FauxChauffeursProchesRepository implements ChauffeursProchesRepository {
   Future<ResultatRecherche> rechercher({
     required GeoPoint position,
     required int rayonM,
+    TypeVehicule? type,
   }) async {
     await Future<void>.delayed(latence);
     _appels++;
     final cosLat = math.cos(position.lat * math.pi / 180);
     final chauffeurs = <ChauffeurProche>[];
     for (final g in _gabarits) {
+      // Comme le serveur : seulement le type demandé.
+      if (type != null && g.type != type) continue;
       final derive = math.sin(_appels * 0.8 + g.capDegres) * 45;
       final distance = math.min(g.distanceM + derive, rayonM * 0.95);
       final cap = g.capDegres * math.pi / 180;

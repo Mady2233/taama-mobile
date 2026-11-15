@@ -891,4 +891,34 @@ class ApiService {
         .timeout(const Duration(seconds: 12));
     return _traiterReponse(reponse) as List<dynamic>;
   }
+
+  /// Chauffeurs que le client peut choisir lui-même (radar,
+  /// POST /trajets/chauffeurs/proches/) : position dans le corps, jamais dans
+  /// l'adresse ; [type] « moto » ou « voiture », celui du service choisi.
+  /// Rend la réponse telle quelle : ApiChauffeursProchesRepository traduit
+  /// chaque code (404 : fonction coupée sur le serveur). Comme partout : 426
+  /// affiche l'écran de mise à jour, 401 lève SessionInvalideException (la
+  /// fin de session elle-même est faite par ClientSession).
+  static Future<http.Response> chauffeursProchesRadar({
+    required double lat,
+    required double lng,
+    required int rayonM,
+    String? type,
+  }) async {
+    final reponse = await http
+        .post(
+          Uri.parse('$_baseUrl/trajets/chauffeurs/proches/'),
+          headers: _headers,
+          body: jsonEncode({
+            'lat': lat,
+            'lng': lng,
+            'rayon': rayonM,
+            if (type != null) 'type': type,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    VersionApp.signaler(reponse.statusCode, reponse.body);
+    if (reponse.statusCode == 401) throw SessionInvalideException();
+    return reponse;
+  }
 }

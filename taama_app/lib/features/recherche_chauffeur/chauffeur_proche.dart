@@ -41,7 +41,8 @@ enum TypeVehicule {
 }
 
 /// Chauffeur disponible autour du client, tel que renvoyé par
-/// `GET /api/chauffeurs/proches/` (contrat dans BRIEF_CLAUDE_CODE.md).
+/// `POST /api/trajets/chauffeurs/proches/` (trajets/views.py,
+/// chauffeurs_proches_radar).
 class ChauffeurProche {
   const ChauffeurProche({
     required this.id,

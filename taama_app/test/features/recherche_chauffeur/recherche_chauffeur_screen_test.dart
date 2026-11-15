@@ -36,6 +36,7 @@ class _DepotEnPanne implements ChauffeursProchesRepository {
   Future<ResultatRecherche> rechercher({
     required GeoPoint position,
     required int rayonM,
+    TypeVehicule? type,
   }) async {
     throw const RechercheChauffeursException('Pas de connexion Internet.');
   }

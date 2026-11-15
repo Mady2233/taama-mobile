@@ -13,6 +13,7 @@ class RechercheChauffeurController extends ChangeNotifier {
   RechercheChauffeurController({
     required ChauffeursProchesRepository repository,
     required GeoPoint position,
+    this.type,
     this.rayonDemande = 3000,
     this.intervalle = const Duration(seconds: 10),
     this.delaiObsolescence = const Duration(seconds: 30),
@@ -22,10 +23,13 @@ class RechercheChauffeurController extends ChangeNotifier {
         _position = position,
         _centre = position,
         _rayonM = rayonDemande,
+        _filtre = type,
         _horloge = horloge ?? DateTime.now;
 
   static const _maxChauffeurs = 30;
 
+  /// Type du service choisi, demandé au serveur ; null : tous les types.
+  final TypeVehicule? type;
   final int rayonDemande;
   final Duration intervalle;
   final Duration delaiObsolescence;
@@ -42,6 +46,7 @@ class RechercheChauffeurController extends ChangeNotifier {
   DateTime? _derniereMaj;
   bool _chargementInitial = true;
   String? _erreur;
+  bool _fonctionCoupee = false;
   int _echecsConsecutifs = 0;
   bool _enCours = false;
   bool _actif = false;
@@ -55,6 +60,9 @@ class RechercheChauffeurController extends ChangeNotifier {
   TypeVehicule? get filtre => _filtre;
   bool get chargementInitial => _chargementInitial;
   String? get erreur => _erreur;
+
+  /// Le serveur a coupé le choix du chauffeur (404) : plus aucun essai.
+  bool get fonctionCoupee => _fonctionCoupee;
   List<ChauffeurProche> get tous => _tous;
 
   List<ChauffeurProche> get chauffeursFiltres {
@@ -130,6 +138,7 @@ class RechercheChauffeurController extends ChangeNotifier {
       final resultat = await _repository.rechercher(
         position: positionDemandee,
         rayonM: rayonDemande,
+        type: type,
       );
       if (_detruit) return;
       final tries = [...resultat.chauffeurs]..sort(_parProximite);
@@ -145,6 +154,7 @@ class RechercheChauffeurController extends ChangeNotifier {
       _erreur = e.message;
       _echecsConsecutifs++;
       if (!e.reessayable) _actif = false;
+      if (e.fonctionCoupee) _fonctionCoupee = true;
     } catch (e, pile) {
       if (_detruit) return;
       if (kDebugMode) debugPrint('Recherche chauffeurs : $e\n$pile');

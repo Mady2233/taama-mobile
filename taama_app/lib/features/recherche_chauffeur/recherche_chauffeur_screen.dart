@@ -19,6 +19,7 @@ class RechercheChauffeurScreen extends StatefulWidget {
     required this.repository,
     required this.positionDepart,
     required this.onChauffeurChoisi,
+    this.type,
     this.localiser,
     this.rayonM = 3000,
   }) : assert(rayonM > 0 && rayonM <= 5000);
@@ -27,6 +28,10 @@ class RechercheChauffeurScreen extends StatefulWidget {
 
   /// Point de prise en charge du client.
   final GeoPoint positionDepart;
+
+  /// Type du service choisi (le serveur ne retrouve un chauffeur choisi que
+  /// parmi ceux du type du devis) ; null : tous les types.
+  final TypeVehicule? type;
 
   /// Appelé quand le client confirme son choix. Doit gérer ses propres
   /// erreurs (chauffeur plus disponible, réseau). Le rafraîchissement est
@@ -50,6 +55,7 @@ class _RechercheChauffeurScreenState extends State<RechercheChauffeurScreen>
       RechercheChauffeurController(
     repository: widget.repository,
     position: widget.positionDepart,
+    type: widget.type,
     rayonDemande: widget.rayonM,
   );
 
@@ -116,7 +122,7 @@ class _RechercheChauffeurScreenState extends State<RechercheChauffeurScreen>
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Position introuvable. Activez la localisation puis réessayez.'),
+          content: Text('Position introuvable. Active la localisation puis réessaie.'),
         ),
       );
     }

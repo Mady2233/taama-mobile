@@ -1,44 +1,24 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../../services/api_service.dart';
 import 'chauffeur_proche.dart';
 import 'chauffeurs_proches_repository.dart';
 
-/// Implémentation HTTP de `GET /api/chauffeurs/proches/`.
-///
-/// Si l'app a déjà un client API central (Dio, intercepteurs de jeton…),
-/// garder cette classe comme référence de parsing et brancher ce client.
+/// Dépôt du radar sur le client API central : `POST /api/trajets/chauffeurs/proches/`
+/// par [ApiService.chauffeursProchesRadar] (jeton de session, version de
+/// l'app, fin de session sur 401, écran de mise à jour sur 426). Ici :
+/// seulement la traduction des codes et la lecture de la réponse.
 class ApiChauffeursProchesRepository implements ChauffeursProchesRepository {
-  ApiChauffeursProchesRepository({
-    required this.endpoint,
-    required this.enTeteAuthorization,
-    http.Client? client,
-    this.delai = const Duration(seconds: 8),
-  }) : _client = client ?? http.Client() {
-    if (kReleaseMode && endpoint.scheme != 'https') {
-      throw StateError('HTTPS obligatoire en release : $endpoint');
-    }
-  }
-
-  /// URL complète, ex. `Uri.parse('${ApiConfig.baseUrl}/api/chauffeurs/proches/')`.
-  final Uri endpoint;
-
-  /// Valeur complète de l'en-tête Authorization (ex. « Bearer … »),
-  /// ou null si l'utilisateur n'est plus connecté.
-  final Future<String?> Function() enTeteAuthorization;
-
-  final Duration delai;
-  final http.Client _client;
-
-  static const _maxEntrees = 50;
+  const ApiChauffeursProchesRepository();
 
   @override
   Future<ResultatRecherche> rechercher({
     required GeoPoint position,
     required int rayonM,
+    TypeVehicule? type,
   }) async {
     if (!position.estValide) {
       throw const RechercheChauffeursException(
@@ -46,27 +26,46 @@ class ApiChauffeursProchesRepository implements ChauffeursProchesRepository {
         reessayable: false,
       );
     }
-    final auth = await enTeteAuthorization();
-    if (auth == null || auth.isEmpty) {
+
+    final http.Response reponse;
+    try {
+      reponse = await ApiService.chauffeursProchesRadar(
+        lat: position.lat,
+        lng: position.lng,
+        rayonM: rayonM,
+        type: type?.code,
+      );
+    } on SessionInvalideException {
       throw const RechercheChauffeursException(
-        'Session expirée. Reconnectez-vous.',
+        SessionInvalideException.message,
         reessayable: false,
       );
+    } on TimeoutException {
+      throw const RechercheChauffeursException('Réseau lent. Nouvelle tentative…');
+    } on Exception {
+      throw const RechercheChauffeursException('Pas de connexion Internet.');
     }
-
-    final uri = endpoint.replace(queryParameters: {
-      'lat': position.lat.toStringAsFixed(5),
-      'lng': position.lng.toStringAsFixed(5),
-      'rayon': '$rayonM',
-    });
-    final reponse = await _envoyer(uri, auth);
 
     switch (reponse.statusCode) {
       case 200:
         return _lire(reponse.bodyBytes, rayonM);
-      case 401 || 403:
+      case 404:
+        // Interrupteur éteint sur le serveur (CHOIX_CHAUFFEUR_ACTIF) : jamais
+        // de nouvel essai, l'écran se ferme et la commande continue avec le
+        // plus proche.
         throw const RechercheChauffeursException(
-          'Session expirée. Reconnectez-vous.',
+          'Le choix du chauffeur n’est pas disponible pour le moment.',
+          reessayable: false,
+          fonctionCoupee: true,
+        );
+      case 426:
+        throw const RechercheChauffeursException(
+          'Mets Taama à jour pour choisir ton chauffeur.',
+          reessayable: false,
+        );
+      case 400:
+        throw const RechercheChauffeursException(
+          'Position introuvable.',
           reessayable: false,
         );
       case 429:
@@ -77,22 +76,6 @@ class ApiChauffeursProchesRepository implements ChauffeursProchesRepository {
         throw const RechercheChauffeursException(
           'Service momentanément indisponible.',
         );
-    }
-  }
-
-  /// À appeler si ce dépôt possède son propre client HTTP.
-  void fermer() => _client.close();
-
-  Future<http.Response> _envoyer(Uri uri, String auth) async {
-    try {
-      return await _client.get(uri, headers: {
-        'Authorization': auth,
-        'Accept': 'application/json',
-      }).timeout(delai);
-    } on TimeoutException {
-      throw const RechercheChauffeursException('Réseau lent. Nouvelle tentative…');
-    } on Exception {
-      throw const RechercheChauffeursException('Pas de connexion Internet.');
     }
   }
 
@@ -108,7 +91,7 @@ class ApiChauffeursProchesRepository implements ChauffeursProchesRepository {
 
     final vus = <String>{};
     final chauffeurs = <ChauffeurProche>[];
-    for (final entree in liste.take(_maxEntrees)) {
+    for (final entree in liste) {
       final chauffeur = ChauffeurProche.depuisJson(entree);
       if (chauffeur != null && vus.add(chauffeur.id)) chauffeurs.add(chauffeur);
     }

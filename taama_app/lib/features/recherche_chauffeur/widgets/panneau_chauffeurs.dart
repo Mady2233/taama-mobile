@@ -127,7 +127,7 @@ class _PanneauChauffeursState extends State<PanneauChauffeurs> {
               'Aucun chauffeur dans un rayon de ${formaterRayon(widget.rayonM)}',
           detail: erreur == null
               ? 'De nouveaux chauffeurs se connectent régulièrement. '
-                  'Réessayez dans un instant.'
+                  'Réessaie dans un instant.'
               : null,
           enErreur: erreur != null,
           onReessayer: widget.onReessayer,
