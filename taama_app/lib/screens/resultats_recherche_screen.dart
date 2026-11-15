@@ -58,10 +58,11 @@ enum _MotifSortie { envoyee, plusProche, fonctionCoupee, prixRefuse, demandeEnCo
 
 /// Comment l'écran de la carte a été quitté (null : bouton retour).
 class _SortieCarte {
-  const _SortieCarte(this.motif, [this.demande]);
+  const _SortieCarte(this.motif, [this.demande, this.chauffeur]);
 
   final _MotifSortie motif;
   final Map<String, dynamic>? demande;
+  final ChauffeurProche? chauffeur;
 }
 
 class EcranDemandeInstantanee extends StatefulWidget {
@@ -462,7 +463,14 @@ class _EcranDemandeInstantaneeState
     if (sortie == null || !mounted) return;
     switch (sortie.motif) {
       case _MotifSortie.envoyee:
-        await _suivreDemandeCiblee(sortie.demande!);
+        await _suivreDemandeCiblee(
+          sortie.demande!,
+          sortie.chauffeur!,
+          typeServiceId: typeServiceId,
+          prixDevis: devis.prix,
+          codePromo: codePromo,
+          prixOffert: prixOffert,
+        );
       case _MotifSortie.plusProche:
         await _soumettre(
           devisId: devis.id, typeServiceId: typeServiceId, prixAffiche: devis.prix,
@@ -533,7 +541,7 @@ class _EcranDemandeInstantaneeState
         // Course en cours pour la déconnexion, même si l'écran est déjà fermé.
         final id = demande['id'];
         if (id is int) await CoursesEnCours.enregistrerCourse(id);
-        return quitter(_SortieCarte(_MotifSortie.envoyee, demande));
+        return quitter(_SortieCarte(_MotifSortie.envoyee, demande, chauffeur));
       } on DevisExpireException catch (e) {
         // Le devis a dépassé ses 5 min pendant le choix : même règle que
         // _soumettre, une seule reprise, jamais sur un prix non validé.
@@ -573,20 +581,55 @@ class _EcranDemandeInstantaneeState
     }
   }
 
-  /// Demande ciblée envoyée : son suivi s'ouvre par-dessus cet écran.
-  Future<void> _suivreDemandeCiblee(Map<String, dynamic> demande) async {
-    await Navigator.push(
+  /// Demande ciblée envoyée : son suivi s'ouvre par-dessus cet écran. Si le
+  /// chauffeur choisi ne fait pas la course, le suivi revient ici : nouveau
+  /// devis (l'ancien a servi), puis la carte de nouveau, au même prix. Le
+  /// serveur masque ce chauffeur 5 min.
+  Future<void> _suivreDemandeCiblee(
+    Map<String, dynamic> demande,
+    ChauffeurProche chauffeur, {
+    required int typeServiceId,
+    required int? prixDevis,
+    required String? codePromo,
+    required int? prixOffert,
+  }) async {
+    final resultat = await Navigator.push<String>(
       context,
       MaterialPageRoute(
         builder: (_) => SuiviCoursePage(
           demandeId: demande['id'] as int,
           destination: widget.destination,
           typeTransport: demande['type_transport'] as String,
+          chauffeurChoisi: chauffeur.nomAffiche,
+          retourAuChoix: true,
         ),
       ),
     );
-    // Suivi fermé : la commande est derrière, plus rien à faire ici.
-    if (mounted) Navigator.pop(context);
+    if (!mounted) return;
+    if (resultat != SuiviCoursePage.resultatChoixSansSuite) {
+      // Suivi fermé : la commande est derrière, plus rien à faire ici.
+      Navigator.pop(context);
+      return;
+    }
+    await _recalculerEstimation();
+    if (!mounted) return;
+    final service = _services?.where((s) => s.id == typeServiceId).firstOrNull;
+    final devisId = service?.devisId;
+    if (service == null || devisId == null || !_choixChauffeurPossible(service)) return;
+    if (service.prix != prixDevis) {
+      // Jamais de commande sur un prix que le client n'a pas revu.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Le prix a changé : vérifie-le avant de choisir.')),
+      );
+      return;
+    }
+    await _choisirSonChauffeur(
+      service: service,
+      devis: _DevisEnCours(devisId, service.prix),
+      typeServiceId: typeServiceId,
+      codePromo: codePromo,
+      prixOffert: prixOffert,
+    );
   }
 
   /// « Le prix a changé » : confirmation explicite avant de commander à un

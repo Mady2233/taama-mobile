@@ -48,17 +48,53 @@ String? etatSuiviChauffeur({
   return null;
 }
 
+/// Issue d'une demande ciblée close (`choix_chauffeur.issue`), ou null si la
+/// demande n'est pas ciblée ou suit son cours.
+String? issueChoixCiblee(Map<String, dynamic> demande) {
+  final choix = demande['choix_chauffeur'];
+  if (choix is! Map) return null;
+  final issue = choix['issue'];
+  return issue is String && issue.isNotEmpty ? issue : null;
+}
+
+/// Message au client quand le chauffeur qu'il a choisi ne fait pas la course ;
+/// null quand c'est lui qui a refusé le prix proposé (il le sait déjà).
+String? messageChoixSansSuite(String issue, String? nomChauffeur) {
+  final nom = (nomChauffeur == null || nomChauffeur.trim().isEmpty)
+      ? 'Le chauffeur choisi'
+      : nomChauffeur.trim();
+  return switch (issue) {
+    'refusee' => '$nom a refusé ta course. Choisis un autre chauffeur.',
+    'sans_reponse' => '$nom n’a pas répondu. Choisis un autre chauffeur.',
+    'prix_non_retenu' => null,
+    _ => '$nom n’est plus disponible. Choisis un autre chauffeur.',
+  };
+}
+
 class SuiviCoursePage extends StatefulWidget {
   const SuiviCoursePage({
     super.key,
     required this.demandeId,
     required this.destination,
     required this.typeTransport,
+    this.chauffeurChoisi,
+    this.retourAuChoix = false,
   });
 
   final int demandeId;
   final String destination;
   final String typeTransport;
+
+  /// Demande ciblée : le nom affiché du chauffeur choisi sur la carte.
+  final String? chauffeurChoisi;
+
+  /// Ouvert par l'écran du trajet après un choix sur la carte : une demande
+  /// ciblée sans suite y revient ([resultatChoixSansSuite]) pour en choisir
+  /// un autre. Sinon (course reprise depuis l'accueil) : retour à l'accueil.
+  final bool retourAuChoix;
+
+  /// Résultat de la page quand le chauffeur choisi ne fait pas la course.
+  static const String resultatChoixSansSuite = 'choix_sans_suite';
 
   @override
   State<SuiviCoursePage> createState() => _SuiviCoursePageState();
@@ -257,6 +293,15 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
         if (demande['aucun_chauffeur_trouve'] == true) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _afficherAucunChauffeurTrouve();
+          });
+          return;
+        }
+        // Demande ciblée sans suite : pas « annulée » pour le client, qui
+        // choisit un autre chauffeur (ni pénalité, ni annulation comptée).
+        final issue = issueChoixCiblee(demande);
+        if (issue != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _terminerChoixSansSuite(issue);
           });
           return;
         }
@@ -523,6 +568,20 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
 
   /// La recherche a dépassé son délai côté serveur. Réessayer repart d'une
   /// nouvelle estimation : un nouveau prix, jamais l'ancien devis.
+  /// Le chauffeur choisi ne fait pas la course : message, puis retour au
+  /// choix (ou à l'accueil si la course a été reprise depuis l'accueil).
+  void _terminerChoixSansSuite(String issue) {
+    final texte = messageChoixSansSuite(issue, widget.chauffeurChoisi);
+    if (texte != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(texte)));
+    }
+    if (widget.retourAuChoix) {
+      Navigator.of(context).pop(SuiviCoursePage.resultatChoixSansSuite);
+    } else {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
+  }
+
   Future<void> _afficherAucunChauffeurTrouve() async {
     if (_aucunChauffeurAffiche) return;
     _aucunChauffeurAffiche = true;
@@ -601,8 +660,12 @@ class _SuiviCoursePageState extends State<SuiviCoursePage> with WidgetsBindingOb
       minutesAvantArrivee: _minutesAvantArrivee,
       distanceKm: _distanceKm,
       // Aucune phrase de situation calculée côté serveur pour l'instant —
-      // jamais de texte inventé côté app.
-      phraseSituation: null,
+      // jamais de texte inventé côté app. Seule exception, un fait connu :
+      // le chauffeur que le client vient de choisir, tant qu'il n'a pas
+      // répondu (le serveur masque la proposition : statut « recherche »).
+      phraseSituation: widget.chauffeurChoisi != null && _statut == StatutCourse.recherche
+          ? 'Demande envoyée à ${widget.chauffeurChoisi}'
+          : null,
       etatSuivi: _etatSuivi,
       onRetour: () => Navigator.of(context).maybePop(),
       onSos: () => afficherDialogueSOS(context, demandeId: widget.demandeId),
