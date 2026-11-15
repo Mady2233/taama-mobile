@@ -25,6 +25,12 @@ class ConfigApp {
   /// redémarrer l'app quand la réponse du serveur arrive.
   static final ValueNotifier<bool> paiementActif = ValueNotifier(false);
 
+  /// Choix du chauffeur sur la carte (`choix_chauffeur`, interrupteur
+  /// CHOIX_CHAUFFEUR_ACTIF du serveur ; app client). Même règle : faux tant que
+  /// le serveur ne l'a jamais confirmé, dernière valeur confirmée gardée ; et
+  /// repassé à faux dès que le serveur refuse le choix (desactiverChoixChauffeur).
+  static final ValueNotifier<bool> choixChauffeur = ValueNotifier(false);
+
   /// Plus petit numéro de build encore accepté, par app (« client »,
   /// « chauffeur »), sur Android. Vide tant que le serveur n'a rien dit.
   /// Champ des serveurs d'avant `versions`, gardé en secours.
@@ -35,6 +41,7 @@ class ConfigApp {
   static final ValueNotifier<Map<String, VersionsCible>> versions = ValueNotifier(const {});
 
   static const String _cle = 'config_app_paiement_actif';
+  static const String _cleChoixChauffeur = 'config_app_choix_chauffeur';
   static const String _cleVersions = 'config_app_versions_min';
   static const String _cleVersionsCibles = 'config_app_versions';
 
@@ -57,12 +64,27 @@ class ConfigApp {
     try {
       final prefs = preferences ?? await SharedPreferences.getInstance();
       paiementActif.value = prefs.getBool(_cle) ?? false;
+      choixChauffeur.value = prefs.getBool(_cleChoixChauffeur) ?? false;
       versionsMin.value = _lireVersions(prefs.getString(_cleVersions));
       versions.value = _lireCibles(prefs.getString(_cleVersionsCibles));
     } catch (_) {
       paiementActif.value = false;
+      choixChauffeur.value = false;
       versionsMin.value = const {};
       versions.value = const {};
+    }
+  }
+
+  /// Le serveur a refusé le choix du chauffeur (404 du radar, ou
+  /// CHOIX_CHAUFFEUR_INDISPONIBLE à la commande) : masqué jusqu'à ce qu'il le
+  /// confirme de nouveau.
+  static Future<void> desactiverChoixChauffeur({SharedPreferences? preferences}) async {
+    choixChauffeur.value = false;
+    try {
+      final prefs = preferences ?? await SharedPreferences.getInstance();
+      await prefs.setBool(_cleChoixChauffeur, false);
+    } catch (_) {
+      // Stockage indisponible : masqué pour cette session, c'est l'essentiel.
     }
   }
 
@@ -97,6 +119,11 @@ class ConfigApp {
         final actif = donnees['paiement_actif'] as bool;
         paiementActif.value = actif;
         await prefs.setBool(_cle, actif);
+      }
+      if (donnees['choix_chauffeur'] is bool) {
+        final actif = donnees['choix_chauffeur'] as bool;
+        choixChauffeur.value = actif;
+        await prefs.setBool(_cleChoixChauffeur, actif);
       }
       if (donnees['version_min'] is Map) {
         final versions = _lireVersions(donnees['version_min']);

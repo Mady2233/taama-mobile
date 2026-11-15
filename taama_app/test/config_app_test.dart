@@ -19,6 +19,7 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     ConfigApp.paiementActif.value = false;
+    ConfigApp.choixChauffeur.value = false;
   });
 
   test('par défaut (jamais confirmé) : mode gratuit', () async {
@@ -60,6 +61,39 @@ void main() {
     ConfigApp.paiementActif.value = false;
     await ConfigApp.chargerValeurGardee();
     expect(ConfigApp.paiementActif.value, isTrue);
+  });
+
+  group('choix du chauffeur', () {
+    test('jamais confirmé : masqué', () async {
+      await ConfigApp.chargerValeurGardee();
+      expect(ConfigApp.choixChauffeur.value, isFalse);
+      await ConfigApp.rafraichir(client: _reponse(200, '{"paiement_actif": false}'));
+      expect(ConfigApp.choixChauffeur.value, isFalse);
+    });
+
+    test('confirmé : visible, et gardé pour le prochain lancement', () async {
+      await ConfigApp.rafraichir(client: _reponse(200, '{"choix_chauffeur": true}'));
+      expect(ConfigApp.choixChauffeur.value, isTrue);
+      ConfigApp.choixChauffeur.value = false;
+      await ConfigApp.chargerValeurGardee();
+      expect(ConfigApp.choixChauffeur.value, isTrue);
+    });
+
+    test('éteint sur le serveur, ou valeur illisible : masqué', () async {
+      await ConfigApp.rafraichir(client: _reponse(200, '{"choix_chauffeur": true}'));
+      await ConfigApp.rafraichir(client: _reponse(200, '{"choix_chauffeur": "oui"}'));
+      expect(ConfigApp.choixChauffeur.value, isTrue, reason: 'valeur illisible : rien ne change');
+      await ConfigApp.rafraichir(client: _reponse(200, '{"choix_chauffeur": false}'));
+      expect(ConfigApp.choixChauffeur.value, isFalse);
+    });
+
+    test('refusé par le serveur : masqué tout de suite et au prochain lancement', () async {
+      await ConfigApp.rafraichir(client: _reponse(200, '{"choix_chauffeur": true}'));
+      await ConfigApp.desactiverChoixChauffeur();
+      expect(ConfigApp.choixChauffeur.value, isFalse);
+      await ConfigApp.chargerValeurGardee();
+      expect(ConfigApp.choixChauffeur.value, isFalse);
+    });
   });
 
   test('le serveur repasse en mode gratuit : masqué de nouveau', () async {
