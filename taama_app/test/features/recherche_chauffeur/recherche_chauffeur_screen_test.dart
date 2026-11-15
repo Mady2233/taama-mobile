@@ -10,6 +10,7 @@ Future<void> _afficher(
   WidgetTester tester, {
   required ChauffeursProchesRepository repository,
   required Future<void> Function(ChauffeurProche) onChoisi,
+  TypeVehicule? type,
 }) async {
   // Écran de téléphone d'entrée de gamme (360 × 640), pas la surface de test
   // par défaut (800 × 600).
@@ -20,6 +21,7 @@ Future<void> _afficher(
     home: RechercheChauffeurScreen(
       repository: repository,
       positionDepart: _bamako,
+      type: type,
       onChauffeurChoisi: onChoisi,
     ),
   ));
@@ -65,16 +67,16 @@ void main() {
     await tester.pump(Duration.zero);
   });
 
-  testWidgets('filtre les voitures', (tester) async {
+  testWidgets('service Berline : seulement les voitures, sans filtre à toucher', (tester) async {
     await _afficher(
       tester,
       repository: FauxChauffeursProchesRepository(latence: Duration.zero),
       onChoisi: (_) async {},
+      type: TypeVehicule.voiture,
     );
 
-    await tester.tap(find.textContaining('Voitures'));
-    await tester.pump();
     expect(find.text('4 chauffeurs à proximité'), findsOneWidget);
+    expect(find.textContaining('Motos'), findsNothing);
     expect(find.text('Choisir Ibrahim'), findsOneWidget);
   });
 

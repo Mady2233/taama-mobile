@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../theme/taama_theme.dart';
 import '../chauffeur_proche.dart';
 import '../couleurs_recherche.dart';
 import 'avatar_chauffeur.dart';
@@ -91,7 +92,7 @@ class _PanneauChauffeursState extends State<PanneauChauffeurs> {
         color: CouleursRecherche.panneau,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         boxShadow: [
-          BoxShadow(color: Color(0x40000000), blurRadius: 24, offset: Offset(0, -4)),
+          BoxShadow(color: CouleursRecherche.ombrePanneau, blurRadius: 24, offset: Offset(0, -4)),
         ],
       ),
       child: Padding(
@@ -186,7 +187,7 @@ class _Poignee extends StatelessWidget {
         width: 40,
         height: 4,
         decoration: BoxDecoration(
-          color: const Color(0xFFD9DBE5),
+          color: CouleursRecherche.poignee,
           borderRadius: BorderRadius.circular(2),
         ),
       ),
@@ -460,7 +461,12 @@ class _BoutonPrincipal extends StatelessWidget {
           disabledBackgroundColor: CouleursRecherche.indigoDesactive,
           disabledForegroundColor: Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+          // Police explicite : ce style remplace celui hérité du thème.
+          textStyle: const TextStyle(
+            fontFamily: TaamaFonts.body,
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         child: envoi
             ? const SizedBox.square(
@@ -494,7 +500,7 @@ class _BoutonPrincipal extends StatelessWidget {
 class _Squelette extends StatelessWidget {
   const _Squelette();
 
-  static const _gris = Color(0xFFF0F1F6);
+  static const _gris = CouleursRecherche.gris;
 
   @override
   Widget build(BuildContext context) {
@@ -543,7 +549,7 @@ class _Squelette extends StatelessWidget {
           height: 96,
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: Color(0xFFF6F7FA),
+              color: CouleursRecherche.grisClair,
               borderRadius: BorderRadius.all(Radius.circular(20)),
             ),
           ),

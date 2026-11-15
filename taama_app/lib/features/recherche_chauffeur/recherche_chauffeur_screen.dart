@@ -1,18 +1,18 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../theme/taama_theme.dart';
 import 'chauffeur_proche.dart';
 import 'chauffeurs_proches_repository.dart';
 import 'couleurs_recherche.dart';
 import 'recherche_chauffeur_controller.dart';
+import 'widgets/carte_chauffeurs.dart';
 import 'widgets/panneau_chauffeurs.dart';
-import 'widgets/radar_chauffeurs.dart';
 
-/// Écran « Trouver un chauffeur » : radar en direct et choix manuel du
-/// chauffeur par le client.
+/// Écran « Choisis ton chauffeur » : les chauffeurs proches en direct sur la
+/// vraie carte, du type du service choisi, et le choix manuel par le client.
 class RechercheChauffeurScreen extends StatefulWidget {
   const RechercheChauffeurScreen({
     super.key,
@@ -20,13 +20,14 @@ class RechercheChauffeurScreen extends StatefulWidget {
     required this.positionDepart,
     required this.onChauffeurChoisi,
     this.type,
-    this.localiser,
     this.rayonM = 3000,
   }) : assert(rayonM > 0 && rayonM <= 5000);
 
   final ChauffeursProchesRepository repository;
 
-  /// Point de prise en charge du client.
+  /// Point de prise en charge du devis : centre de la carte et de la
+  /// recherche. Le serveur cherche le chauffeur choisi autour de ce point :
+  /// pas de « Me localiser » sur cet écran.
   final GeoPoint positionDepart;
 
   /// Type du service choisi (le serveur ne retrouve un chauffeur choisi que
@@ -38,9 +39,6 @@ class RechercheChauffeurScreen extends StatefulWidget {
   /// suspendu pendant l'appel et reprend à son retour si l'écran est
   /// toujours affiché.
   final Future<void> Function(ChauffeurProche chauffeur) onChauffeurChoisi;
-
-  /// Optionnel : relit la position GPS (bouton « Me localiser »).
-  final Future<GeoPoint?> Function()? localiser;
 
   final int rayonM;
 
@@ -59,8 +57,11 @@ class _RechercheChauffeurScreenState extends State<RechercheChauffeurScreen>
     rayonDemande: widget.rayonM,
   );
 
+  /// Hauteur de carte qui passe sous le panneau (ses coins arrondis laissent
+  /// voir la carte, pas un fond vide).
+  static const double _sousLePanneau = 28;
+
   bool _choixEnCours = false;
-  bool _localisationEnCours = false;
 
   @override
   void initState() {
@@ -98,36 +99,6 @@ class _RechercheChauffeurScreenState extends State<RechercheChauffeurScreen>
     }
   }
 
-  Future<void> _recentrer() async {
-    if (_localisationEnCours) return;
-    final localiser = widget.localiser;
-    if (localiser == null) {
-      _controleur.demarrer();
-      return;
-    }
-
-    setState(() => _localisationEnCours = true);
-    GeoPoint? position;
-    try {
-      position = await localiser();
-    } catch (_) {
-      position = null;
-    } finally {
-      if (mounted) setState(() => _localisationEnCours = false);
-    }
-    if (!mounted) return;
-
-    if (position != null && position.estValide) {
-      unawaited(_controleur.changerPosition(position));
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Position introuvable. Active la localisation puis réessaie.'),
-        ),
-      );
-    }
-  }
-
   void _selectionner(ChauffeurProche chauffeur) {
     unawaited(HapticFeedback.selectionClick());
     _controleur.selectionner(chauffeur);
@@ -135,106 +106,78 @@ class _RechercheChauffeurScreenState extends State<RechercheChauffeurScreen>
 
   @override
   Widget build(BuildContext context) {
+    final nuit = Theme.of(context).brightness == Brightness.dark;
+    final hautSysteme = MediaQuery.paddingOf(context).top;
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
+      value: nuit ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       child: Scaffold(
-        backgroundColor: CouleursRecherche.nuit,
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            const Positioned.fill(child: _FondCarte()),
-            ListenableBuilder(
-              listenable: _controleur,
-              builder: (context, _) {
-                final c = _controleur;
-                final selection = c.selectionne;
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: _zoneRadar(c, selection)),
-                    PanneauChauffeurs(
-                      chauffeurs: c.chauffeursFiltres,
-                      selectionne: selection,
-                      chargement: c.chargementInitial,
-                      erreur: c.erreur,
-                      obsolete: c.estObsolete,
-                      rayonM: c.rayonM,
-                      onSelection: _selectionner,
-                      onChoisir: _choisir,
-                      onReessayer: _controleur.demarrer,
-                    ),
-                  ],
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _zoneRadar(RechercheChauffeurController c, ChauffeurProche? selection) {
-    return Stack(
-      fit: StackFit.expand,
-      clipBehavior: Clip.none,
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SafeArea(
-              bottom: false,
-              child: _EnTete(
-                rayonM: c.rayonM,
-                chargement: c.chargementInitial,
-                obsolete: c.estObsolete,
-                filtre: c.filtre,
-                nombreTous: c.nombre(),
-                nombreVoitures: c.nombre(TypeVehicule.voiture),
-                nombreMotos: c.nombre(TypeVehicule.moto),
-                onFiltre: c.choisirFiltre,
-              ),
-            ),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, contraintes) {
-                  // Le radar passe légèrement sous le panneau, comme sur la maquette.
-                  const debord = 20.0;
-                  final hauteur = contraintes.maxHeight + debord;
-                  final cote = math.min(contraintes.maxWidth - 24, hauteur - 8);
-                  if (cote < 120) return const SizedBox.shrink();
-                  return Stack(
+        backgroundColor: nuit ? TaamaColors.mapNight : TaamaColors.mapPlaceholder,
+        body: ListenableBuilder(
+          listenable: _controleur,
+          builder: (context, _) {
+            final c = _controleur;
+            final selection = c.selectionne;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Stack(
                     clipBehavior: Clip.none,
                     children: [
                       Positioned(
-                        left: (contraintes.maxWidth - cote) / 2,
-                        top: (hauteur - cote) / 2,
-                        width: cote,
-                        height: cote,
-                        child: RadarChauffeurs(
-                          chauffeurs: c.tous,
-                          filtre: c.filtre,
+                        left: 0,
+                        top: 0,
+                        right: 0,
+                        bottom: -_sousLePanneau,
+                        child: CarteChauffeurs(
+                          chauffeurs: c.chauffeursFiltres,
                           selectionne: selection,
-                          centre: c.centre,
+                          centre: widget.positionDepart,
                           rayonM: c.rayonM,
+                          nuit: nuit,
                           onSelection: _selectionner,
+                          // En-tête (≈ 76 px sous la barre d'état, plus
+                          // avec un texte agrandi) et bas de carte caché par
+                          // le panneau.
+                          marges: EdgeInsets.only(
+                            top: hautSysteme + MediaQuery.textScalerOf(context).scale(76),
+                            bottom: _sousLePanneau,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 0,
+                        top: 0,
+                        right: 0,
+                        child: SafeArea(
+                          bottom: false,
+                          child: _EnTete(
+                            rayonM: c.rayonM,
+                            chargement: c.chargementInitial,
+                            obsolete: c.estObsolete,
+                            nuit: nuit,
+                          ),
                         ),
                       ),
                     ],
-                  );
-                },
-              ),
-            ),
-          ],
+                  ),
+                ),
+                PanneauChauffeurs(
+                  chauffeurs: c.chauffeursFiltres,
+                  selectionne: selection,
+                  chargement: c.chargementInitial,
+                  erreur: c.erreur,
+                  obsolete: c.estObsolete,
+                  rayonM: c.rayonM,
+                  onSelection: _selectionner,
+                  onChoisir: _choisir,
+                  onReessayer: _controleur.demarrer,
+                ),
+              ],
+            );
+          },
         ),
-        Positioned(
-          right: 16,
-          bottom: 12,
-          child: _BoutonLocaliser(
-            enCours: _localisationEnCours,
-            onTap: _recentrer,
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -244,21 +187,13 @@ class _EnTete extends StatelessWidget {
     required this.rayonM,
     required this.chargement,
     required this.obsolete,
-    required this.filtre,
-    required this.nombreTous,
-    required this.nombreVoitures,
-    required this.nombreMotos,
-    required this.onFiltre,
+    required this.nuit,
   });
 
   final int rayonM;
   final bool chargement;
   final bool obsolete;
-  final TypeVehicule? filtre;
-  final int nombreTous;
-  final int nombreVoitures;
-  final int nombreMotos;
-  final ValueChanged<TypeVehicule?> onFiltre;
+  final bool nuit;
 
   @override
   Widget build(BuildContext context) {
@@ -269,41 +204,47 @@ class _EnTete extends StatelessWidget {
         : enAlerte
             ? 'Connexion instable · nouvelle tentative'
             : 'En direct · rayon $rayon';
+    final texte = nuit ? TaamaColors.textOnDark : TaamaColors.textPrimary;
+    final texteDoux = nuit ? TaamaColors.onNightMuted : TaamaColors.textSecondary;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Material(
+        color: nuit ? TaamaColors.night : TaamaColors.surface,
+        elevation: 4,
+        shadowColor: TaamaColors.ombreMarqueur,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(6, 6, 14, 6),
+          child: Row(
             children: [
-              _BoutonRond(
-                icone: Icons.arrow_back_ios_new_rounded,
-                libelle: 'Retour',
+              _BoutonRetour(
+                couleur: texte,
                 onTap: () => Navigator.of(context).maybePop(),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 6),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      'Trouver un chauffeur',
+                    Text(
+                      'Choisis ton chauffeur',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
+                        color: texte,
+                        fontSize: 18,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 2),
                     Row(
                       children: [
                         _PointDirect(
                           couleur: enAlerte
                               ? CouleursRecherche.alerte
-                              : CouleursRecherche.direct,
+                              : TaamaColors.accentMint,
                         ),
                         const SizedBox(width: 7),
                         Flexible(
@@ -311,10 +252,7 @@ class _EnTete extends StatelessWidget {
                             statut,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xB3FFFFFF),
-                              fontSize: 14,
-                            ),
+                            style: TextStyle(color: texteDoux, fontSize: 13),
                           ),
                         ),
                       ],
@@ -324,168 +262,33 @@ class _EnTete extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _Filtre(
-                  libelle: 'Tous',
-                  nombre: nombreTous,
-                  actif: filtre == null,
-                  onTap: () => onFiltre(null),
-                ),
-                const SizedBox(width: 8),
-                _Filtre(
-                  libelle: 'Voitures',
-                  nombre: nombreVoitures,
-                  actif: filtre == TypeVehicule.voiture,
-                  onTap: () => onFiltre(TypeVehicule.voiture),
-                ),
-                const SizedBox(width: 8),
-                _Filtre(
-                  libelle: 'Motos',
-                  nombre: nombreMotos,
-                  actif: filtre == TypeVehicule.moto,
-                  onTap: () => onFiltre(TypeVehicule.moto),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Filtre extends StatelessWidget {
-  const _Filtre({
-    required this.libelle,
-    required this.nombre,
-    required this.actif,
-    required this.onTap,
-  });
-
-  final String libelle;
-  final int nombre;
-  final bool actif;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      selected: actif,
-      label: '$libelle, $nombre',
-      excludeSemantics: true,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
-          decoration: BoxDecoration(
-            color: actif ? Colors.white : const Color(0x1AFFFFFF),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(
-              color: actif ? Colors.white : const Color(0x26FFFFFF),
-            ),
-          ),
-          child: Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: libelle,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                TextSpan(
-                  text: ' $nombre',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w500,
-                    color: actif
-                        ? CouleursRecherche.texteDoux
-                        : const Color(0x99FFFFFF),
-                  ),
-                ),
-              ],
-            ),
-            style: TextStyle(
-              fontSize: 15,
-              color: actif ? CouleursRecherche.nuit : Colors.white,
-            ),
-          ),
         ),
       ),
     );
   }
 }
 
-class _BoutonRond extends StatelessWidget {
-  const _BoutonRond({
-    required this.icone,
-    required this.libelle,
-    required this.onTap,
-  });
+class _BoutonRetour extends StatelessWidget {
+  const _BoutonRetour({required this.couleur, required this.onTap});
 
-  final IconData icone;
-  final String libelle;
+  final Color couleur;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: libelle,
+      label: 'Retour',
       excludeSemantics: true,
       child: Material(
-        color: const Color(0x1AFFFFFF),
-        shape: const CircleBorder(side: BorderSide(color: Color(0x26FFFFFF))),
+        type: MaterialType.transparency,
+        shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
           child: SizedBox.square(
-            dimension: 46,
-            child: Icon(icone, color: Colors.white, size: 18),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BoutonLocaliser extends StatelessWidget {
-  const _BoutonLocaliser({required this.enCours, required this.onTap});
-
-  final bool enCours;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: 'Me localiser',
-      excludeSemantics: true,
-      child: Material(
-        color: Colors.white,
-        shape: const CircleBorder(),
-        elevation: 6,
-        shadowColor: const Color(0x66000000),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: enCours ? null : onTap,
-          child: SizedBox.square(
-            dimension: 48,
-            child: enCours
-                ? const Padding(
-                    padding: EdgeInsets.all(14),
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(
-                    Icons.my_location_rounded,
-                    color: CouleursRecherche.nuit,
-                    size: 22,
-                  ),
+            dimension: 44,
+            child: Icon(Icons.arrow_back_ios_new_rounded, color: couleur, size: 18),
           ),
         ),
       ),
@@ -501,72 +304,16 @@ class _PointDirect extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 300),
       width: 8,
       height: 8,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: couleur,
-        boxShadow: [BoxShadow(color: couleur.withAlpha(140), blurRadius: 6)],
+        boxShadow: [BoxShadow(color: couleur.withValues(alpha: 0.55), blurRadius: 6)],
       ),
     );
   }
-}
-
-/// Fond décoratif : dégradé bleu nuit, lueurs et trame discrète.
-/// Ce n'est volontairement pas une carte (voir le brief).
-class _FondCarte extends StatelessWidget {
-  const _FondCarte();
-
-  @override
-  Widget build(BuildContext context) =>
-      const RepaintBoundary(child: CustomPaint(painter: _PeintreFond()));
-}
-
-class _PeintreFond extends CustomPainter {
-  const _PeintreFond();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cadre = Offset.zero & size;
-    canvas.drawRect(
-      cadre,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF1B2152), Color(0xFF12173A)],
-        ).createShader(cadre),
-    );
-
-    void lueur(Offset centre, double rayon, Color couleur) {
-      final zone = Rect.fromCircle(center: centre, radius: rayon);
-      canvas.drawCircle(
-        centre,
-        rayon,
-        Paint()
-          ..shader = RadialGradient(colors: [couleur, couleur.withAlpha(0)])
-              .createShader(zone),
-      );
-    }
-
-    lueur(Offset(size.width * 0.85, size.height * 0.12), size.width * 0.45,
-        const Color(0x2214B8A6));
-    lueur(Offset(size.width * 0.1, size.height * 0.55), size.width * 0.5,
-        const Color(0x225546E8));
-
-    final trame = Paint()
-      ..color = const Color(0x0AFFFFFF)
-      ..strokeWidth = 1;
-    const pas = 34.0;
-    for (var x = pas; x < size.width; x += pas) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), trame);
-    }
-    for (var y = pas; y < size.height; y += pas) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), trame);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _PeintreFond ancien) => false;
 }
