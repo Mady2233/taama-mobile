@@ -18,6 +18,7 @@ Règles :
 import datetime
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -31,29 +32,68 @@ SERVEURS = [
 USER_AGENT = 'Taama/1.0 (generation des donnees de carte, Bamako)'
 MIN_QUARTIERS = 50  # en dessous : réponse jugée incomplète, rien n'est écrit
 
-# Catégorie Taama -> (clé OSM, valeur OSM), et importance (1 = la plus forte).
+# Catégorie Taama -> (tags OSM (clé, valeur), importance : 1 = la plus forte).
+# L'ORDRE compte : à importance égale, une catégorie plus haut dans la liste
+# passe devant quand deux étiquettes se disputent la même place à l'écran
+# (on se repère à Bamako par les pharmacies et les écoles avant les bureaux).
 CATEGORIES = {
-    'marche': ('amenity', 'marketplace', 1),
-    'hopital': ('amenity', 'hospital', 1),
-    'gare': ('amenity', 'bus_station', 1),
-    'universite': ('amenity', 'university', 1),
-    'centreCommercial': ('shop', 'mall', 1),
-    'pont': ('man_made', 'bridge', 1),
-    'clinique': ('amenity', 'clinic', 2),
-    'culte': ('amenity', 'place_of_worship', 2),
-    'carburant': ('amenity', 'fuel', 2),
-    'banque': ('amenity', 'bank', 2),
-    'police': ('amenity', 'police', 2),
-    'pharmacie': ('amenity', 'pharmacy', 3),
+    'marche': ([('amenity', 'marketplace')], 1),
+    'hopital': ([('amenity', 'hospital')], 1),
+    'gare': ([('amenity', 'bus_station')], 1),
+    'universite': ([('amenity', 'university')], 1),
+    'centreCommercial': ([('shop', 'mall')], 1),
+    'pont': ([('man_made', 'bridge')], 1),
+    'stade': ([('leisure', 'stadium')], 1),
+    'parc': ([('leisure', 'park')], 1),
+    'clinique': ([('amenity', 'clinic')], 2),
+    'culte': ([('amenity', 'place_of_worship')], 2),
+    'carburant': ([('amenity', 'fuel')], 2),
+    'banque': ([('amenity', 'bank')], 2),
+    'police': ([('amenity', 'police')], 2),
+    'hotel': ([('tourism', 'hotel')], 2),
+    'supermarche': ([('shop', 'supermarket')], 2),
+    'mairie': ([('amenity', 'townhall'), ('amenity', 'courthouse')], 2),
+    'ambassade': ([('office', 'diplomatic')], 2),
+    'poste': ([('amenity', 'post_office')], 2),
+    'pharmacie': ([('amenity', 'pharmacy')], 3),
+    'ecole': ([('amenity', 'school'), ('amenity', 'college'), ('amenity', 'kindergarten')], 3),
+    'restaurant': ([('amenity', 'restaurant'), ('amenity', 'cafe')], 3),
+    # Pas office=telecommunication : à Bamako, surtout des armoires et
+    # chambres du réseau (« CH L3T À CRÉER »), pas des agences.
+    'agence': ([('shop', 'mobile_phone'), ('amenity', 'money_transfer'),
+                ('amenity', 'bureau_de_change')], 3),
+    'bureau': ([('office', 'company'), ('office', 'ngo'), ('office', 'insurance'), ('office', 'yes')], 3),
+    'administration': ([('office', 'government')], 3),
 }
+ORDRE = {c: i for i, c in enumerate(CATEGORIES)}
+
+# office=government est très bruité à Bamako (boutiques, équipements réseau) :
+# seuls les noms d'administrations sont gardés. Règle sur le NOM, jamais une
+# donnée ajoutée ou corrigée à la main.
+MOTS_ADMINISTRATION = re.compile(
+    r'\b(minist[eè]re|direction|agence|office|institut|inspection|pr[ée]fecture|'
+    r'gouvernorat|assembl[ée]e|primature|pr[ée]sidence|douanes?|imp[oô]ts|tr[ée]sor|'
+    r'commissariat|conseil|secr[ée]tariat|caisse|commission|autorit[ée]|d[ée]l[ée]gation|'
+    r'haut[e]? |cellule|cour |tribunal|mairie|ambassade|consulat|police|gendarmerie|'
+    r'protection civile|centre national|observatoire|recensement|cadastre|domaines)\b',
+    re.IGNORECASE)
+FILTRES = {('office', 'government'): MOTS_ADMINISTRATION}
+
+# Éléments du réseau télécom importés avec un nom de chantier : jamais affichés.
+BRUIT = re.compile(r'(\b[àa] cr[ée]{1,2}r\b|splitter|\bmsan\b|^ch [a-z]\d)', re.IGNORECASE)
+
+# Un lieu qui ne porte que le nom de la ville n'aide ni sur la carte ni dans
+# la recherche (« Bamako » n'est pas une destination).
+NOMS_VILLE = {'bamako'}
 
 
 def requete():
     s, o, n, e = EMPRISE
     bbox = f'({s},{o},{n},{e})'
     lignes = [f'nwr["place"~"^(suburb|quarter|neighbourhood)$"]["name"]{bbox};']
-    for cle, valeur, _ in CATEGORIES.values():
-        lignes.append(f'nwr["{cle}"="{valeur}"]["name"]{bbox};')
+    for tags, _ in CATEGORIES.values():
+        for cle, valeur in tags:
+            lignes.append(f'nwr["{cle}"="{valeur}"]["name"]{bbox};')
     return '[out:json][timeout:120];(' + ''.join(lignes) + ');out center tags;'
 
 
@@ -103,15 +143,18 @@ def extraire(elements):
                 vus.add(cle)
                 quartiers.append((nom, lat, lng, place == 'suburb'))
             continue
-        for categorie, (k, v, _) in CATEGORIES.items():
-            if tags.get(k) == v:
+        if BRUIT.search(nom) or nom.lower() in NOMS_VILLE:
+            continue
+        for categorie, (couples, _) in CATEGORIES.items():
+            if any(tags.get(k) == v and (FILTRES.get((k, v)) is None or FILTRES[(k, v)].search(nom))
+                   for k, v in couples):
                 cle = (categorie, nom, round(lat, 4), round(lng, 4))
                 if cle not in vus:
                     vus.add(cle)
                     reperes.append((nom, lat, lng, categorie))
                 break
     quartiers.sort(key=lambda q: q[0].lower())
-    reperes.sort(key=lambda r: (CATEGORIES[r[3]][2], r[3], r[0].lower()))
+    reperes.sort(key=lambda r: (CATEGORIES[r[3]][1], ORDRE[r[3]], r[0].lower()))
     return quartiers, reperes
 
 
@@ -135,9 +178,10 @@ def fichier_dart(quartiers, reperes, date):
         *[f'  {c},' for c in CATEGORIES],
         '}',
         '',
-        '/// Importance d\'une catégorie : 1 (grands repères) à 3 (pharmacies).',
+        '/// Importance d\'une catégorie : 1 (grands repères) à 3 (pharmacies,',
+        '/// écoles, bureaux…). À importance égale, l\'ordre de l\'enum départage.',
         'const Map<CategorieRepere, int> importanceRepere = {',
-        *[f'  CategorieRepere.{c}: {imp},' for c, (_, _, imp) in CATEGORIES.items()],
+        *[f'  CategorieRepere.{c}: {imp},' for c, (_, imp) in CATEGORIES.items()],
         '};',
         '',
         'class RepereCarte {',

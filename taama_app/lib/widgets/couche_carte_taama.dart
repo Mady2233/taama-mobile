@@ -401,6 +401,18 @@ const Map<CategorieRepere, IconData> _icones = {
   CategorieRepere.banque: Icons.account_balance_rounded,
   CategorieRepere.police: Icons.local_police_rounded,
   CategorieRepere.pharmacie: Icons.local_pharmacy_rounded,
+  CategorieRepere.stade: Icons.stadium_rounded,
+  CategorieRepere.parc: Icons.park_rounded,
+  CategorieRepere.hotel: Icons.hotel_rounded,
+  CategorieRepere.supermarche: Icons.shopping_cart_rounded,
+  CategorieRepere.mairie: Icons.location_city_rounded,
+  CategorieRepere.ambassade: Icons.flag_rounded,
+  CategorieRepere.poste: Icons.local_post_office_rounded,
+  CategorieRepere.ecole: Icons.backpack_rounded,
+  CategorieRepere.restaurant: Icons.restaurant_rounded,
+  CategorieRepere.agence: Icons.phone_iphone_rounded,
+  CategorieRepere.bureau: Icons.business_center_rounded,
+  CategorieRepere.administration: Icons.apartment_rounded,
 };
 
 class _EtiquetteRepere extends StatelessWidget {

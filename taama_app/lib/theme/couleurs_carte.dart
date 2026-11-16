@@ -46,5 +46,17 @@ class CouleursCarte {
     CategorieRepere.banque: Color(0xFF344054),
     CategorieRepere.police: Color(0xFF1D2939),
     CategorieRepere.pharmacie: Color(0xFF067647),
+    CategorieRepere.stade: Color(0xFF0E7090),
+    CategorieRepere.parc: Color(0xFF3B7C0F),
+    CategorieRepere.hotel: Color(0xFF7A2E8E),
+    CategorieRepere.supermarche: Color(0xFFB54708),
+    CategorieRepere.mairie: Color(0xFF3E4784),
+    CategorieRepere.ambassade: Color(0xFF026AA2),
+    CategorieRepere.poste: Color(0xFF9A5B13),
+    CategorieRepere.ecole: Color(0xFF5925DC),
+    CategorieRepere.restaurant: Color(0xFFC4320A),
+    CategorieRepere.agence: Color(0xFFD9480F),
+    CategorieRepere.bureau: Color(0xFF475467),
+    CategorieRepere.administration: Color(0xFF2D3282),
   };
 }
