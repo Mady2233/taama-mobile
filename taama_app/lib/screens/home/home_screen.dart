@@ -25,7 +25,8 @@ import '../../widgets/couche_carte_taama.dart';
 import '../../widgets/invitation_identite.dart';
 import '../../widgets/photo_avatar.dart';
 import '../../widgets/taama/anime_en_boucle.dart';
-import '../../widgets/taama/couche_conducteurs_animes.dart';
+import '../../widgets/taama/couche_chauffeurs_accueil.dart';
+import '../../widgets/taama/fiche_chauffeurs_proches.dart';
 import '../../widgets/taama/pulsation_position.dart';
 import '../../widgets/taama/tuile_service.dart';
 import 'home_models.dart';
@@ -285,7 +286,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
           ],
         ),
-        CoucheConducteursAnimes(conducteurs: widget.conducteursProches),
+        CoucheChauffeursAccueil(
+          conducteurs: widget.conducteursProches,
+          nuit: widget.nuit,
+          // Fiche du ou des chauffeurs touchés : rien n'est commandé ici, le
+          // choix vient après la destination et le prix.
+          onGroupe: (chauffeurs) =>
+              afficherFicheChauffeursProches(context, chauffeurs: chauffeurs),
+        ),
         if (position != null)
           MarkerLayer(
             markers: [
@@ -293,7 +301,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 point: position,
                 width: 76,
                 height: 76,
-                child: const PulsationPosition(),
+                // Dessiné par-dessus les pastilles, mais transparent aux
+                // appuis : un chauffeur dans la même cellule que le client
+                // reste touchable.
+                child: const IgnorePointer(child: PulsationPosition()),
               ),
             ],
           ),

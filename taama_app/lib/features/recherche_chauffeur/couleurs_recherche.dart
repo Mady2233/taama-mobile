@@ -43,5 +43,9 @@ abstract final class CouleursRecherche {
   }
 
   static Color vehicule(TypeVehicule type) =>
-      type == TypeVehicule.moto ? ambre : indigo;
+      vehiculeEstMoto(type == TypeVehicule.moto);
+
+  /// La même couleur sans le modèle du radar : la carte d'accueil
+  /// (ConducteurProche) n'a qu'un booléen.
+  static Color vehiculeEstMoto(bool estMoto) => estMoto ? ambre : indigo;
 }

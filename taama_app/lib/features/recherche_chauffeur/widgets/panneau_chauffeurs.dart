@@ -304,7 +304,12 @@ class _ElementListe extends StatelessWidget {
                     width: 2.5,
                   ),
                 ),
-                child: AvatarChauffeur(chauffeur: chauffeur, taille: 52),
+                child: AvatarChauffeur(
+                  graine: chauffeur.id,
+                  initiales: chauffeur.initiales,
+                  estMoto: chauffeur.typeVehicule == TypeVehicule.moto,
+                  taille: 52,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -352,7 +357,12 @@ class _FicheChauffeur extends StatelessWidget {
         ),
         child: Row(
           children: [
-            AvatarChauffeur(chauffeur: c, taille: 56),
+            AvatarChauffeur(
+              graine: c.id,
+              initiales: c.initiales,
+              estMoto: c.typeVehicule == TypeVehicule.moto,
+              taille: 56,
+            ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(

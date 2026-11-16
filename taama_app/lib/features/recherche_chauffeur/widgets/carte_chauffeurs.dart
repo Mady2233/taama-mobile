@@ -257,7 +257,13 @@ class _Bulle extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            AvatarChauffeur(chauffeur: chauffeur, taille: 26, badge: false),
+            AvatarChauffeur(
+              graine: chauffeur.id,
+              initiales: chauffeur.initiales,
+              estMoto: chauffeur.typeVehicule == TypeVehicule.moto,
+              taille: 26,
+              badge: false,
+            ),
             const SizedBox(width: 8),
             Flexible(
               child: Text(
