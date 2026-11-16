@@ -23,6 +23,7 @@ class ConducteurProche {
     required this.position,
     this.urlPhoto,
     this.note,
+    this.notePublique,
     this.modeleVehicule,
     this.minutesAvant,
     this.estMoto = true,
@@ -32,10 +33,36 @@ class ConducteurProche {
   final String nomCourt;
   final LatLng position;
   final String? urlPhoto;
+
+  /// Ancien champ `note` du serveur : « 5.0 » même sans aucune note. Gardé
+  /// pour mémoire, plus affiché : notePublique dit la vérité.
   final double? note;
+
+  /// Note à montrer : null tant que le chauffeur a moins de 5 notes
+  /// (« Nouveau »), la règle du radar. Avec un serveur d'avant le champ
+  /// note_publique, null aussi : jamais le « 5.0 » par défaut.
+  final double? notePublique;
+
   final String? modeleVehicule;
   final int? minutesAvant;
   final bool estMoto;
+
+  /// Prénom et initiales pour les pastilles, calculés comme sur le radar
+  /// (nom_affiche : prénom seul quand le chauffeur n'a pas de nom de famille).
+  List<String> get _mots =>
+      nomCourt.split(RegExp(r'\s+')).where((m) => m.isNotEmpty).toList();
+
+  String get prenom {
+    final mots = _mots;
+    return mots.isEmpty ? 'Chauffeur' : mots.first;
+  }
+
+  String get initiales {
+    final mots = _mots;
+    if (mots.isEmpty) return '?';
+    String premiere(String mot) => String.fromCharCode(mot.runes.first).toUpperCase();
+    return mots.length == 1 ? premiere(mots.first) : premiere(mots.first) + premiere(mots[1]);
+  }
 
   /// Une entrée de conducteurs/proches/ ; null si elle est inexploitable (pas
   /// de coordonnées valides). Identifiant lu comme un texte (pseudonyme du
@@ -52,12 +79,14 @@ class ConducteurProche {
     final noteBrute = brut['note'];
     return ConducteurProche(
       id: id,
-      nomCourt: (brut['nom_court'] ?? '').toString(),
+      // nom_affiche (serveur du 16/11, règle du radar), sinon nom_court.
+      nomCourt: (brut['nom_affiche'] ?? brut['nom_court'] ?? '').toString(),
       position: LatLng(lat, lng),
       urlPhoto: _urlHttpsOuNull(brut['photo_profil']),
       note: noteBrute == null ? null : double.tryParse(noteBrute.toString()),
+      notePublique: (brut['note_publique'] as num?)?.toDouble(),
       modeleVehicule: brut['vehicule'] as String?,
-      minutesAvant: (brut['temps_minutes'] as num?)?.toInt(),
+      minutesAvant: (brut['eta_min'] as num?)?.toInt() ?? (brut['temps_minutes'] as num?)?.toInt(),
       estMoto: brut['type_transport'] == CodesTransport.moto,
     );
   }

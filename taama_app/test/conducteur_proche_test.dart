@@ -27,6 +27,42 @@ void main() {
     expect(c.position.longitude, -8.001);
     expect(c.note, 4.8);
     expect(c.estMoto, isTrue);
+    // Serveur d'avant le 16/11 : jamais le « 5.0 » par défaut en vitrine.
+    expect(c.notePublique, isNull);
+    expect(c.minutesAvant, 3);
+  });
+
+  test('réponse du 16/11 : champs du radar préférés, anciens en repli', () {
+    final c = ConducteurProche.depuisJson({
+      'id': '3f9a1c0b7e2d4a65',
+      'nom_court': 'Seydou K.',
+      'nom_affiche': 'Seydou',
+      'type_transport': 'Moto',
+      'note': '5.0',
+      'note_publique': null,
+      'temps_minutes': 3,
+      'eta_min': 4,
+      'lat': 12.649,
+      'lng': -8.001,
+    });
+    expect(c!.nomCourt, 'Seydou');
+    expect(c.prenom, 'Seydou');
+    expect(c.initiales, 'S');
+    expect(c.notePublique, isNull, reason: 'moins de 5 notes : « Nouveau », jamais 5.0');
+    expect(c.minutesAvant, 4, reason: 'le temps du radar, pas les 20 km/h à vol d’oiseau');
+  });
+
+  test('note publique présente, prénom et initiales', () {
+    final c = ConducteurProche.depuisJson({
+      'id': 'a1', 'nom_affiche': 'Seydou K.', 'type_transport': 'Moto',
+      'note_publique': 4.8, 'eta_min': 2, 'lat': 12.6, 'lng': -8.0,
+    });
+    expect(c!.notePublique, 4.8);
+    expect(c.prenom, 'Seydou');
+    expect(c.initiales, 'SK');
+    final vide = ConducteurProche.depuisJson({'id': 'a2', 'lat': 12.6, 'lng': -8.0});
+    expect(vide!.prenom, 'Chauffeur');
+    expect(vide.initiales, '?');
   });
 
   test('ancienne réponse : identifiant entier, photo, position précise', () {
