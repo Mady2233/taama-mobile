@@ -47,6 +47,21 @@ const double _carteSousFeuille = 40;
 const EdgeInsets _margeAttribution =
     EdgeInsets.fromLTRB(6, 6, 6, _carteSousFeuille + 6);
 
+/// Texte du bandeau des chauffeurs proches. [minutes] : le plus court des
+/// temps d'approche reçus, calculé par le serveur depuis la position arrondie
+/// (d'où « environ ») ; null : pas de temps affiché, jamais inventé.
+String texteProximite({required bool chargement, required int nombre, int? minutes}) {
+  if (chargement) return 'Recherche de chauffeurs…';
+  if (nombre == 0) {
+    // On peut commander sans chauffeur en ligne : la recherche dure 15 min.
+    return 'Aucun chauffeur en ligne près de toi pour l’instant. '
+        'Tu peux commander : on cherche pour toi.';
+  }
+  final proches = nombre == 1 ? '1 chauffeur proche' : '$nombre chauffeurs proches';
+  // Espace insécable : jamais « environ 2 » en fin de ligne et « min » seul.
+  return minutes == null ? proches : '$proches, environ $minutes\u00a0min';
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
@@ -337,6 +352,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
+  static int? _minutesLaPlusCourte(List<ConducteurProche> conducteurs) {
+    int? plusCourt;
+    for (final c in conducteurs) {
+      final m = c.minutesAvant;
+      if (m != null && (plusCourt == null || m < plusCourt)) plusCourt = m;
+    }
+    return plusCourt;
+  }
+
   Widget _barreBasCarte() {
     return Row(
       children: [
@@ -344,8 +368,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           child: Align(
             alignment: Alignment.centerLeft,
             child: _PastilleProximite(
-              chargement: widget.chargementConducteurs,
-              nombre: widget.conducteursProches.length,
+              texte: texteProximite(
+                chargement: widget.chargementConducteurs,
+                nombre: widget.conducteursProches.length,
+                minutes: _minutesLaPlusCourte(widget.conducteursProches),
+              ),
+              actif: widget.conducteursProches.isNotEmpty,
               onTap: widget.onActualiser,
             ),
           ),
@@ -746,17 +774,13 @@ class _PastilleSolde extends StatelessWidget {
 }
 
 class _PastilleProximite extends StatelessWidget {
-  const _PastilleProximite({required this.chargement, required this.nombre, required this.onTap});
+  const _PastilleProximite({required this.texte, required this.actif, required this.onTap});
 
-  final bool chargement;
-  final int nombre;
+  final String texte;
+
+  /// Au moins un chauffeur : le point clignote en vert.
+  final bool actif;
   final Future<void> Function()? onTap;
-
-  String get _texte {
-    if (chargement) return 'Recherche de chauffeurs…';
-    if (nombre == 0) return 'Aucun chauffeur proche pour le moment';
-    return nombre == 1 ? '1 chauffeur autour de vous' : '$nombre chauffeurs autour de vous';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -783,15 +807,15 @@ class _PastilleProximite extends StatelessWidget {
                     height: 8,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: nombre > 0 ? TaamaColors.accentMint : TaamaColors.onNavyMuted,
+                      color: actif ? TaamaColors.accentMint : TaamaColors.onNavyMuted,
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
-                    _texte,
-                    maxLines: 1,
+                    texte,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TaamaText.body.copyWith(
                       color: Colors.white,
