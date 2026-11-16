@@ -38,14 +38,30 @@ const LatLng _centreBamako = LatLng(12.6392, -8.0029);
 // Assez près pour voir les rues et les bâtiments autour du client.
 const double _zoomInitial = 16;
 
-/// La carte descend de cette hauteur SOUS l'arrondi de la feuille du bas.
-const double _carteSousFeuille = 40;
+/// Part de l'écran donnée à la carte (le reste : la feuille du bas).
+const double _partCarte = 0.58;
 
-/// Attribution OSM/MapTiler : bas gauche, juste au-dessus de la feuille,
-/// jamais recouverte (obligation de licence). La même valeur est passée à
-/// CoucheCarteTaama pour qu'aucune étiquette de quartier ne s'y pose.
-const EdgeInsets _margeAttribution =
-    EdgeInsets.fromLTRB(6, 6, 6, _carteSousFeuille + 6);
+/// Attribution OSM/MapTiler : bas gauche de la carte, juste au-dessus de la
+/// feuille, jamais recouverte (obligation de licence) : le bandeau et les
+/// boutons se posent au-dessus d'elle ([_dessusAttribution]). La même valeur
+/// est passée à CoucheCarteTaama pour qu'aucune étiquette ne s'y pose.
+const EdgeInsets _margeAttribution = EdgeInsets.all(6);
+
+/// Bas du bandeau et des boutons, depuis le bas de la carte : la marge de
+/// l'attribution, sa hauteur à 130 % de texte (≈ 19), un écart.
+const double _dessusAttribution = 34;
+
+/// Barre du haut (avatar, départ) : 12 de marge + 48, sous la barre d'état.
+const double _hauteurBarreHaute = 68;
+
+/// Boutons de la carte (zoom, recentrage) et bandeau : hauteur réservée en
+/// bas à droite, où aucune étiquette de lieu ne se pose.
+const double _largeurBoutons = 48;
+const double _hauteurBoutons = 44 * 2 + 1 + 10 + 48;
+const double _hauteurBandeau = 64; // deux lignes à 130 % de texte
+
+const double _zoomMin = 12;
+const double _zoomMax = 19;
 
 /// Texte du bandeau des chauffeurs proches. [minutes] : le plus court des
 /// temps d'approche reçus, calculé par le serveur depuis la position arrondie
@@ -190,6 +206,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     _carte.move(point, _carte.camera.zoom);
   }
 
+  void _zoomer(double pas) {
+    if (!_cartePrete) return;
+    final camera = _carte.camera;
+    _carte.move(camera.center, (camera.zoom + pas).clamp(_zoomMin, _zoomMax));
+  }
+
   Future<void> _recentrer() async {
     await widget.onRecentrerCarte?.call();
     if (!mounted) return;
@@ -227,7 +249,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       color: TaamaColors.background,
       child: LayoutBuilder(
         builder: (context, contraintes) {
-          final hauteurCarte = contraintes.maxHeight * 0.50;
+          final hauteurCarte = contraintes.maxHeight * _partCarte;
           return Stack(
             children: [
               Positioned(
@@ -256,7 +278,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 left: 16,
                 right: 16,
                 // Au-dessus de l'attribution (bas gauche), jamais dessus.
-                top: hauteurCarte - 86,
+                bottom: contraintes.maxHeight - hauteurCarte + _dessusAttribution,
                 child: _barreBasCarte(),
               ),
               Positioned(
@@ -294,10 +316,25 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         widget.coucheFond,
         CoucheCarteTaama(
           nuit: widget.nuit,
-          reserves: const [
-            ZoneReservee.attribution(
+          // Aucune étiquette de lieu sous ce qui est posé sur la carte : barre
+          // du haut, bandeau, boutons, attribution.
+          reserves: [
+            const ZoneReservee.attribution(
               alignement: Alignment.bottomLeft,
               marge: _margeAttribution,
+            ),
+            ZoneReservee(
+              alignement: Alignment.topCenter,
+              taille: Size(10000, MediaQuery.paddingOf(context).top + _hauteurBarreHaute + 6),
+            ),
+            const ZoneReservee(
+              alignement: Alignment.bottomCenter,
+              taille: Size(10000, _dessusAttribution + _hauteurBandeau + 4),
+            ),
+            const ZoneReservee(
+              alignement: Alignment.bottomRight,
+              taille: Size(_largeurBoutons + 22,
+                  _dessusAttribution + _hauteurBandeau + 10 + _hauteurBoutons + 6),
             ),
           ],
         ),
@@ -361,28 +398,32 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return plusCourt;
   }
 
+  /// Boutons de la carte (zoom, recentrage) à droite, puis le bandeau des
+  /// chauffeurs proches sur toute la largeur : une ligne le plus souvent.
   Widget _barreBasCarte() {
-    return Row(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Expanded(
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: _PastilleProximite(
-              texte: texteProximite(
-                chargement: widget.chargementConducteurs,
-                nombre: widget.conducteursProches.length,
-                minutes: _minutesLaPlusCourte(widget.conducteursProches),
-              ),
-              actif: widget.conducteursProches.isNotEmpty,
-              onTap: widget.onActualiser,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
+        _CommandesZoom(onPlus: () => _zoomer(1), onMoins: () => _zoomer(-1)),
+        const SizedBox(height: 10),
         _BoutonRond(
           icone: Icons.near_me_rounded,
           info: 'Recentrer sur ma position',
           onPressed: widget.onRecentrerCarte == null ? null : _recentrer,
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: _PastilleProximite(
+            texte: texteProximite(
+              chargement: widget.chargementConducteurs,
+              nombre: widget.conducteursProches.length,
+              minutes: _minutesLaPlusCourte(widget.conducteursProches),
+            ),
+            actif: widget.conducteursProches.isNotEmpty,
+            onTap: widget.onActualiser,
+          ),
         ),
       ],
     );
@@ -580,6 +621,39 @@ class _BoutonRond extends StatelessWidget {
   }
 }
 
+/// Zoom de la carte : + et − dans une même capsule blanche.
+class _CommandesZoom extends StatelessWidget {
+  const _CommandesZoom({required this.onPlus, required this.onMoins});
+
+  final VoidCallback onPlus;
+  final VoidCallback onMoins;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget bouton(IconData icone, String info, VoidCallback action) => IconButton(
+          tooltip: info,
+          onPressed: action,
+          icon: Icon(icone, color: TaamaColors.navy, size: 22),
+          constraints: const BoxConstraints.tightFor(width: _largeurBoutons, height: 44),
+        );
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(_largeurBoutons / 2),
+      elevation: 4,
+      shadowColor: TaamaColors.textPrimary,
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          bouton(Icons.add_rounded, 'Zoomer', onPlus),
+          Container(width: 22, height: 1, color: TaamaColors.border),
+          bouton(Icons.remove_rounded, 'Dézoomer', onMoins),
+        ],
+      ),
+    );
+  }
+}
+
 /// Bandeau « course en cours » : rouvre le suivi. Bien visible, animé d'un
 /// léger battement pour attirer l'œil (coupé si animations réduites).
 class _BanniereCourseActive extends StatelessWidget {
@@ -715,14 +789,30 @@ class _PiluleDepart extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14),
             child: Row(
               children: [
-                const Icon(Icons.place_rounded, size: 20, color: TaamaColors.primary),
-                const SizedBox(width: 8),
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: const BoxDecoration(
+                    color: TaamaColors.primarySoft,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.my_location_rounded, size: 16, color: TaamaColors.primary),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Départ', style: TaamaText.muted.copyWith(fontSize: 11)),
+                      Text(
+                        'DÉPART',
+                        style: TaamaText.muted.copyWith(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.1,
+                          color: TaamaColors.primary,
+                        ),
+                      ),
                       Text(
                         libelle,
                         maxLines: 1,

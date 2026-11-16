@@ -3,18 +3,23 @@
 // Couche flutter_map de l'accueil : les chauffeurs proches en pastilles à
 // initiales, avec leur temps d'approche, regroupées quand elles se
 // toucheraient à l'écran (les positions sont arrondies à ~110 m : deux
-// voisins tombent souvent sur le même point). Toucher une pastille ouvre la
-// fiche du ou des chauffeurs, sans rien commander.
+// voisins tombent souvent sur le même point). Les plus proches portent une
+// étiquette « Prénom ★ 4,8 · 2 min » (jamais tous : la carte resterait
+// illisible). Toucher une pastille ouvre la fiche du ou des chauffeurs, sans
+// rien commander.
 //
 // Reprend le glissement de CoucheConducteursAnimes, qu'elle remplace :
 // - les positions GLISSENT de l'ancienne à la nouvelle (1,2 s) ;
 // - saut > 2 km (GPS aberrant, chauffeur réapparu) : pas d'animation ;
 // - « réduire les animations » activé : positions appliquées directement.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../features/recherche_chauffeur/chauffeur_proche.dart' show formaterNote;
 import '../../features/recherche_chauffeur/widgets/avatar_chauffeur.dart';
 import '../../screens/home/home_models.dart';
 import '../../theme/taama_theme.dart';
@@ -80,6 +85,50 @@ List<GroupeChauffeurs> grouperParEcran(
   ];
 }
 
+/// Côté de l'étiquette de chaque pastille qui en demande une (true : à
+/// gauche), par index dans [centres] ; absent : pas d'étiquette. [largeurs] :
+/// largeur de l'étiquette demandée (depuis le centre de la pastille), null
+/// pour une pastille sans étiquette. Dans l'ordre (le plus proche d'abord),
+/// chaque étiquette essaie le côté tourné vers le milieu de l'écran, puis
+/// l'autre ; elle ne doit ni sortir de l'écran, ni toucher une étiquette déjà
+/// posée, ni une autre pastille (avec son « N min » dessous). Aucun côté
+/// libre : pas d'étiquette, la pastille garde ses minutes.
+Map<int, bool> placerEtiquettes({
+  required List<Offset> centres,
+  required List<double?> largeurs,
+  required Size ecran,
+  double rayon = 20,
+  double hauteur = 28,
+}) {
+  // Chaque pastille avec ses minutes dessous (jusqu'à +44) : une étiquette
+  // refusée laisse réapparaître ses minutes, jamais sous une autre.
+  final pastilles = [
+    for (final c in centres) Rect.fromLTRB(c.dx - rayon, c.dy - rayon, c.dx + rayon, c.dy + 44),
+  ];
+  final posees = <Rect>[];
+  final cotes = <int, bool>{};
+  for (var i = 0; i < centres.length; i++) {
+    final largeur = largeurs[i];
+    if (largeur == null) continue;
+    final c = centres[i];
+    for (final aGauche in c.dx > ecran.width / 2 ? const [true, false] : const [false, true]) {
+      final etiquette = aGauche
+          ? Rect.fromLTRB(c.dx - largeur, c.dy - hauteur / 2, c.dx - rayon, c.dy + hauteur / 2)
+          : Rect.fromLTRB(c.dx + rayon, c.dy - hauteur / 2, c.dx + largeur, c.dy + hauteur / 2);
+      final libre = etiquette.left >= 0 &&
+          etiquette.right <= ecran.width &&
+          !posees.any(etiquette.overlaps) &&
+          ![for (var j = 0; j < pastilles.length; j++) if (j != i) pastilles[j]].any(etiquette.overlaps);
+      if (libre) {
+        cotes[i] = aGauche;
+        posees.add(etiquette);
+        break;
+      }
+    }
+  }
+  return cotes;
+}
+
 class CoucheChauffeursAccueil extends StatefulWidget {
   const CoucheChauffeursAccueil({
     super.key,
@@ -87,6 +136,7 @@ class CoucheChauffeursAccueil extends StatefulWidget {
     required this.onGroupe,
     this.nuit = false,
     this.maxMarqueurs = 30,
+    this.etiquetes = 3,
   });
 
   final List<ConducteurProche> conducteurs;
@@ -96,6 +146,10 @@ class CoucheChauffeursAccueil extends StatefulWidget {
 
   final bool nuit;
   final int maxMarqueurs;
+
+  /// Les [etiquetes] premiers chauffeurs reçus (les plus proches) portent
+  /// leur prénom et leur note, s'ils ne sont pas dans un groupe.
+  final int etiquetes;
 
   @override
   State<CoucheChauffeursAccueil> createState() => _CoucheChauffeursAccueilState();
@@ -184,21 +238,48 @@ class _CoucheChauffeursAccueilState extends State<CoucheChauffeursAccueil>
           ],
           camera.latLngToScreenOffset,
         );
+        final plusProches = {
+          for (final c in _visibles.take(widget.etiquetes)) c.id,
+        };
+        final cotes = placerEtiquettes(
+          centres: [for (final g in groupes) camera.latLngToScreenOffset(g.position)],
+          largeurs: [
+            for (final g in groupes)
+              g.chauffeurs.length == 1 && plusProches.contains(g.premier.id)
+                  ? _PastilleNommee.largeur(g.premier)
+                  : null,
+          ],
+          ecran: camera.size,
+        );
         return MarkerLayer(
           markers: [
-            for (final groupe in groupes)
-              Marker(
-                key: ValueKey(
-                    'chauffeurs-${groupe.chauffeurs.map((c) => c.id).join('-')}'),
-                point: groupe.position,
-                width: 92,
-                height: 72,
-                child: _Pastille(
-                  groupe: groupe,
-                  nuit: widget.nuit,
-                  onTap: () => widget.onGroupe(groupe.chauffeurs),
+            for (final (i, groupe) in groupes.indexed)
+              if (cotes[i] != null)
+                Marker(
+                  key: ValueKey('chauffeurs-${groupe.premier.id}'),
+                  point: groupe.position,
+                  // Pastille au centre du marqueur, étiquette du côté libre.
+                  width: 2 * _PastilleNommee.largeurEtiquetteMax + 40,
+                  height: 44,
+                  child: _PastilleNommee(
+                    chauffeur: groupe.premier,
+                    aGauche: cotes[i]!,
+                    onTap: () => widget.onGroupe(groupe.chauffeurs),
+                  ),
+                )
+              else
+                Marker(
+                  key: ValueKey(
+                      'chauffeurs-${groupe.chauffeurs.map((c) => c.id).join('-')}'),
+                  point: groupe.position,
+                  width: 92,
+                  height: 72,
+                  child: _Pastille(
+                    groupe: groupe,
+                    nuit: widget.nuit,
+                    onTap: () => widget.onGroupe(groupe.chauffeurs),
+                  ),
                 ),
-              ),
           ],
         );
       },
@@ -234,17 +315,192 @@ class _Pastille extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             seul
-                ? AvatarChauffeur(
-                    graine: premier.id,
-                    initiales: premier.initiales,
-                    estMoto: premier.estMoto,
-                    taille: 38,
-                  )
+                ? _AvatarCercle(chauffeur: premier)
                 : _RondNombre(nombre: groupe.chauffeurs.length),
             if (minutes != null) ...[
               const SizedBox(height: 3),
               _EtiquetteMinutes(minutes: minutes, nuit: nuit),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Pastille aux initiales cerclée de blanc, avec une ombre : elle se
+/// détache des rues et des étiquettes de lieux.
+class _AvatarCercle extends StatelessWidget {
+  const _AvatarCercle({required this.chauffeur});
+
+  final ConducteurProche chauffeur;
+
+  static const double taille = 40;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: taille,
+      height: taille,
+      padding: const EdgeInsets.all(2.5),
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white,
+        boxShadow: [BoxShadow(color: TaamaColors.ombreMarqueur, blurRadius: 8, offset: Offset(0, 2))],
+      ),
+      child: AvatarChauffeur(
+        graine: chauffeur.id,
+        initiales: chauffeur.initiales,
+        estMoto: chauffeur.estMoto,
+        taille: taille - 5,
+      ),
+    );
+  }
+}
+
+/// Un des chauffeurs les plus proches : sa pastille et, à côté, une
+/// étiquette « Seydou ★ 4,8 · 2 min » (« Nouveau » sous 5 notes, la règle du
+/// radar). Seules la pastille et l'étiquette réagissent au toucher : le reste
+/// du marqueur, large pour laisser la place à l'étiquette, laisse passer les
+/// gestes vers la carte.
+class _PastilleNommee extends StatelessWidget {
+  const _PastilleNommee({required this.chauffeur, required this.aGauche, required this.onTap});
+
+  final ConducteurProche chauffeur;
+
+  /// Étiquette à gauche de la pastille (chauffeur dans la moitié droite).
+  final bool aGauche;
+  final VoidCallback onTap;
+
+  static const double largeurEtiquetteMax = 200;
+  static const double _tailleEtoile = 13;
+
+  // Police explicite : le texte dessiné dans la carte n'hérite pas de celle
+  // de l'app. Taille fixe (textScaler à 1) : l'étiquette doit tenir sur la
+  // carte ; le prénom et la note restent lisibles en grand dans la fiche.
+  static const TextStyle _base = TextStyle(
+    fontFamily: TaamaFonts.body,
+    color: Colors.white,
+    fontSize: 12,
+    fontWeight: FontWeight.w700,
+    height: 1.2,
+  );
+
+  /// Largeurs déjà mesurées : le placement est refait à chaque image du
+  /// glissement et à chaque mouvement de la carte.
+  static final Map<String, double> _largeurs = {};
+
+  /// Largeur de l'étiquette depuis le centre de la pastille : texte mesuré,
+  /// étoile, marges. Sert à placer les étiquettes sans chevauchement.
+  static double largeur(ConducteurProche chauffeur) {
+    final note = chauffeur.notePublique;
+    final minutes = chauffeur.minutesAvant;
+    final cle = '${chauffeur.prenom}|$note|$minutes';
+    final connue = _largeurs[cle];
+    if (connue != null) return connue;
+    if (_largeurs.length > 200) _largeurs.clear();
+    final mesure = TextPainter(
+      text: TextSpan(style: _base, children: [
+        TextSpan(text: chauffeur.prenom, style: const TextStyle(fontWeight: FontWeight.w800)),
+        TextSpan(text: note != null ? '  \u00a0${formaterNote(note)}' : '  Nouveau'),
+        if (minutes != null) TextSpan(text: '  ·  $minutes\u00a0min'),
+      ]),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final largeur = mesure.width + (note != null ? _tailleEtoile : 0) + _AvatarCercle.taille / 2 + 8 + 11;
+    mesure.dispose();
+    return _largeurs[cle] = math.min(largeur, largeurEtiquetteMax);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final note = chauffeur.notePublique;
+    final minutes = chauffeur.minutesAvant;
+    const base = _base;
+    const r = _AvatarCercle.taille / 2;
+    final etiquette = Container(
+      constraints: const BoxConstraints(maxWidth: largeurEtiquetteMax),
+      height: 28,
+      // L'étiquette part du centre de la pastille, qui en cache le bout :
+      // r + 8 de marge côté pastille.
+      padding: EdgeInsets.only(left: aGauche ? 11 : r + 8, right: aGauche ? r + 8 : 11),
+      decoration: const BoxDecoration(
+        color: TaamaColors.navy,
+        borderRadius: BorderRadius.all(Radius.circular(999)),
+        boxShadow: [BoxShadow(color: TaamaColors.ombreMarqueur, blurRadius: 8, offset: Offset(0, 2))],
+      ),
+      // Ajustée au texte : sans alignment (le Container prendrait toute la
+      // largeur permise), la mesure de [largeur] dit vrai.
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text.rich(
+              TextSpan(children: [
+                TextSpan(text: chauffeur.prenom, style: const TextStyle(fontWeight: FontWeight.w800)),
+                const TextSpan(text: '  '),
+                if (note != null) ...[
+                  // Icône, pas « ★ » : le caractère n'est pas dans la police
+                  // embarquée.
+                  const WidgetSpan(
+                    alignment: PlaceholderAlignment.middle,
+                    child: Icon(Icons.star_rounded, size: _tailleEtoile, color: TaamaColors.starOnDark),
+                  ),
+                  TextSpan(text: '\u00a0${formaterNote(note)}'),
+                ] else
+                  const TextSpan(text: 'Nouveau', style: TextStyle(color: TaamaColors.onNavyMuted)),
+                if (minutes != null)
+                  TextSpan(
+                    text: '  ·  $minutes\u00a0min',
+                    style: const TextStyle(color: TaamaColors.accentMint),
+                  ),
+              ]),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textScaler: TextScaler.noScaling,
+              style: base,
+            ),
+          ),
+        ],
+      ),
+    );
+    return Semantics(
+      button: true,
+      label: '${chauffeur.prenom}, '
+          '${note != null ? 'noté ${formaterNote(note)}' : 'nouveau chauffeur'}'
+          '${minutes != null ? ', environ $minutes\u00a0min' : ''}',
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.deferToChild,
+        onTap: onTap,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Étiquette : du centre de la pastille vers le côté choisi.
+            Positioned.fill(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: aGauche
+                        ? Align(
+                            alignment: Alignment.centerRight,
+                            child: etiquette,
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                  Expanded(
+                    child: aGauche
+                        ? const SizedBox.shrink()
+                        : Align(
+                            alignment: Alignment.centerLeft,
+                            child: etiquette,
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            _AvatarCercle(chauffeur: chauffeur),
           ],
         ),
       ),

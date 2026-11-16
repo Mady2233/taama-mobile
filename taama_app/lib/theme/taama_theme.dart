@@ -52,6 +52,7 @@ class TaamaColors {
   static const Color warning = Color(0xFF854F0B); // texte sur ambre
   static const Color warningSoft = Color(0xFFFBF0DC);
   static const Color star = Color(0xFFBA7517);
+  static const Color starOnDark = Color(0xFFFFC94D); // étoile posée sur navy
   static const Color danger = Color(0xFFA32D2D);
   static const Color dangerSoft = Color(0xFFFCEBEB);
 }
