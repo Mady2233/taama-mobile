@@ -3,7 +3,8 @@
 // Écran « appel entrant » d'une nouvelle demande.
 //
 // Inchangé : vérification du statut (mesDemandesAssignees), compte à rebours
-// de 30 s, expiration = refus best-effort, accepter → EcranNavigation
+// de 30 s, expiration = refus best-effort (demande ciblée : 45 s, sans refus),
+// accepter → EcranNavigation
 // (pushReplacement), ignorer avec gestion 400/404, _fermer() via pop(),
 // PopScope pendant un traitement, messages d'erreur lisibles.
 //
@@ -64,6 +65,10 @@ const double _hauteurFixePanneau = 22 + 16 + 18 + 124 + 40;
 /// et on tente un refus en best-effort (l'app est forcément au premier plan
 /// puisque ce timer tourne). Le VRAI timeout — réassignation même si l'app
 /// est tuée — est côté serveur (Lot 3) ; cet écran ne le garantit pas.
+/// Demande ciblée (le client a choisi ce chauffeur) : le délai du serveur
+/// (delai_reponse_secondes, 45 s), et à zéro l'écran se ferme sans refuser :
+/// le serveur clôt la demande « sans réponse », un refus dirait au client que
+/// le chauffeur a refusé.
 class EcranDemandeEntrante extends StatefulWidget {
   final int demandeId;
   final Map<String, dynamic>? demandeInitiale;
@@ -80,7 +85,18 @@ class EcranDemandeEntrante extends StatefulWidget {
 
 class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
     with TickerProviderStateMixin {
-  static const int _dureeCompteARebours = 30;
+  static const int _dureeOrdinaire = 30;
+
+  /// Demande ciblée : le client a choisi ce chauffeur (vue du chauffeur).
+  bool get _estCiblee => _demande?['demande_ciblee'] == true;
+
+  /// 30 s, ou le délai du serveur pour une demande ciblée (borné : jamais un
+  /// compte à rebours absurde si la valeur est illisible).
+  int get _dureeCompteARebours {
+    final delai = _demande?['delai_reponse_secondes'];
+    if (_estCiblee && delai is int && delai >= 10 && delai <= 120) return delai;
+    return _dureeOrdinaire;
+  }
 
   Map<String, dynamic>? _demande;
   bool _chargement = true;
@@ -91,7 +107,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   bool _enTraitement = false;
   // Quel bouton a été pressé (pour n'afficher le chargement que sur lui).
   bool _acceptationEnCours = false;
-  int _secondesRestantes = _dureeCompteARebours;
+  int _secondesRestantes = _dureeOrdinaire;
   Timer? _timerCompteARebours;
 
   // ─── Prix ajustable (limites envoyées par le serveur) ───
@@ -129,7 +145,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   // Anneau fluide (le Timer ci-dessus reste la source de vérité des secondes).
   late final AnimationController _anneau = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: _dureeCompteARebours),
+    duration: const Duration(seconds: _dureeOrdinaire),
   );
   // Entrée du panneau.
   late final AnimationController _entree = AnimationController(
@@ -248,6 +264,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   void _demarrerCompteARebours() {
     _timerCompteARebours?.cancel();
     _secondesRestantes = _dureeCompteARebours;
+    _anneau.duration = Duration(seconds: _dureeCompteARebours);
     _anneau.forward(from: 0);
     _entree.forward(from: 0);
     _timerCompteARebours = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -405,6 +422,12 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
   Future<void> _expirer() async {
     if (_enTraitement || !mounted) return;
     SonnerieService.instance.arreter();
+    if (_estCiblee) {
+      // Le serveur clôt la demande « sans réponse » : surtout pas de refus.
+      DemandeEntranteNavigator.marquerRefusee(widget.demandeId);
+      _fermer();
+      return;
+    }
     setState(() => _enTraitement = true);
     try {
       await ApiService.refuserDemande(widget.demandeId);
@@ -919,6 +942,7 @@ class _EcranDemandeEntranteState extends State<EcranDemandeEntrante>
               _AnneauCompteARebours(
                 animation: _anneau,
                 secondes: _secondesRestantes,
+                total: _dureeCompteARebours,
               ),
             ],
           ),
@@ -1246,10 +1270,13 @@ enum _Reprise {
 
 /// Grand anneau du compte à rebours : fluide, blanc → or → rouge.
 class _AnneauCompteARebours extends StatelessWidget {
-  const _AnneauCompteARebours({required this.animation, required this.secondes});
+  const _AnneauCompteARebours({required this.animation, required this.secondes, required this.total});
 
   final Animation<double> animation;
   final int secondes;
+
+  /// Durée totale du compte à rebours (30 s, 45 s pour une demande ciblée).
+  final int total;
 
   @override
   Widget build(BuildContext context) {
@@ -1260,8 +1287,8 @@ class _AnneauCompteARebours extends StatelessWidget {
     return AnimatedBuilder(
       animation: animation,
       builder: (context, _) {
-        final restant = reduit ? secondes / 30 : (1 - animation.value).clamp(0.0, 1.0);
-        final echelle = (!reduit && secondes <= 5) ? 1 + 0.06 * math.sin(animation.value * 30 * 2 * math.pi) : 1.0;
+        final restant = reduit ? secondes / total : (1 - animation.value).clamp(0.0, 1.0);
+        final echelle = (!reduit && secondes <= 5) ? 1 + 0.06 * math.sin(animation.value * total * 2 * math.pi) : 1.0;
         return Transform.scale(
           scale: echelle,
           child: SizedBox(

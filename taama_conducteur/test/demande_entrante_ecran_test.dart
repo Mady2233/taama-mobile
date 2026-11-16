@@ -330,6 +330,42 @@ void main() {
       });
     });
 
+    testWidgets('demande ciblée : 45 s, puis fermeture sans refus', (t) async {
+      var refus = 0;
+      await _avecServeur((requete) async {
+        if (requete.url.path.endsWith('/refuser/')) {
+          refus++;
+          return _json({'message': 'ok'});
+        }
+        return _json([{..._demande(), 'demande_ciblee': true, 'delai_reponse_secondes': 45}]);
+      }, () async {
+        await _ouvrirParDessus(t);
+        await t.pump(const Duration(seconds: 32));
+        expect(find.byType(EcranDemandeEntrante), findsOneWidget, reason: 'encore ouvert après 30 s');
+        await t.pump(const Duration(seconds: 14));
+        await t.pump(const Duration(seconds: 1));
+        expect(find.byType(EcranDemandeEntrante), findsNothing);
+        expect(refus, 0, reason: 'le serveur clôt « sans réponse »');
+      });
+    });
+
+    testWidgets('demande ordinaire : refus au bout de 30 s, comme avant', (t) async {
+      var refus = 0;
+      await _avecServeur((requete) async {
+        if (requete.url.path.endsWith('/refuser/')) {
+          refus++;
+          return _json({'message': 'ok'});
+        }
+        return _json([_demande()]);
+      }, () async {
+        await _ouvrirParDessus(t);
+        await t.pump(const Duration(seconds: 31));
+        await t.pump(const Duration(seconds: 1));
+        expect(refus, 1);
+        expect(find.byType(EcranDemandeEntrante), findsNothing);
+      });
+    });
+
     testWidgets('annulation d’une autre demande : rien ne change', (t) async {
       await _avecServeur(_serveurSimple, () async {
         await _ouvrirParDessus(t);
