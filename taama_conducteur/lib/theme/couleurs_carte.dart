@@ -29,6 +29,14 @@ class CouleursCarte {
 
   static const Color iconeRepere = Color(0xFFFFFFFF);
 
+  // Pastille d'un repère ou d'un grand quartier : fond presque opaque (le
+  // nom reste lisible sur les rues), liseré et ombre légers.
+  static const Color etiquetteFondJour = Color(0xF5FFFFFF);
+  static const Color etiquetteBordJour = Color(0x14101828);
+  static const Color etiquetteFondNuit = Color(0xF2252A40);
+  static const Color etiquetteBordNuit = Color(0x33FFFFFF);
+  static const Color etiquetteOmbre = Color(0x29101828);
+
   // Fond affiché à la place des tuiles quand la carte n'est pas configurée.
   static const Color fondIndisponibleJour = Color(0xFFEEF0F4);
   static const Color fondIndisponibleNuit = Color(0xFF181C2E);

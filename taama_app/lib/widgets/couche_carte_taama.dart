@@ -192,7 +192,12 @@ TextStyle _styleQuartier(bool principal) => TextStyle(
     );
 const TextStyle _styleRepere = TextStyle(fontSize: 11, fontWeight: FontWeight.w700);
 const double _pastille = 20;
-const double _espacePastille = 4;
+const double _espacePastille = 5;
+
+// Pastille blanche autour d'un repère (icône + nom) ou d'un grand quartier.
+// Le rectangle mesuré l'inclut : deux pastilles ne se touchent jamais.
+const EdgeInsets _bordRepere = EdgeInsets.fromLTRB(3, 3, 9, 3);
+const EdgeInsets _bordQuartier = EdgeInsets.symmetric(horizontal: 10, vertical: 4);
 
 /// Taille affichée d'une étiquette, mesurée une fois par nom et par taille
 /// de texte de l'utilisateur.
@@ -206,7 +211,9 @@ Size _taille(_Candidat c, TextScaler echelle, TextStyle base) {
       '${c.quartier?.nom ?? c.repere!.nom}';
   return _tailles[cle] ??= () {
     final repere = c.repere != null;
-    final reserve = repere ? _pastille + _espacePastille : 0.0;
+    final principal = c.quartier?.principal ?? false;
+    final bord = repere ? _bordRepere : (principal ? _bordQuartier : EdgeInsets.zero);
+    final reserve = (repere ? _pastille + _espacePastille : 0.0) + bord.horizontal;
     final tp = TextPainter(
       text: TextSpan(
         text: repere ? c.repere!.nom : c.quartier!.nom.toUpperCase(),
@@ -217,7 +224,10 @@ Size _taille(_Candidat c, TextScaler echelle, TextStyle base) {
       maxLines: 1,
       ellipsis: '…',
     )..layout(maxWidth: CoucheCarteTaama.largeurMax - reserve);
-    final taille = Size(tp.width + reserve, math.max(tp.height, repere ? _pastille : 0));
+    final taille = Size(
+      tp.width + reserve,
+      math.max(tp.height, repere ? _pastille : 0) + bord.vertical,
+    );
     tp.dispose();
     return taille;
   }();
@@ -363,6 +373,18 @@ List<Shadow> _halo(Color couleur) => [
         Shadow(color: couleur, offset: d, blurRadius: 2.5),
     ];
 
+BoxDecoration _fondEtiquette(bool nuit) => BoxDecoration(
+      color: nuit ? CouleursCarte.etiquetteFondNuit : CouleursCarte.etiquetteFondJour,
+      borderRadius: BorderRadius.circular(999),
+      border: Border.all(
+        color: nuit ? CouleursCarte.etiquetteBordNuit : CouleursCarte.etiquetteBordJour,
+        width: 0.5,
+      ),
+      boxShadow: const [
+        BoxShadow(color: CouleursCarte.etiquetteOmbre, blurRadius: 6, offset: Offset(0, 1.5)),
+      ],
+    );
+
 class _EtiquetteQuartier extends StatelessWidget {
   const _EtiquetteQuartier(this.quartier, {required this.nuit});
   final QuartierCarte quartier;
@@ -371,19 +393,26 @@ class _EtiquetteQuartier extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final principal = quartier.principal;
-    return Center(
-      child: Text(
-        quartier.nom.toUpperCase(),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        textAlign: TextAlign.center,
-        style: _styleQuartier(principal).copyWith(
-          color: nuit
-              ? (principal ? CouleursCarte.quartierNuit : CouleursCarte.sousQuartierNuit)
-              : (principal ? CouleursCarte.quartierJour : CouleursCarte.sousQuartierJour),
-          shadows: _halo(nuit ? CouleursCarte.haloNuit : CouleursCarte.haloJour),
-        ),
+    final texte = Text(
+      quartier.nom.toUpperCase(),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
+      style: _styleQuartier(principal).copyWith(
+        color: nuit
+            ? (principal ? CouleursCarte.quartierNuit : CouleursCarte.sousQuartierNuit)
+            : (principal ? CouleursCarte.quartierJour : CouleursCarte.sousQuartierJour),
+        // Halo pour les sous-quartiers seulement : les grands ont leur pastille.
+        shadows: principal ? null : _halo(nuit ? CouleursCarte.haloNuit : CouleursCarte.haloJour),
       ),
+    );
+    return Center(
+      child: principal
+          ? DecoratedBox(
+              decoration: _fondEtiquette(nuit),
+              child: Padding(padding: _bordQuartier, child: texte),
+            )
+          : texte,
     );
   }
 }
@@ -422,34 +451,39 @@ class _EtiquetteRepere extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final halo = nuit ? CouleursCarte.haloNuit : CouleursCarte.haloJour;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: _pastille,
-          height: _pastille,
-          decoration: BoxDecoration(
-            color: CouleursCarte.pastille[repere.categorie],
-            shape: BoxShape.circle,
-            border: Border.all(color: halo, width: 2),
+    return Center(
+      child: DecoratedBox(
+        decoration: _fondEtiquette(nuit),
+        child: Padding(
+          padding: _bordRepere,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: _pastille,
+                height: _pastille,
+                decoration: BoxDecoration(
+                  color: CouleursCarte.pastille[repere.categorie],
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(_icones[repere.categorie], size: 12, color: CouleursCarte.iconeRepere),
+              ),
+              const SizedBox(width: _espacePastille),
+              Flexible(
+                child: Text(
+                  repere.nom,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: _styleRepere.copyWith(
+                    color: nuit ? CouleursCarte.repereNuit : CouleursCarte.repereJour,
+                  ),
+                ),
+              ),
+            ],
           ),
-          child: Icon(_icones[repere.categorie], size: 11, color: CouleursCarte.iconeRepere),
         ),
-        const SizedBox(width: _espacePastille),
-        Flexible(
-          child: Text(
-            repere.nom,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: _styleRepere.copyWith(
-              color: nuit ? CouleursCarte.repereNuit : CouleursCarte.repereJour,
-              shadows: _halo(halo),
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
