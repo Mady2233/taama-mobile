@@ -20,9 +20,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../features/recherche_chauffeur/chauffeur_proche.dart' show formaterNote;
-import '../../features/recherche_chauffeur/widgets/avatar_chauffeur.dart';
 import '../../screens/home/home_models.dart';
 import '../../theme/taama_theme.dart';
+import 'vehicule_vu_dessus.dart';
 
 /// Chauffeurs dont les pastilles se toucheraient : montrés d'une seule.
 class GroupeChauffeurs {
@@ -167,6 +167,15 @@ class _CoucheChauffeursAccueilState extends State<CoucheChauffeursAccueil>
   Map<String, LatLng> _depart = {};
   Map<String, LatLng> _arrivee = {};
 
+  /// Direction de chaque véhicule (radians depuis le nord), déduite de ses
+  /// deux dernières positions : le serveur n'en envoie pas, et les positions
+  /// arrondies à ~110 m n'en donnent qu'une approximative. Tant qu'un
+  /// chauffeur n'a pas bougé : une orientation fixe tirée de son pseudonyme
+  /// (sinon toutes les voitures regarderaient le nord).
+  final Map<String, double> _caps = {};
+
+  double _cap(String id) => _caps[id] ?? capInitial(id);
+
   @override
   void initState() {
     super.initState();
@@ -188,10 +197,13 @@ class _CoucheChauffeursAccueilState extends State<CoucheChauffeursAccueil>
     for (final c in _visibles) {
       final avant = actuelles[c.id];
       arrivee[c.id] = c.position;
-      if (avant == null || _distance.as(LengthUnit.Meter, avant, c.position) > _sautMaxMetres) {
+      final metres = avant == null ? null : _distance.as(LengthUnit.Meter, avant, c.position);
+      if (metres == null || metres > _sautMaxMetres) {
         depart[c.id] = c.position; // nouveau, ou saut aberrant : sur place
       } else {
-        depart[c.id] = avant;
+        depart[c.id] = avant!;
+        // Au moins une case de la grille : sinon, l'arrondi seul fait pivoter.
+        if (metres >= 50) _caps[c.id] = capEntre(avant, c.position);
       }
     }
     _depart = depart;
@@ -263,6 +275,7 @@ class _CoucheChauffeursAccueilState extends State<CoucheChauffeursAccueil>
                   height: 44,
                   child: _PastilleNommee(
                     chauffeur: groupe.premier,
+                    cap: _cap(groupe.premier.id),
                     aGauche: cotes[i]!,
                     onTap: () => widget.onGroupe(groupe.chauffeurs),
                   ),
@@ -276,6 +289,7 @@ class _CoucheChauffeursAccueilState extends State<CoucheChauffeursAccueil>
                   height: 72,
                   child: _Pastille(
                     groupe: groupe,
+                    cap: _cap(groupe.premier.id),
                     nuit: widget.nuit,
                     onTap: () => widget.onGroupe(groupe.chauffeurs),
                   ),
@@ -288,9 +302,10 @@ class _CoucheChauffeursAccueilState extends State<CoucheChauffeursAccueil>
 }
 
 class _Pastille extends StatelessWidget {
-  const _Pastille({required this.groupe, required this.nuit, required this.onTap});
+  const _Pastille({required this.groupe, required this.cap, required this.nuit, required this.onTap});
 
   final GroupeChauffeurs groupe;
+  final double cap;
   final bool nuit;
   final VoidCallback onTap;
 
@@ -315,7 +330,7 @@ class _Pastille extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             seul
-                ? _AvatarCercle(chauffeur: premier)
+                ? _Vehicule(chauffeur: premier, cap: cap)
                 : _RondNombre(nombre: groupe.chauffeurs.length),
             if (minutes != null) ...[
               const SizedBox(height: 3),
@@ -328,34 +343,30 @@ class _Pastille extends StatelessWidget {
   }
 }
 
-/// Pastille aux initiales cerclée de blanc, avec une ombre : elle se
-/// détache des rues et des étiquettes de lieux.
-class _AvatarCercle extends StatelessWidget {
-  const _AvatarCercle({required this.chauffeur});
+/// Le véhicule du chauffeur vu de dessus (voiture ou moto), dans le sens
+/// de la marche ; les initiales restent dans la fiche.
+class _Vehicule extends StatelessWidget {
+  const _Vehicule({required this.chauffeur, required this.cap});
 
   final ConducteurProche chauffeur;
+  final double cap;
 
   static const double taille = 40;
 
+  /// Sur un disque blanc ombré : lisible sur toutes les rues, de jour comme
+  /// de nuit, et sur le bout de son étiquette.
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: taille,
-      height: taille,
-      padding: const EdgeInsets.all(2.5),
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        color: Colors.white,
-        boxShadow: [BoxShadow(color: TaamaColors.ombreMarqueur, blurRadius: 8, offset: Offset(0, 2))],
-      ),
-      child: AvatarChauffeur(
-        graine: chauffeur.id,
-        initiales: chauffeur.initiales,
-        estMoto: chauffeur.estMoto,
-        taille: taille - 5,
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Container(
+        width: taille,
+        height: taille,
+        alignment: Alignment.center,
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.white,
+          boxShadow: [BoxShadow(color: TaamaColors.ombreMarqueur, blurRadius: 8, offset: Offset(0, 2))],
+        ),
+        child: VehiculeVuDessus(estMoto: chauffeur.estMoto, cap: cap, taille: taille - 6),
+      );
 }
 
 /// Un des chauffeurs les plus proches : sa pastille et, à côté, une
@@ -364,9 +375,15 @@ class _AvatarCercle extends StatelessWidget {
 /// du marqueur, large pour laisser la place à l'étiquette, laisse passer les
 /// gestes vers la carte.
 class _PastilleNommee extends StatelessWidget {
-  const _PastilleNommee({required this.chauffeur, required this.aGauche, required this.onTap});
+  const _PastilleNommee({
+    required this.chauffeur,
+    required this.cap,
+    required this.aGauche,
+    required this.onTap,
+  });
 
   final ConducteurProche chauffeur;
+  final double cap;
 
   /// Étiquette à gauche de la pastille (chauffeur dans la moitié droite).
   final bool aGauche;
@@ -408,7 +425,7 @@ class _PastilleNommee extends StatelessWidget {
       textDirection: TextDirection.ltr,
       maxLines: 1,
     )..layout();
-    final largeur = mesure.width + (note != null ? _tailleEtoile : 0) + _AvatarCercle.taille / 2 + 8 + 11;
+    final largeur = mesure.width + (note != null ? _tailleEtoile : 0) + _Vehicule.taille / 2 + 8 + 11;
     mesure.dispose();
     return _largeurs[cle] = math.min(largeur, largeurEtiquetteMax);
   }
@@ -418,7 +435,7 @@ class _PastilleNommee extends StatelessWidget {
     final note = chauffeur.notePublique;
     final minutes = chauffeur.minutesAvant;
     const base = _base;
-    const r = _AvatarCercle.taille / 2;
+    const r = _Vehicule.taille / 2;
     final etiquette = Container(
       constraints: const BoxConstraints(maxWidth: largeurEtiquetteMax),
       height: 28,
@@ -500,7 +517,7 @@ class _PastilleNommee extends StatelessWidget {
                 ],
               ),
             ),
-            _AvatarCercle(chauffeur: chauffeur),
+            _Vehicule(chauffeur: chauffeur, cap: cap),
           ],
         ),
       ),

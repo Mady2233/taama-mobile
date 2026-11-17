@@ -9,6 +9,7 @@ import 'package:taama_app/screens/home/home_screen.dart';
 import 'package:taama_app/widgets/couche_carte_taama.dart';
 import 'package:taama_app/widgets/taama/couche_chauffeurs_accueil.dart';
 import 'package:taama_app/widgets/taama/fiche_chauffeurs_proches.dart';
+import 'package:taama_app/widgets/taama/vehicule_vu_dessus.dart';
 
 const _client = LatLng(12.6392, -8.0029);
 const _ecran = Size(360, 450);
@@ -119,7 +120,7 @@ void main() {
       expect(find.textContaining('Oumar', findRichText: true), findsNothing,
           reason: 'au-delà des 3 plus proches : pas d’étiquette');
       expect(find.text('6 min'), findsOneWidget);
-      expect(find.text('OB'), findsOneWidget);
+      expect(find.byType(VehiculeVuDessus), findsNWidgets(4), reason: 'un véhicule par chauffeur, les initiales restent dans la fiche');
       expect(tester.takeException(), isNull);
     });
 

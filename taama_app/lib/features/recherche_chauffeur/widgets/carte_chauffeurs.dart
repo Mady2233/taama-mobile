@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import '../../../carte/fond_carte.dart';
 import '../../../theme/taama_theme.dart';
 import '../../../widgets/couche_carte_taama.dart';
+import '../../../widgets/taama/vehicule_vu_dessus.dart';
 import '../chauffeur_proche.dart';
 import '../couleurs_recherche.dart';
 import 'avatar_chauffeur.dart';
@@ -211,10 +212,12 @@ class _Marqueur extends StatelessWidget {
               width: 44,
               height: 44,
               alignment: Alignment.center,
+              // Le véhicule vu de dessus sur un disque blanc, cerclé de la
+              // couleur de son type (moto, voiture) ; accentué si choisi.
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: couleur,
-                border: Border.all(color: Colors.white, width: 2.5),
+                color: Colors.white,
+                border: Border.all(color: couleur, width: 2.5),
                 boxShadow: [
                   BoxShadow(
                     color: selectionne
@@ -225,10 +228,11 @@ class _Marqueur extends StatelessWidget {
                   ),
                 ],
               ),
-              child: Icon(
-                estMoto ? Icons.two_wheeler : Icons.directions_car_filled,
-                size: 22,
-                color: estMoto ? TaamaColors.textPrimary : Colors.white,
+              child: VehiculeVuDessus(
+                estMoto: estMoto,
+                cap: capInitial(chauffeur.id),
+                taille: 34,
+                miseEnAvant: selectionne,
               ),
             ),
           ),

@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:taama_app/screens/home/home_screen.dart';
 import 'package:taama_app/widgets/taama/couche_chauffeurs_accueil.dart';
 import 'package:taama_app/widgets/taama/fiche_chauffeurs_proches.dart';
+import 'package:taama_app/widgets/taama/vehicule_vu_dessus.dart';
 
 const _bamako = LatLng(12.6392, -8.0029);
 
@@ -109,7 +110,8 @@ void main() {
       expect(find.text('2'), findsOneWidget, reason: 'le nombre du groupe');
       expect(find.text('4\u00a0min'), findsOneWidget, reason: 'le plus court du groupe');
       expect(find.text('2\u00a0min'), findsOneWidget, reason: 'la pastille seule (MT)');
-      expect(find.text('MT'), findsOneWidget, reason: 'initiales de la pastille seule');
+      expect(find.text('MT'), findsNothing, reason: 'sur la carte : le véhicule, plus les initiales');
+      expect(find.byType(VehiculeVuDessus), findsOneWidget, reason: 'la pastille seule (le groupe montre un nombre)');
       expect(tester.takeException(), isNull);
     });
 

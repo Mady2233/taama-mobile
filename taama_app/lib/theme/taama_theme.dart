@@ -41,6 +41,7 @@ class TaamaColors {
   // le gris d'une position pas encore confirmée par le GPS.
   static const Color position = Color(0xFF1A73E8);
   static const Color positionAncienne = Color(0xFF8A94A6);
+  static const Color casque = Color(0xFFF59E0B); // casque du pilote, moto vue de dessus
   static const Color voile = Color(0x8C101828); // derrière une carte qui demande une réponse
   static const Color dangerNight = Color(0xFFF0997B);
   static const Color dangerNightBg = Color(0xFF4A1B0C);

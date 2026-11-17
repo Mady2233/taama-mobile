@@ -23,6 +23,7 @@ import 'package:latlong2/latlong.dart';
 import '../carte/fond_carte.dart';
 import '../theme/taama_theme.dart';
 import 'couche_carte_taama.dart';
+import 'taama/vehicule_vu_dessus.dart';
 
 // ---------------------------------------------------------------------------
 // Modèle d'un véhicule affiché
@@ -386,26 +387,12 @@ class _VehiculeAnimeState extends State<VehiculeAnime>
 
   @override
   Widget build(BuildContext context) {
-    final fond = widget.miseEnAvant
-        ? TaamaColors.primary
-        : (widget.nuit ? TaamaColors.surface : TaamaColors.textPrimary);
-    final couleurIcone = widget.miseEnAvant
-        ? TaamaColors.textOnDark
-        : (widget.nuit ? TaamaColors.textPrimary : TaamaColors.textOnDark);
-
-    final pastille = Container(
-      width: 32,
-      height: 32,
-      decoration: BoxDecoration(
-        color: fond,
-        borderRadius: BorderRadius.circular(TaamaRadius.md),
-        boxShadow: TaamaShadows.card,
-      ),
-      child: Icon(
-        widget.estMoto ? Icons.two_wheeler_rounded : Icons.local_taxi_rounded,
-        size: 19,
-        color: couleurIcone,
-      ),
+    // Vu de dessus, dans le sens de la marche (rotation ci-dessous) : son
+    // liseré blanc et son ombre le détachent de la carte, de jour et de nuit.
+    final pastille = VehiculeVuDessus(
+      estMoto: widget.estMoto,
+      taille: 40,
+      miseEnAvant: widget.miseEnAvant,
     );
 
     if (MediaQuery.disableAnimationsOf(context)) {
