@@ -38,9 +38,11 @@ import '../widgets/alerte_sonnerie.dart';
 import '../widgets/couche_carte_taama.dart';
 import '../widgets/dialogue_deconnexion.dart';
 import '../widgets/voile_deconnexion.dart';
+import '../widgets/vehicule_vu_dessus.dart';
 import '../widgets/widget_avatar_conducteur.dart';
 import 'connexion_screen.dart';
 import 'mes_courses_page.dart';
+import 'mes_courses_screen.dart' show cleJour;
 import 'profil_chauffeur_screen.dart';
 import 'portefeuille_screen.dart';
 import 'chat_screen.dart';
@@ -99,6 +101,15 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
   final MapController _carte = MapController();
   bool _cartePrete = false;
   LatLng? _positionChauffeur;
+
+  /// Direction suivie (radians depuis le nord), seulement en mouvement : à
+  /// l'arrêt, le GPS renvoie un cap qui ne veut rien dire.
+  double _capChauffeur = 0;
+
+  /// Courses terminées aujourd'hui et ce qu'elles ont rapporté (prix payé par
+  /// les clients), lus dans « Mes courses » : null tant qu'inconnus, jamais
+  /// inventés.
+  ({int courses, int total})? _gainsDuJour;
   bool _basculeEnCours = false;
   bool _deconnexionEnCours = false;
 
@@ -114,6 +125,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     _chargerSolde();
     _rafraichirTout();
     _localiser();
+    _chargerGainsDuJour();
     _polling.demarrer();
     _verifierSonnerie();
   }
@@ -150,6 +162,18 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
     super.dispose();
   }
 
+  /// Totaux du jour (heure du téléphone, celle de Bamako), calculés par le
+  /// serveur sur toute la journée. Échec : la carte reste sur « — ».
+  Future<void> _chargerGainsDuJour() async {
+    try {
+      final reponse = await ApiService.mesCourses();
+      if (!mounted) return;
+      setState(() => _gainsDuJour = gainsDuJour(reponse, DateTime.now()));
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Gains] Indisponibles : $e');
+    }
+  }
+
   // ─── Position pour la carte (lecture seule) ───
 
   Future<void> _localiser() async {
@@ -171,7 +195,12 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
       );
       if (!mounted) return;
       final point = LatLng(p.latitude, p.longitude);
-      setState(() => _positionChauffeur = point);
+      setState(() {
+        _positionChauffeur = point;
+        if (p.speed > 1.5 && p.heading >= 0 && p.heading <= 360) {
+          _capChauffeur = p.heading * 3.141592653589793 / 180;
+        }
+      });
       if (_cartePrete) _carte.move(point, 15.5);
     } catch (e) {
       if (kDebugMode) debugPrint('[Carte] Position indisponible : $e');
@@ -749,7 +778,11 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
                         point: _positionChauffeur!,
                         width: 80,
                         height: 80,
-                        child: _MarqueurChauffeur(enLigne: disponible),
+                        child: _MarqueurChauffeur(
+                          enLigne: disponible,
+                          estMoto: _profil?['type_vehicule'] == 'MOTO',
+                          cap: _capChauffeur,
+                        ),
                       ),
                     ],
                   ),
@@ -865,6 +898,10 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
             ),
           ),
         ),
+        if (_libelleType(_profil) case final String type) ...[
+          const SizedBox(width: 8),
+          _PuceType(texte: type, estMoto: _profil?['type_vehicule'] == 'MOTO'),
+        ],
         const SizedBox(width: 10),
         _BoutonRondBlanc(
           icone: Icons.chat_bubble_rounded,
@@ -965,6 +1002,7 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
                 await _chargerSolde();
                 await _rafraichirTout();
                 await _localiser();
+                await _chargerGainsDuJour();
               },
               child: ListView(
                 controller: controleur,
@@ -1016,41 +1054,27 @@ class _EcranEspaceChauffeurState extends State<EcranEspaceChauffeur>
                       AlerteSonnerie(problemes: _problemesSonnerie, onRegler: _reglerSonnerie),
                       const SizedBox(height: 12),
                     ],
-                    _BandeauProfil(profil: _profil!),
+                    _CarteVehicule(profil: _profil!),
+                    const SizedBox(height: 10),
+                    _CarteProfil(profil: _profil!),
+                    const SizedBox(height: 10),
+                    _CarteGains(
+                      gains: _gainsDuJour,
+                      onDetails: () => _ouvrir(const PageMesCourses()),
+                    ),
                     const SizedBox(height: 16),
                   ],
 
-                  // 2. Stats rapides
-                  if (_profil != null) ...[
+                  // 2. Solde (paiement dans l'app seulement)
+                  if (_profil != null && ConfigApp.paiementActif.value) ...[
                     Row(
                       children: [
                         Expanded(
                           child: _CarteStat(
-                            icone: Icons.directions_car_filled_rounded,
-                            couleur: CouleursTaama.terreCuite,
-                            valeur: '${_demandesAssignees.length}',
-                            libelle: 'Courses du jour',
-                          ),
-                        ),
-                        // Mode gratuit (lu sur le serveur) : pas de solde.
-                        if (ConfigApp.paiementActif.value) ...[
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: _CarteStat(
-                              icone: Icons.account_balance_wallet_rounded,
-                              couleur: CouleursTaama.indigo,
-                              valeur: _solde != null ? formaterFcfa(_solde!) : '...',
-                              libelle: 'Solde',
-                            ),
-                          ),
-                        ],
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _CarteStat(
-                            icone: Icons.star_rounded,
-                            couleur: CouleursTaama.or,
-                            valeur: (_profil!['note'] as num?)?.toStringAsFixed(1) ?? '—',
-                            libelle: 'Note',
+                            icone: Icons.account_balance_wallet_rounded,
+                            couleur: CouleursTaama.indigo,
+                            valeur: _solde != null ? formaterFcfa(_solde!) : '...',
+                            libelle: 'Solde',
                           ),
                         ),
                       ],
@@ -1189,8 +1213,10 @@ class _BoutonRondBlanc extends StatelessWidget {
 /// Position du chauffeur sur la carte : pastille véhicule + halo qui pulse
 /// quand il est en ligne (fixe s'il est hors ligne ou animations réduites).
 class _MarqueurChauffeur extends StatefulWidget {
-  const _MarqueurChauffeur({required this.enLigne});
+  const _MarqueurChauffeur({required this.enLigne, required this.estMoto, required this.cap});
   final bool enLigne;
+  final bool estMoto;
+  final double cap;
 
   @override
   State<_MarqueurChauffeur> createState() => _MarqueurChauffeurState();
@@ -1259,16 +1285,24 @@ class _MarqueurChauffeurState extends State<_MarqueurChauffeur>
             ],
           );
         },
+        // Son véhicule vu de dessus, sur un disque blanc cerclé de l'état
+        // (en ligne : terre cuite ; hors ligne : gris).
         child: Container(
-          width: 36,
-          height: 36,
+          width: 46,
+          height: 46,
+          alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: couleur,
+            color: Colors.white,
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 3),
+            border: Border.all(color: couleur, width: 3),
             boxShadow: _ombreFlottante,
           ),
-          child: const Icon(Icons.navigation_rounded, color: Colors.white, size: 18),
+          child: VehiculeVuDessus(
+            estMoto: widget.estMoto,
+            cap: widget.cap,
+            taille: 34,
+            miseEnAvant: widget.enLigne,
+          ),
         ),
       ),
     );
@@ -1672,50 +1706,279 @@ class _ValeurAnimee extends StatelessWidget {
   }
 }
 
-/// Véhicule, note et vérification du chauffeur (sous le gros bouton).
-class _BandeauProfil extends StatelessWidget {
-  const _BandeauProfil({required this.profil});
+/// Courses terminées le jour de [maintenant] et leur total, lus dans une
+/// réponse de « Mes courses » (`jours`, calculés par le serveur sur toute la
+/// journée). Aucun total pour ce jour : aucune course terminée, 0.
+({int courses, int total}) gainsDuJour(Map<String, dynamic> reponse, DateTime maintenant) {
+  final jour = ((reponse['jours'] as Map?) ?? const {})[cleJour(maintenant)];
+  return (
+    courses: jour is Map ? (jour['courses'] as num?)?.toInt() ?? 0 : 0,
+    total: jour is Map ? (jour['total'] as num?)?.toInt() ?? 0 : 0,
+  );
+}
+
+/// « MOTO », « BERLINE », « 4X4 »… ; null si le type n'est pas renseigné.
+String? _libelleType(Map<String, dynamic>? profil) {
+  final type = profil?['type_vehicule']?.toString().trim() ?? '';
+  return type.isEmpty || type == 'null' ? null : type.toUpperCase();
+}
+
+/// Type du véhicule, dans la barre du haut.
+class _PuceType extends StatelessWidget {
+  const _PuceType({required this.texte, required this.estMoto});
+  final String texte;
+  final bool estMoto;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 36),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: _ombreFlottante,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(estMoto ? Icons.two_wheeler : Icons.directions_car_filled_rounded,
+              size: 16, color: CouleursTaama.indigo),
+          const SizedBox(width: 5),
+          Text(
+            texte,
+            style: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
+              color: CouleursTaama.indigo,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Carte blanche commune aux cartes de l'accueil.
+BoxDecoration get _decorCarte => BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      boxShadow: _ombreCarte,
+    );
+
+/// Le véhicule : vu de dessus, modèle, couleur et plaque ; climatisation.
+class _CarteVehicule extends StatelessWidget {
+  const _CarteVehicule({required this.profil});
   final Map<String, dynamic> profil;
 
-  /// « Toyota Corolla • AB1234 », sans jamais afficher « null ».
-  String get _ligneVehicule => [profil['vehicule'], profil['plaque']]
-      .map((v) => v?.toString().trim() ?? '')
-      .where((v) => v.isNotEmpty && v != 'null')
-      .join(' • ');
+  String _texte(String cle) {
+    final v = profil[cle]?.toString().trim() ?? '';
+    return v == 'null' ? '' : v;
+  }
 
-  Widget _badgeVerification(BuildContext context) {
+  @override
+  Widget build(BuildContext context) {
+    final modele = _texte('vehicule');
+    final plaque = _texte('plaque');
+    final couleur = _texte('couleur');
+    final sousLigne = [plaque, couleur].where((v) => v.isNotEmpty).join(' · ');
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 10, 14, 10),
+      decoration: _decorCarte,
+      child: Row(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: CouleursTaama.sable,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: VehiculeVuDessus(
+              estMoto: profil['type_vehicule'] == 'MOTO',
+              // Vu de profil, comme garé : il tourne vers la droite.
+              cap: 3.141592653589793 / 2,
+              taille: 46,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  modele.isEmpty ? 'Véhicule non renseigné' : modele,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15.5,
+                    color: modele.isEmpty ? CouleursTaama.grisTexte : CouleursTaama.indigo,
+                  ),
+                ),
+                if (sousLigne.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    sousLigne,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
+                      color: CouleursTaama.grisTexte,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (profil['climatisation'] == true) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: CouleursTaama.or.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.ac_unit, size: 13, color: CouleursTaama.or),
+                  SizedBox(width: 3),
+                  Text('Clim',
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: CouleursTaama.or)),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Le chauffeur : photo, nom, note et nombre de courses, vérification.
+class _CarteProfil extends StatelessWidget {
+  const _CarteProfil({required this.profil});
+  final Map<String, dynamic> profil;
+
+  @override
+  Widget build(BuildContext context) {
+    final prenom = profil['prenom']?.toString().trim() ?? '';
+    final nom = profil['nom']?.toString().trim() ?? '';
+    final complet = [prenom, nom].where((v) => v.isNotEmpty && v != 'null').join(' ');
+    final note = (profil['note'] as num?)?.toDouble();
+    final courses = (profil['nombre_courses'] as num?)?.toInt() ?? 0;
+    final verifie = profil['verifie'] == true;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      decoration: _decorCarte,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              AvatarConducteur(
+                photoUrl: profil['photo_profil'] as String?,
+                nom: complet,
+                radius: 24,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      complet.isEmpty ? 'Mon profil' : complet,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15.5,
+                        color: CouleursTaama.indigo,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    // Note et nombre de courses : passent à la ligne d'un
+                    // bloc, sans séparateur orphelin en grand texte.
+                    Wrap(
+                      spacing: 12,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.star_rounded, size: 15, color: CouleursTaama.or),
+                            const SizedBox(width: 3),
+                            Text(
+                              note != null ? note.toStringAsFixed(1).replaceAll('.', ',') : '—',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: CouleursTaama.indigo,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          '$courses\u00a0course${courses > 1 ? 's' : ''}',
+                          style: const TextStyle(fontSize: 13, color: CouleursTaama.grisTexte),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              _BadgeVerification(profil: profil),
+            ],
+          ),
+          // Le serveur ne propose aucune course à un compte non vérifié.
+          if (!verifie) ...[
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const EcranVerificationConducteur()),
+              ),
+              child: const Text(
+                'Tu recevras des courses une fois ton compte vérifié.',
+                style: TextStyle(fontSize: 12, color: CouleursTaama.grisTexte),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// « Vérifié », « En attente » ou « Non vérifié » : ouvre la vérification.
+class _BadgeVerification extends StatelessWidget {
+  const _BadgeVerification({required this.profil});
+  final Map<String, dynamic> profil;
+
+  @override
+  Widget build(BuildContext context) {
     final verifie = profil['verifie'] as bool? ?? false;
     final statut = profil['statut_verification']?.toString() ?? 'non_soumis';
-
-    late Color couleur;
-    late IconData icone;
-    late String libelle;
-
-    if (verifie) {
-      couleur = Colors.green;
-      icone = Icons.check_circle;
-      libelle = 'Vérifié';
-    } else if (statut == 'en_attente') {
-      couleur = CouleursTaama.or;
-      icone = Icons.hourglass_top;
-      libelle = 'En attente';
-    } else {
-      couleur = Colors.red;
-      icone = Icons.cancel;
-      libelle = 'Non vérifié';
-    }
-
-    return GestureDetector(
+    final (couleur, icone, libelle) = verifie
+        ? (Colors.green.shade700, Icons.verified_rounded, 'Vérifié')
+        : statut == 'en_attente'
+            ? (CouleursTaama.or, Icons.hourglass_top, 'En attente')
+            : (Colors.red, Icons.cancel, 'Non vérifié');
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
       onTap: () => Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => const EcranVerificationConducteur(),
-        ),
+        MaterialPageRoute(builder: (context) => const EcranVerificationConducteur()),
       ),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: couleur.withValues(alpha: 0.15),
+          color: couleur.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
@@ -1723,65 +1986,86 @@ class _BandeauProfil extends StatelessWidget {
           children: [
             Icon(icone, color: couleur, size: 14),
             const SizedBox(width: 4),
-            Text(
-              libelle,
-              style: TextStyle(color: couleur, fontWeight: FontWeight.bold, fontSize: 12),
-            ),
+            Text(libelle, style: TextStyle(color: couleur, fontWeight: FontWeight.bold, fontSize: 12)),
           ],
         ),
       ),
     );
   }
+}
+
+/// Gains du jour : courses terminées aujourd'hui et ce qu'elles ont
+/// rapporté (prix payé, espèces comprises). « Détails » ouvre Mes courses.
+class _CarteGains extends StatelessWidget {
+  const _CarteGains({required this.gains, required this.onDetails});
+  final ({int courses, int total})? gains;
+  final VoidCallback onDetails;
 
   @override
   Widget build(BuildContext context) {
+    final g = gains;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: _ombreCarte,
-      ),
+      padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+      decoration: _decorCarte,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.directions_car_filled_rounded,
-                  color: CouleursTaama.indigo, size: 22),
-              const SizedBox(width: 10),
-              Expanded(
+              const Expanded(
                 child: Text(
-                  _ligneVehicule.isEmpty ? 'Véhicule non renseigné' : _ligneVehicule,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  'GAINS DU JOUR',
                   style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                    color: _ligneVehicule.isEmpty ? Colors.grey.shade600 : null,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
+                    color: CouleursTaama.grisTexte,
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              _badgeVerification(context),
-            ],
-          ),
-          // Le serveur ne propose aucune course à un compte non vérifié.
-          if (profil['verifie'] != true) ...[
-            const SizedBox(height: 8),
-            InkWell(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const EcranVerificationConducteur(),
+              TextButton(
+                onPressed: onDetails,
+                style: TextButton.styleFrom(
+                  foregroundColor: CouleursTaama.terreCuite,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Détails', style: TextStyle(fontWeight: FontWeight.w800)),
+                    Icon(Icons.chevron_right_rounded, size: 18),
+                  ],
                 ),
               ),
-              child: const Text(
-                'Vous recevrez des courses une fois votre compte vérifié.',
-                style: TextStyle(fontSize: 12, color: CouleursTaama.grisTexte),
+            ],
+          ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    g == null ? '—' : formaterFcfa(g.total),
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w900,
+                      color: CouleursTaama.indigo,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: Text(
+                  g == null ? '' : '${g.courses}\u00a0course${g.courses > 1 ? 's' : ''} terminée${g.courses > 1 ? 's' : ''}',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: CouleursTaama.grisTexte),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
