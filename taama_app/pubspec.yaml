@@ -84,6 +84,11 @@ flutter:
   assets:
     - assets/fonts/OFL-Sora.txt
     - assets/fonts/OFL-Manrope.txt
+    # Illustrations des catégories (choix du service).
+    - assets/vehicules/vehicule_berline.png
+    - assets/vehicules/vehicule_moto.png
+    - assets/vehicules/vehicule_suv.png
+    - assets/vehicules/vehicule_tricycle.png
   fonts:
     - family: Sora
       fonts:

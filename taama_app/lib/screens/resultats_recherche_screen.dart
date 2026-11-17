@@ -110,6 +110,10 @@ class _EcranDemandeInstantaneeState
   double? _destinationLat;
   double? _destinationLng;
 
+  // Durée du trajet (OSRM, sans arrêt), pour l'arrivée estimée et l'heure
+  // de dépose du choix de catégorie. Null : inconnue, jamais inventée.
+  int? _dureeTrajetMin;
+
   // Code promo — validé côté serveur avant confirmation (aperçu, ne
   // consomme aucun quota) ; la réduction réellement appliquée dépend du
   // véhicule choisi ensuite dans le bottom sheet et n'est recalculée
@@ -242,6 +246,21 @@ class _EcranDemandeInstantaneeState
     }
   }
 
+  /// Durée du trajet, sans bloquer l'écran ni le prix : seulement sans arrêt
+  /// (avec arrêts, l'itinéraire se découpe en jambes : pas d'heure affichée).
+  Future<void> _chargerDureeTrajet() async {
+    final dLat = _departLat, dLng = _departLng, aLat = _destinationLat, aLng = _destinationLng;
+    if (_arrets.isNotEmpty || dLat == null || dLng == null || aLat == null || aLng == null) {
+      if (mounted && _dureeTrajetMin != null) setState(() => _dureeTrajetMin = null);
+      return;
+    }
+    final duree = await RoutingService.dureeMinutesVers(
+      depart: LatLng(dLat, dLng),
+      arrivee: LatLng(aLat, aLng),
+    );
+    if (mounted) setState(() => _dureeTrajetMin = duree);
+  }
+
   /// Géocode un texte d'adresse via Nominatim (OSM, gratuit) — `null` si
   /// introuvable ou en cas d'erreur réseau, jamais d'exception.
   Future<LatLng?> _geocoder(String texte) async {
@@ -295,6 +314,7 @@ class _EcranDemandeInstantaneeState
         _distanceKm = services.isNotEmpty ? services.first.distanceKm : null;
         _erreur = null;
       });
+      _chargerDureeTrajet();
     } on EstimationIndisponibleException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -365,6 +385,7 @@ class _EcranDemandeInstantaneeState
       distanceKm: _distanceKm!,
       typePreselectionne: widget.typePreselectionne,
       services: services,
+      dureeTrajetMinutes: _arrets.isEmpty ? _dureeTrajetMin : null,
     );
     if (choix == null || !mounted) return;
 

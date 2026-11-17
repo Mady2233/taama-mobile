@@ -1,20 +1,30 @@
 import 'package:flutter/material.dart';
 import '../models/service_course.dart';
 import '../theme/couleurs_taama.dart';
+import '../theme/taama_theme.dart';
 import '../utils/format.dart';
 
-/// Bottom sheet style DiDi : affiche les services disponibles (catalogue
-/// TypeService) avec leur devis figé côté serveur, AVANT que le client
-/// confirme la demande. Plus aucun prix calculé ici : chaque carte affiche
-/// exactement le `prix`/`devisId` reçus de POST /trajets/estimer/ (voir
-/// ApiService.estimerCourse) — le choix du client renvoie ce devis tel quel,
-/// jamais un montant recalculé côté app.
+/// Feuille « Choisis ta catégorie » : les services (catalogue TypeService)
+/// avec leur devis figé côté serveur, AVANT que le client confirme. Aucun
+/// prix calculé ici : chaque carte affiche exactement le `prix`/`devisId`
+/// reçus de POST /trajets/estimer/ (voir ApiService.estimerCourse), et le
+/// choix renvoie ce devis tel quel.
+///
+/// Le client touche une carte (elle s'entoure), puis « Continuer ». Un
+/// service sans devis propose un repli au toucher.
+///
+/// [dureeTrajetMinutes] : durée du trajet (OSRM), pour « Dépose à 14h42 » et
+/// l'arrivée estimée ; null : ces heures ne sont pas affichées, jamais
+/// inventées. [horloge] : l'heure de référence (les tests la fixent).
 Future<Map<String, dynamic>?> afficherChoixVehicule(
   BuildContext context, {
   required String destination,
   required double distanceKm,
   String? typePreselectionne,
   required List<ServiceCourse> services,
+  String depart = 'Ma position',
+  int? dureeTrajetMinutes,
+  DateTime Function()? horloge,
 }) async {
   // typePreselectionne ('Voiture'/'Moto', ex. depuis l'écran Services) filtre
   // la liste plutôt que de sauter le choix : le client voit toujours le prix
@@ -31,32 +41,162 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
   final sansChauffeur = base.where((s) => !s.disponible && s.devisId != null).toList()..sort(parPrix);
   final nonCommandables = base.where((s) => s.devisId == null).toList();
   final servicesTries = [...disponibles, ...sansChauffeur, ...nonCommandables];
-  // Le premier commandable pilote l'en-tête (temps estimé, majoration,
-  // détail de prix) — les autres services partagent le même trajet/la même
-  // majoration horaire, seule leur tarification propre diffère.
-  final ServiceCourse? reference =
-      disponibles.isNotEmpty ? disponibles.first : (sansChauffeur.isNotEmpty ? sansChauffeur.first : null);
-  final majoration = reference?.detail?['raison_majoration'] as String?;
 
   return showModalBottomSheet<Map<String, dynamic>>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (context) => Container(
-      // isScrollControlled: true laisse le sheet grandir jusqu'à toute la
-      // hauteur de l'écran, mais un contenu non scrollable déborde quand
-      // même si les cartes de service (mode dynamique, plusieurs services)
-      // ne tiennent pas — bandes jaune/noir en bas. ConstrainedBox +
-      // SingleChildScrollView : le sheet peut défiler au lieu de déborder.
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.9,
-      ),
+    builder: (context) => _FeuilleChoix(
+      services: servicesTries,
+      depart: depart,
+      destination: destination,
+      distanceKm: distanceKm,
+      dureeTrajetMinutes: dureeTrajetMinutes,
+      maintenant: (horloge ?? DateTime.now)(),
+    ),
+  );
+}
+
+/// « 3,2 km ».
+String formaterKm(double km) => '${km.toStringAsFixed(1).replaceAll('.', ',')}\u00a0km';
+
+/// « 14h42 ».
+String formaterHeure(DateTime heure) =>
+    '${heure.hour}h${heure.minute.toString().padLeft(2, '0')}';
+
+/// Badges calculés sur la liste affichée, jamais inventés : « Le moins
+/// cher » (prix le plus bas parmi les services commandables) et « Le plus
+/// rapide » (attente la plus courte parmi ceux qui ont un chauffeur proche),
+/// seulement s'il y a de quoi comparer et un seul gagnant.
+({int? moinsCher, int? plusRapide}) badgesServices(List<ServiceCourse> services) {
+  int? seulMinimum(List<ServiceCourse> candidats, int Function(ServiceCourse) valeur) {
+    if (candidats.length < 2) return null;
+    final minimum = candidats.map(valeur).reduce((a, b) => a < b ? a : b);
+    final gagnants = candidats.where((s) => valeur(s) == minimum).toList();
+    return gagnants.length == 1 ? gagnants.single.id : null;
+  }
+
+  return (
+    moinsCher: seulMinimum(
+      services.where((s) => s.devisId != null && s.prix != null).toList(),
+      (s) => s.prix!,
+    ),
+    plusRapide: seulMinimum(
+      services.where((s) => s.devisId != null && s.disponible && s.etaMinutes != null).toList(),
+      (s) => s.etaMinutes!,
+    ),
+  );
+}
+
+/// Illustration du véhicule (vue de côté), selon le type du service.
+String imageVehicule(String typeVehicule) => switch (typeVehicule) {
+      'MOTO' => 'assets/vehicules/vehicule_moto.png',
+      '4X4' => 'assets/vehicules/vehicule_suv.png',
+      'TRICYCLE' => 'assets/vehicules/vehicule_tricycle.png',
+      _ => 'assets/vehicules/vehicule_berline.png',
+    };
+
+Map<String, dynamic> _choixDe(ServiceCourse s) => {
+      'type_service': s.id,
+      'devis_id': s.devisId,
+      'prix_estime': s.prix,
+      'temps_minutes': s.etaMinutes,
+      'disponible': s.disponible,
+    };
+
+class _FeuilleChoix extends StatefulWidget {
+  const _FeuilleChoix({
+    required this.services,
+    required this.depart,
+    required this.destination,
+    required this.distanceKm,
+    required this.dureeTrajetMinutes,
+    required this.maintenant,
+  });
+
+  final List<ServiceCourse> services;
+  final String depart;
+  final String destination;
+  final double distanceKm;
+  final int? dureeTrajetMinutes;
+  final DateTime maintenant;
+
+  @override
+  State<_FeuilleChoix> createState() => _FeuilleChoixState();
+}
+
+class _FeuilleChoixState extends State<_FeuilleChoix> {
+  /// Le premier service commandable est choisi d'avance (le moins cher avec
+  /// un chauffeur proche, sinon le moins cher) : un seul geste suffit.
+  late ServiceCourse? _choisi =
+      widget.services.where((s) => s.devisId != null).firstOrNull;
+
+  void _toucher(ServiceCourse service) {
+    if (service.devisId != null) {
+      setState(() => _choisi = service);
+      return;
+    }
+    // Non commandable : propose un repli plutôt que de laisser le client
+    // face à une carte grisée sans issue.
+    final repli = trouverStandardDeRepli(widget.services);
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => repli != null
+          ? AlertDialog(
+              title: Text('${service.nom} indisponible'),
+              content: Text(
+                'Le service ${service.nom} n\'est pas encore proposé.\n\n'
+                'Commander ${repli.nom} à ${formaterFcfaApi(repli.prix) ?? '—'} à la place ?',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Annuler'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    // Ferme d'abord le dialog (son propre context), PUIS la
+                    // feuille — jamais l'inverse.
+                    Navigator.pop(dialogContext);
+                    Navigator.pop(context, _choixDe(repli));
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: CouleursTaama.terreCuite,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Commander'),
+                ),
+              ],
+            )
+          : AlertDialog(
+              title: const Text('Indisponible'),
+              content: const Text('Ce service n\'est pas encore proposé.'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final services = widget.services;
+    final reference = services.where((s) => s.devisId != null).firstOrNull;
+    final majoration = reference?.detail?['raison_majoration'] as String?;
+    final badges = badgesServices(services);
+    final choisi = _choisi;
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.9),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: TaamaColors.background,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: const EdgeInsets.all(20),
-      child: SingleChildScrollView(
+      child: SafeArea(
+        top: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -65,194 +205,424 @@ Future<Map<String, dynamic>?> afficherChoixVehicule(
               child: Container(
                 width: 40,
                 height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
+                margin: const EdgeInsets.only(top: 10, bottom: 12),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
+                  color: TaamaColors.border,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
             ),
-
-            Text(
-              'Vers $destination',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-                color: CouleursTaama.indigo,
-              ),
-            ),
-            Text(
-              reference?.etaMinutes != null
-                  ? '${distanceKm.toStringAsFixed(1)} km • ${reference!.etaMinutes} min estimé'
-                  : '${distanceKm.toStringAsFixed(1)} km',
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-            ),
-
-            // Badge majoration si heure de pointe
-            if (majoration != null) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Icon(
-                      Icons.access_time,
-                      color: Colors.orange,
-                      size: 14,
+                    _EnTeteTrajet(
+                      depart: widget.depart,
+                      destination: widget.destination,
+                      distanceKm: widget.distanceKm,
+                      dureeTrajetMinutes: widget.dureeTrajetMinutes,
+                      maintenant: widget.maintenant,
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '$majoration — tarif majoré',
-                      style: const TextStyle(
-                        color: Colors.orange,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+                    if (majoration != null) ...[
+                      const SizedBox(height: 10),
+                      _BandeauMajoration(raison: majoration),
+                    ],
+                    const SizedBox(height: 18),
+                    Text('Choisis ta catégorie', style: TaamaText.title.copyWith(fontSize: 20)),
+                    const SizedBox(height: 12),
+                    if (services.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 24),
+                        child: Text(
+                          'Aucun service disponible pour ce trajet pour le moment.',
+                          textAlign: TextAlign.center,
+                          style: TaamaText.muted,
+                        ),
+                      )
+                    else
+                      for (final service in services) ...[
+                        _CarteService(
+                          service: service,
+                          choisi: identical(service, choisi),
+                          moinsCher: badges.moinsCher == service.id,
+                          plusRapide: badges.plusRapide == service.id,
+                          depose: widget.dureeTrajetMinutes != null && service.etaMinutes != null
+                              ? widget.maintenant.add(Duration(
+                                  minutes: service.etaMinutes! + widget.dureeTrajetMinutes!))
+                              : null,
+                          onTap: () => _toucher(service),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                    if (reference?.detail != null)
+                      Center(
+                        child: TextButton.icon(
+                          onPressed: () => _afficherDetailPrix(context, reference!.detail!),
+                          icon: const Icon(Icons.info_outline, size: 15),
+                          label: const Text('Comment est calculé le prix ?'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: TaamaColors.textSecondary,
+                            textStyle: const TextStyle(fontSize: 12.5),
+                          ),
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
-            ],
-
-            const SizedBox(height: 16),
-            const Text(
-              'Choisir un véhicule',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
             ),
-            const SizedBox(height: 12),
-
-            if (servicesTries.isEmpty)
+            if (choisi != null)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Text(
-                  'Aucun service disponible pour ce trajet pour le moment.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey.shade600),
-                ),
-              )
-            else ...[
-              // Une carte par ServiceCourse (avec chauffeur proche d'abord,
-              // puis sans chauffeur, puis non commandables grisés — voir
-              // servicesTries plus haut).
-              for (final service in servicesTries) ...[
-                _CarteService(
-                  service: service,
-                  onTap: () {
-                    if (service.devisId != null) {
-                      Navigator.pop(context, {
-                        'type_service': service.id,
-                        'devis_id': service.devisId,
-                        'prix_estime': service.prix,
-                        'temps_minutes': service.etaMinutes,
-                        'disponible': service.disponible,
-                      });
-                      return;
-                    }
-
-                    // Non commandable : propose un repli plutôt que de laisser
-                    // le client face à une carte grisée sans issue.
-                    final repli = trouverStandardDeRepli(servicesTries);
-                    if (repli != null) {
-                      showDialog(
-                        context: context,
-                        builder: (dialogContext) => AlertDialog(
-                          title: Text('${service.nom} indisponible'),
-                          content: Text(
-                            'Le service ${service.nom} n\'est pas encore proposé.\n\n'
-                            'Commander ${repli.nom} à ${formaterFcfaApi(repli.prix) ?? '—'} à la place ?',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(dialogContext),
-                              child: const Text('Annuler'),
-                            ),
-                            ElevatedButton(
-                              onPressed: () {
-                                // Ferme d'abord le dialog (son propre
-                                // context), PUIS le sheet (context du
-                                // builder ci-dessus) — jamais l'inverse,
-                                // sinon le dialog resterait affiché sur un
-                                // sheet déjà fermé.
-                                Navigator.pop(dialogContext);
-                                Navigator.pop(context, {
-                                  'type_service': repli.id,
-                                  'devis_id': repli.devisId,
-                                  'prix_estime': repli.prix,
-                                  'temps_minutes': repli.etaMinutes,
-                                  'disponible': repli.disponible,
-                                });
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: CouleursTaama.terreCuite,
-                                foregroundColor: Colors.white,
-                              ),
-                              child: const Text('Commander'),
-                            ),
-                          ],
-                        ),
-                      );
-                    } else {
-                      showDialog(
-                        context: context,
-                        builder: (dialogContext) => AlertDialog(
-                          title: const Text('Indisponible'),
-                          content: const Text(
-                            'Ce service n\'est pas encore proposé.',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(dialogContext),
-                              child: const Text('OK'),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-                  },
-                ),
-                const SizedBox(height: 10),
-              ],
-            ],
-            const SizedBox(height: 12),
-
-            // Détail du prix (transparence totale)
-            if (reference?.detail != null)
-              GestureDetector(
-                onTap: () => _afficherDetailPrix(context, reference!.detail!),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.info_outline,
-                      size: 14,
-                      color: Colors.grey.shade500,
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(context, _choixDe(choisi)),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: TaamaColors.primary,
+                    minimumSize: const Size.fromHeight(54),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(TaamaRadius.lg),
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Comment est calculé le prix ?',
-                      style: TextStyle(
-                        color: Colors.grey.shade500,
-                        fontSize: 12,
-                        decoration: TextDecoration.underline,
-                      ),
+                  ),
+                  child: Text(
+                    'Continuer avec ${choisi.nom}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TaamaText.body.copyWith(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
                     ),
-                  ],
+                  ),
                 ),
               ),
-            const SizedBox(height: 8),
           ],
         ),
       ),
-    ),
-  );
+    );
+  }
+}
+
+/// « Ma position → Grand Marché », puis l'arrivée estimée (si la durée du
+/// trajet est connue) et la distance.
+class _EnTeteTrajet extends StatelessWidget {
+  const _EnTeteTrajet({
+    required this.depart,
+    required this.destination,
+    required this.distanceKm,
+    required this.dureeTrajetMinutes,
+    required this.maintenant,
+  });
+
+  final String depart;
+  final String destination;
+  final double distanceKm;
+  final int? dureeTrajetMinutes;
+  final DateTime maintenant;
+
+  @override
+  Widget build(BuildContext context) {
+    final km = formaterKm(distanceKm);
+    final duree = dureeTrajetMinutes;
+    final detail = duree == null
+        ? km
+        : 'Arrivée estimée : ${formaterHeure(maintenant.add(Duration(minutes: duree)))}'
+            ' · $duree\u00a0min ($km)';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: TaamaColors.surface,
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        boxShadow: TaamaShadows.card,
+      ),
+      child: Row(
+        children: [
+          // Départ (rond) relié à la destination (carré), comme le tracé.
+          const Column(
+            children: [
+              Icon(Icons.circle, size: 10, color: TaamaColors.primary),
+              SizedBox(height: 2, child: VerticalDivider(width: 2, color: TaamaColors.primary)),
+              SizedBox(width: 2, height: 14, child: ColoredBox(color: TaamaColors.primary)),
+              Icon(Icons.stop_rounded, size: 14, color: TaamaColors.navy),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text.rich(
+                  TextSpan(children: [
+                    TextSpan(text: depart),
+                    const TextSpan(text: '  →  ', style: TextStyle(color: TaamaColors.primary)),
+                    TextSpan(text: destination),
+                  ]),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TaamaText.body.copyWith(fontSize: 14.5, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 3),
+                Text(detail, style: TaamaText.muted.copyWith(fontSize: 12.5)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BandeauMajoration extends StatelessWidget {
+  const _BandeauMajoration({required this.raison});
+
+  final String raison;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: TaamaColors.warningSoft,
+        borderRadius: BorderRadius.circular(TaamaRadius.md),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.access_time_rounded, color: TaamaColors.warning, size: 16),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '$raison — tarif majoré',
+              style: TaamaText.body.copyWith(
+                color: TaamaColors.warning,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Une catégorie : illustration du véhicule, nom et places, attente et heure
+/// de dépose, description, badges, prix. Toujours touchable, même sans devis
+/// (le toucher propose alors un repli).
+class _CarteService extends StatelessWidget {
+  const _CarteService({
+    required this.service,
+    required this.choisi,
+    required this.moinsCher,
+    required this.plusRapide,
+    required this.depose,
+    required this.onTap,
+  });
+
+  final ServiceCourse service;
+  final bool choisi;
+  final bool moinsCher;
+  final bool plusRapide;
+  final DateTime? depose;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final commandable = service.devisId != null;
+    final eta = service.etaMinutes;
+    final ligneAttente = !commandable
+        ? null
+        : service.disponible && eta != null
+            ? [
+                '$eta\u00a0min d’attente',
+                if (depose != null) 'Dépose à ${formaterHeure(depose!)}',
+              ].join(' · ')
+            : 'Recherche à la commande';
+    final badges = [
+      if (plusRapide) const _Badge('Le plus rapide', TaamaColors.success, TaamaColors.successSoft),
+      if (moinsCher) const _Badge('Le moins cher', TaamaColors.primary, TaamaColors.primarySoft),
+      if (service.necessiteClimatisation)
+        const _Badge('Climatisé', TaamaColors.warning, TaamaColors.warningSoft, icone: Icons.ac_unit),
+    ];
+
+    final carte = Material(
+      color: TaamaColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        side: BorderSide(
+          color: choisi ? TaamaColors.primary : TaamaColors.border,
+          width: choisi ? 2 : 1,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(TaamaRadius.lg),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 12, 14, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+          Row(
+            children: [
+              Container(
+                width: 76,
+                height: 60,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: choisi ? TaamaColors.primarySoft : TaamaColors.surfaceMuted,
+                  borderRadius: BorderRadius.circular(TaamaRadius.md),
+                ),
+                // Les illustrations ont de larges marges transparentes : on
+                // les agrandit dans leur cadre.
+                child: Transform.scale(
+                  scale: 1.45,
+                  child: Image.asset(
+                  imageVehicule(service.typeVehicule),
+                  fit: BoxFit.contain,
+                  excludeFromSemantics: true,
+                  // Image absente (test, asset retiré) : l'icône du type.
+                  errorBuilder: (_, __, ___) => Icon(
+                    service.typeVehicule == 'MOTO' ? Icons.two_wheeler : Icons.directions_car,
+                    color: TaamaColors.navy,
+                  ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            service.nom,
+                            overflow: TextOverflow.ellipsis,
+                            style: TaamaText.body.copyWith(fontSize: 16, fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        if (service.placesMax > 0) ...[
+                          const SizedBox(width: 8),
+                          const Icon(Icons.person_outline_rounded, size: 15, color: TaamaColors.textSecondary),
+                          Text(
+                            '${service.placesMax}',
+                            semanticsLabel: '${service.placesMax} places',
+                            textScaler: TextScaler.noScaling,
+                            style: TaamaText.muted.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (ligneAttente != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        ligneAttente,
+                        style: TaamaText.body.copyWith(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: service.disponible ? TaamaColors.success : TaamaColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                    if (service.description.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        service.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TaamaText.muted.copyWith(fontSize: 12),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              commandable && service.prix != null
+                  // Largeur plafonnée : en grand texte, le prix rétrécit au
+                  // lieu de pousser le nom hors de la carte.
+                  ? ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 104),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              formaterFcfa(service.prix!),
+                              style: TaamaText.title.copyWith(fontSize: 18, color: TaamaColors.navy),
+                            ),
+                            Text('prix annoncé', style: TaamaText.muted.copyWith(fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                    )
+                  : Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: TaamaColors.surfaceMuted,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Indisponible',
+                        style: TaamaText.muted.copyWith(fontSize: 11, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+            ],
+          ),
+          // Badges sur leur propre ligne, sous les textes : toute la largeur
+          // de la carte, même en grand texte.
+          if (badges.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 88, top: 6),
+              child: Wrap(spacing: 6, runSpacing: 4, children: badges),
+            ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    // Non commandable : opacité réduite, mais toujours touchable (repli).
+    return Semantics(
+      selected: choisi,
+      child: commandable ? carte : Opacity(opacity: 0.5, child: carte),
+    );
+  }
+}
+
+class _Badge extends StatelessWidget {
+  const _Badge(this.texte, this.couleur, this.fond, {this.icone});
+
+  final String texte;
+  final Color couleur;
+  final Color fond;
+  final IconData? icone;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(color: fond, borderRadius: BorderRadius.circular(TaamaRadius.pill)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icone != null) ...[
+            Icon(icone, size: 11, color: couleur),
+            const SizedBox(width: 3),
+          ],
+          Flexible(
+            child: Text(
+              texte,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: couleur),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Détail tel que renvoyé par calculer_prix_service (backend) : pas de
@@ -334,191 +704,5 @@ class _LignePrix extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-IconData _iconePourTypeVehicule(String typeVehicule) {
-  switch (typeVehicule) {
-    case 'MOTO':
-      return Icons.two_wheeler;
-    case 'BERLINE':
-      return Icons.directions_car;
-    case '4X4':
-      return Icons.directions_car;
-    case 'TRICYCLE':
-      return Icons.electric_rickshaw;
-    default:
-      return Icons.directions_car;
-  }
-}
-
-Color _couleurPourService(ServiceCourse service) {
-  if (service.necessiteClimatisation) return CouleursTaama.or;
-  return service.typeVehicule == 'MOTO'
-      ? CouleursTaama.terreCuite
-      : CouleursTaama.indigo;
-}
-
-/// Carte MODE DYNAMIQUE — un service (ServiceCourse) du catalogue. Même
-/// style visuel que _CarteVehicule (fond/bordure alpha, radius 14) sans
-/// modifier ce dernier, qui reste utilisé par le mode statique.
-///
-/// Toujours tappable (jamais onTap: null), même indisponible — c'est ce tap
-/// qui déclenche la proposition de repli (voir l'appelant).
-class _CarteService extends StatelessWidget {
-  final ServiceCourse service;
-  final VoidCallback onTap;
-
-  const _CarteService({required this.service, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final couleur = _couleurPourService(service);
-    final icone = _iconePourTypeVehicule(service.typeVehicule);
-
-    final carte = GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: couleur.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: couleur.withValues(alpha: 0.3)),
-        ),
-        child: Row(
-          children: [
-            Icon(icone, size: 32, color: couleur),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          service.nom,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                            color: couleur,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (service.necessiteClimatisation) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: CouleursTaama.or.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.ac_unit,
-                                size: 11,
-                                color: CouleursTaama.or,
-                              ),
-                              const SizedBox(width: 2),
-                              const Text(
-                                'Climatisé',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: CouleursTaama.or,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  // Pas de ligne (ni SizedBox, ni Text vide) si la
-                  // description est vide — évite un espace mort dans la mise
-                  // en page.
-                  if (service.description.isNotEmpty)
-                    Text(
-                      service.description,
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 12,
-                      ),
-                    ),
-                  if (service.disponible && service.etaMinutes != null)
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.access_time,
-                          size: 12,
-                          color: Colors.green,
-                        ),
-                        const SizedBox(width: 3),
-                        Text(
-                          '${service.etaMinutes} min',
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    )
-                  else if (service.devisId != null)
-                    Text(
-                      'Recherche à la commande',
-                      style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                    ),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (service.devisId != null && service.prix != null)
-                  Text(
-                    formaterFcfa(service.prix!),
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                      color: couleur,
-                    ),
-                  )
-                else
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      'Indisponible',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade700,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                if (service.devisId != null)
-                  const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-
-    // Non commandable : opacité réduite, mais PAS IgnorePointer/AbsorbPointer —
-    // la carte doit rester tappable (déclenche le repli).
-    return service.devisId != null ? carte : Opacity(opacity: 0.5, child: carte);
   }
 }
