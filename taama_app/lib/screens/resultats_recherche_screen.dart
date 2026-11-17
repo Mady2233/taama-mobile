@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
@@ -21,7 +22,9 @@ import '../widgets/couche_carte_taama.dart';
 import '../carte/fond_carte.dart';
 import '../widgets/choix_mode_chauffeur.dart';
 import '../widgets/choix_offre.dart';
+import '../widgets/taama/vehicule_vu_dessus.dart';
 import '../widgets/widget_choix_vehicule.dart';
+import 'home/home_models.dart' show ConducteurProche;
 import 'course/suivi_course_page.dart';
 import 'recherche_screen.dart';
 
@@ -113,6 +116,12 @@ class _EcranDemandeInstantaneeState
   // Durée du trajet (OSRM, sans arrêt), pour l'arrivée estimée et l'heure
   // de dépose du choix de catégorie. Null : inconnue, jamais inventée.
   int? _dureeTrajetMin;
+
+  // Véhicules proches du départ (même route, mêmes règles que l'accueil :
+  // pseudonymes, positions arrondies), relus toutes les 20 s tant que
+  // l'écran est ouvert. Un échec garde la liste précédente, en silence.
+  List<ConducteurProche> _vehiculesProches = const [];
+  Timer? _minuteurVehicules;
 
   // Code promo — validé côté serveur avant confirmation (aperçu, ne
   // consomme aucun quota) ; la réduction réellement appliquée dépend du
@@ -229,6 +238,7 @@ class _EcranDemandeInstantaneeState
         }
       });
 
+      _suivreVehiculesProches();
       await _recalculerEstimation();
     } catch (e) {
       // Jamais de distance/prix fabriqués : mieux vaut un état d'erreur
@@ -766,8 +776,36 @@ class _EcranDemandeInstantaneeState
 
   @override
   void dispose() {
+    _minuteurVehicules?.cancel();
     _codePromoCtrl.dispose();
     super.dispose();
+  }
+
+  void _suivreVehiculesProches() {
+    _chargerVehiculesProches();
+    _minuteurVehicules?.cancel();
+    _minuteurVehicules = Timer.periodic(const Duration(seconds: 20), (_) {
+      // Rien quand on ne voit pas la carte : un autre écran ou une feuille
+      // la couvre (choix, radar, suivi), ou l'app est en arrière-plan.
+      final visible = ModalRoute.of(context)?.isCurrent ?? false;
+      final premierPlan = WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+      if (visible && premierPlan) _chargerVehiculesProches();
+    });
+  }
+
+  Future<void> _chargerVehiculesProches() async {
+    final lat = _departLat, lng = _departLng;
+    if (lat == null || lng == null) return;
+    try {
+      final brut = await ApiService.conducteursProches(lat: lat, lng: lng);
+      if (!mounted) return;
+      setState(() => _vehiculesProches = [
+            for (final c in brut)
+              if (ConducteurProche.depuisJson(c) case final ConducteurProche v) v,
+          ]);
+    } catch (_) {
+      // Décor de la carte : jamais d'erreur affichée pour lui.
+    }
   }
 
   // ─── Construction (v4) ───
@@ -800,6 +838,7 @@ class _EcranDemandeInstantaneeState
                           LatLng(a['latitude'] as double, a['longitude'] as double))
                       .toList(),
                   enCalcul: _calcul,
+                  vehicules: _vehiculesProches,
                 ),
               ),
               Positioned(
@@ -1296,11 +1335,15 @@ class _CarteApercuItineraire extends StatefulWidget {
   final List<LatLng> arrets;
   final bool enCalcul;
 
+  /// Véhicules proches du départ, vus de dessus (au plus 12 : un décor).
+  final List<ConducteurProche> vehicules;
+
   const _CarteApercuItineraire({
     required this.depart,
     required this.destination,
     required this.arrets,
     required this.enCalcul,
+    this.vehicules = const [],
   });
 
   @override
@@ -1398,6 +1441,31 @@ class _CarteApercuItineraireState extends State<_CarteApercuItineraire> {
                   ),
                 ],
               ),
+            // Sous le départ et la destination : ils restent toujours visibles.
+            MarkerLayer(
+              markers: [
+                for (final v in widget.vehicules.take(12))
+                  Marker(
+                    key: ValueKey('vehicule-${v.id}'),
+                    point: v.position,
+                    width: 34,
+                    height: 34,
+                    child: IgnorePointer(
+                      child: Container(
+                        alignment: Alignment.center,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(color: TaamaColors.ombreMarqueur, blurRadius: 6, offset: Offset(0, 1.5)),
+                          ],
+                        ),
+                        child: VehiculeVuDessus(estMoto: v.estMoto, cap: capInitial(v.id), taille: 28),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
             MarkerLayer(
               markers: [
                 if (depart != null)
