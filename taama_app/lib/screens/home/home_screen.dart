@@ -27,7 +27,7 @@ import '../../widgets/photo_avatar.dart';
 import '../../widgets/taama/anime_en_boucle.dart';
 import '../../widgets/taama/couche_chauffeurs_accueil.dart';
 import '../../widgets/taama/fiche_chauffeurs_proches.dart';
-import '../../widgets/taama/pulsation_position.dart';
+import '../../widgets/taama/point_position.dart';
 import '../../widgets/taama/tuile_service.dart';
 import 'home_models.dart';
 
@@ -92,6 +92,9 @@ class HomeScreen extends StatefulWidget {
     this.suggestions = const [],
     this.conducteursProches = const [],
     this.positionClient,
+    this.precisionPositionM,
+    this.capPosition,
+    this.positionApproximative = false,
     this.chargementConducteurs = false,
     this.derniereCourse,
     this.courseActive,
@@ -130,6 +133,19 @@ class HomeScreen extends StatefulWidget {
   final List<SuggestionDestination> suggestions;
   final List<ConducteurProche> conducteursProches;
   final LatLng? positionClient;
+
+  /// Précision de [positionClient] en mètres (cercle autour du point) ;
+  /// null : inconnue, pas de cercle.
+  final double? precisionPositionM;
+
+  /// Direction suivie (degrés depuis le nord), null à l'arrêt.
+  final double? capPosition;
+
+  /// Dernière position connue du téléphone, pas encore confirmée par le GPS.
+  final bool positionApproximative;
+
+  /// Au-delà, le cercle de précision couvrirait le quartier : pas de cercle.
+  static const double precisionMaxAfficheeM = 1000;
   final bool chargementConducteurs;
   final DerniereCourse? derniereCourse;
 
@@ -163,6 +179,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   final MapController _carte = MapController();
   bool _cartePrete = false;
 
+  /// La carte suit la position du client, comme les cartes du téléphone,
+  /// jusqu'à ce qu'il la fasse glisser lui-même ; « recentrer » la remet.
+  bool _suivre = true;
+
   late final AnimationController _entree =
       AnimationController(vsync: this, duration: const Duration(milliseconds: 1100));
 
@@ -184,8 +204,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final avant = ancien.positionClient;
     final apres = widget.positionClient;
     if (apres == null) return;
+    // Première position : toujours. Ensuite, seulement en suivi.
     final aBouge = avant == null ||
-        const Distance().as(LengthUnit.Meter, avant, apres) > 50;
+        (_suivre && const Distance().as(LengthUnit.Meter, avant, apres) > 2);
     if (aBouge) {
       // Jamais de move() pendant un build : on attend la fin de la frame.
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -213,6 +234,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _recentrer() async {
+    _suivre = true;
     await widget.onRecentrerCarte?.call();
     if (!mounted) return;
     final p = widget.positionClient;
@@ -311,6 +333,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           final p = widget.positionClient;
           if (p != null) _deplacerCarte(p);
         },
+        // Le client fait glisser la carte : elle ne le suit plus.
+        onPositionChanged: (_, parGeste) {
+          if (parGeste) _suivre = false;
+        },
       ),
       children: [
         widget.coucheFond,
@@ -338,6 +364,22 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
           ],
         ),
+        if (position != null &&
+            !widget.positionApproximative &&
+            widget.precisionPositionM != null &&
+            widget.precisionPositionM! <= HomeScreen.precisionMaxAfficheeM)
+          CircleLayer(
+            circles: [
+              CircleMarker(
+                point: position,
+                radius: widget.precisionPositionM!,
+                useRadiusInMeter: true,
+                color: TaamaColors.position.withValues(alpha: 0.12),
+                borderColor: TaamaColors.position.withValues(alpha: 0.35),
+                borderStrokeWidth: 1,
+              ),
+            ],
+          ),
         CoucheChauffeursAccueil(
           conducteurs: widget.conducteursProches,
           nuit: widget.nuit,
@@ -351,12 +393,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             markers: [
               Marker(
                 point: position,
-                width: 76,
-                height: 76,
+                width: 96,
+                height: 96,
                 // Dessiné par-dessus les pastilles, mais transparent aux
                 // appuis : un chauffeur dans la même cellule que le client
                 // reste touchable.
-                child: const IgnorePointer(child: PulsationPosition()),
+                child: IgnorePointer(
+                  child: PointPosition(
+                    cap: widget.capPosition,
+                    approximatif: widget.positionApproximative,
+                  ),
+                ),
               ),
             ],
           ),

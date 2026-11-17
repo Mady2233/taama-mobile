@@ -48,6 +48,12 @@ const Duration _dureeCacheOsrm = Duration(minutes: 5);
 /// Fréquence de rafraîchissement des chauffeurs proches (écran visible).
 const Duration _intervalleConducteurs = Duration(seconds: 20);
 
+/// Direction suivie par le client, en degrés depuis le nord, ou null : le
+/// GPS ne la donne qu'en mouvement (à l'arrêt, le cap qu'il renvoie ne veut
+/// rien dire). Pas de boussole dans l'app.
+double? capDepuis(Position p) =>
+    p.speed >= 1 && p.heading >= 0 && p.heading <= 360 ? p.heading : null;
+
 /// Statut (`StatutIdentite.name`) pour lequel l'invitation à vérifier son
 /// identité a été fermée sur ce téléphone.
 const String _cleInvitationIdentiteMasquee = 'invitation_identite_masquee';
@@ -97,6 +103,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver, RouteA
   List<ConducteurProche> _conducteurs = const [];
   List<SuggestionDestination> _suggestions = const [];
   LatLng? _positionClient;
+  double? _precisionPositionM;
+  double? _capPosition;
+  bool _positionApproximative = false;
+
+  /// Suivi GPS, seulement pendant que l'accueil est visible (comme le
+  /// rafraîchissement des chauffeurs) : batterie et data.
+  StreamSubscription<Position>? _suiviPosition;
+  bool _localisationPermise = false;
   CourseActive? _courseActive;
   Timer? _minuteurConducteurs;
   // Vérification d'identité (facultative) : statut lu dans mon-profil/, et
@@ -177,6 +191,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver, RouteA
   /// (mes-demandes/ renvoie tout l'historique, trop lourd toutes les 20 s).
   /// Elle l'est à l'ouverture, au retour au premier plan et au retour du suivi.
   void _demarrerRafraichissement() {
+    _demarrerSuiviPosition();
     _minuteurConducteurs?.cancel();
     _minuteurConducteurs = Timer.periodic(
       _intervalleConducteurs,
@@ -185,8 +200,42 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver, RouteA
   }
 
   void _arreterRafraichissement() {
+    _arreterSuiviPosition();
     _minuteurConducteurs?.cancel();
     _minuteurConducteurs = null;
+  }
+
+  /// Le point bouge avec le client (tous les 5 m au plus), comme sur les
+  /// cartes du téléphone. Jamais sans permission : rien n'est redemandé ici.
+  void _demarrerSuiviPosition() {
+    if (!_localisationPermise || _suiviPosition != null) return;
+    _suiviPosition = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      ),
+    ).listen(
+      (position) => _appliquerPosition(position, approximative: false),
+      onError: (Object e) {
+        _journal('Erreur suivi GPS : $e');
+        _arreterSuiviPosition();
+      },
+    );
+  }
+
+  void _arreterSuiviPosition() {
+    _suiviPosition?.cancel();
+    _suiviPosition = null;
+  }
+
+  void _appliquerPosition(Position position, {required bool approximative}) {
+    if (!mounted) return;
+    setState(() {
+      _positionClient = LatLng(position.latitude, position.longitude);
+      _precisionPositionM = position.accuracy > 0 ? position.accuracy : null;
+      _capPosition = approximative ? null : capDepuis(position);
+      _positionApproximative = approximative;
+    });
   }
 
   void _surChangementPaiement() {
@@ -346,6 +395,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver, RouteA
         if (permission == LocationPermission.denied) return;
       }
       if (permission == LocationPermission.deniedForever) return;
+      _localisationPermise = true;
+
+      // Tout de suite : la dernière position connue du téléphone, en gris
+      // (à l'intérieur, le GPS met souvent plus de 15 s à répondre).
+      if (_positionClient == null) {
+        try {
+          final derniere = await Geolocator.getLastKnownPosition();
+          if (derniere != null && _positionClient == null) {
+            _appliquerPosition(derniere, approximative: true);
+          }
+        } catch (e) {
+          _journal('Erreur dernière position : $e');
+        }
+      }
 
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
@@ -353,8 +416,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver, RouteA
           timeLimit: Duration(seconds: 15),
         ),
       );
-      if (!mounted) return;
-      setState(() => _positionClient = LatLng(position.latitude, position.longitude));
+      _appliquerPosition(position, approximative: false);
     } catch (e) {
       _journal('Erreur position GPS : $e');
     }
@@ -461,6 +523,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver, RouteA
 
   Future<void> _recentrer() async {
     await _obtenirPosition();
+    // Permission accordée à l'instant : le suivi démarre sans attendre.
+    if (!_couvert) _demarrerSuiviPosition();
     await _chargerConducteursProches(silencieux: true);
   }
 
@@ -550,6 +614,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver, RouteA
       suggestions: _suggestions,
       conducteursProches: _conducteurs,
       positionClient: _positionClient,
+      precisionPositionM: _precisionPositionM,
+      capPosition: _capPosition,
+      positionApproximative: _positionApproximative,
       chargementConducteurs: _chargementConducteurs,
       courseActive: _courseActive,
       onReprendreCourse: _reprendreCourse,
